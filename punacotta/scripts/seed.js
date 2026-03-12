@@ -6,7 +6,7 @@ import bcrypt from 'bcryptjs'
 
 const { Client } = pg
 const client = new Client({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: process.env.NETLIFY_DATABASE_URL || process.env.DATABASE_URL,
   ssl: process.env.DATABASE_URL?.includes('localhost') ? false : { rejectUnauthorized: false },
 })
 
