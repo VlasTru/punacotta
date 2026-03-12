@@ -1,0 +1,23 @@
+[build]
+  command       = "npm run build"
+  publish       = "dist"
+  functions     = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION  = "20"
+  NPM_FLAGS     = "--include=dev"
+
+[functions]
+  node_bundler  = "esbuild"
+
+# Rewrite all /api/* calls to Netlify Functions
+[[redirects]]
+  from   = "/api/*"
+  to     = "/.netlify/functions/api/:splat"
+  status = 200
+
+# SPA fallback — all other routes serve index.html
+[[redirects]]
+  from   = "/*"
+  to     = "/index.html"
+  status = 200

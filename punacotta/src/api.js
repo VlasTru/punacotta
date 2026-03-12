@@ -1,5 +1,5 @@
 // src/api.js
-const BASE = '/api'
+const BASE = '/.netlify/functions/api'
 
 function getToken() {
   return localStorage.getItem('token')
