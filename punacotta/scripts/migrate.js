@@ -66,6 +66,12 @@ CREATE TABLE IF NOT EXISTS recipe (
   deleted     BOOLEAN      NOT NULL DEFAULT false
 );
 
+-- Add new columns to recipe if they don't exist yet (safe to re-run)
+ALTER TABLE recipe ADD COLUMN IF NOT EXISTS deliverable    BOOLEAN DEFAULT true;
+ALTER TABLE recipe ADD COLUMN IF NOT EXISTS image_url      TEXT;
+ALTER TABLE recipe ADD COLUMN IF NOT EXISTS image_thumb_url TEXT;
+ALTER TABLE recipe ADD COLUMN IF NOT EXISTS cloudinary_id  TEXT;
+
 -- Menus
 CREATE TABLE IF NOT EXISTS menu (
   mid           SERIAL PRIMARY KEY,

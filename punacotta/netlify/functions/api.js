@@ -1,13 +1,10 @@
 // netlify/functions/api.js
-// Single entry point for all API routes.
-// Netlify passes the path after /.netlify/functions/api as event.path.
-// We normalise it back to /api/... and route accordingly.
-
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { randomBytes } from 'crypto'
 import pg from 'pg'
 import nodemailer from 'nodemailer'
+import { v2 as cloudinary } from 'cloudinary'
 
 const { Pool } = pg
 
@@ -22,12 +19,37 @@ function getPool() {
   })
   return _pool
 }
-async function dbq(sql, params = []) {
-  const r = await getPool().query(sql, params)
-  return r.rows
+async function dbq(sql, params = []) { return (await getPool().query(sql, params)).rows }
+async function dbr(sql, params = []) { return getPool().query(sql, params) }
+
+// ─── CLOUDINARY ───────────────────────────────────────────────────────────────
+function initCloudinary() {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key:    process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+  })
 }
-async function dbr(sql, params = []) {
-  return getPool().query(sql, params)
+
+async function cloudinaryUpload(dataUri, publicId) {
+  initCloudinary()
+  const full = await cloudinary.uploader.upload(dataUri, {
+    public_id: publicId, overwrite: true,
+    transformation: [{ width: 1200, height: 900, crop: 'limit', fetch_format: 'webp', quality: 'auto' }],
+  })
+  const thumb = await cloudinary.uploader.upload(dataUri, {
+    public_id: `${publicId}_thumb`, overwrite: true,
+    transformation: [{ width: 80, height: 80, crop: 'pad', background: 'white', fetch_format: 'webp', quality: 'auto' }],
+  })
+  return { url: full.secure_url, thumb_url: thumb.secure_url }
+}
+
+async function cloudinaryDelete(publicId) {
+  initCloudinary()
+  await Promise.all([
+    cloudinary.uploader.destroy(publicId).catch(() => {}),
+    cloudinary.uploader.destroy(`${publicId}_thumb`).catch(() => {}),
+  ])
 }
 
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
@@ -47,8 +69,7 @@ const BASE_URL = process.env.URL || 'http://localhost:8888'
 function mailer() {
   if (process.env.SMTP_HOST) {
     return nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT) || 587,
+      host: process.env.SMTP_HOST, port: Number(process.env.SMTP_PORT) || 587,
       auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
     })
   }
@@ -57,17 +78,25 @@ function mailer() {
 async function sendMail(to, subject, text) {
   const t = mailer()
   const info = await t.sendMail({ from: process.env.SMTP_FROM || 'hello@puncotta.com', to, subject, text })
-  if (!process.env.SMTP_HOST) {
-    try { console.log('📧', JSON.parse(info.message).text) } catch {}
-  }
+  if (!process.env.SMTP_HOST) { try { console.log('📧', JSON.parse(info.message).text) } catch {} }
 }
+
+// ─── RECIPE SELECT ────────────────────────────────────────────────────────────
+const RECIPE_SEL = `
+  SELECT r.rid, r.name, r.description, r.price, r.currency, r.available,
+         r.deliverable, r.image_url, r.image_thumb_url, r.cloudinary_id,
+         u.name AS units, u.unid, c.name AS category, c.caid
+  FROM recipe r
+  LEFT JOIN units u ON u.unid=r.unid
+  LEFT JOIN recipe_category c ON c.caid=r.caid`
 
 // ─── MENU HELPER ──────────────────────────────────────────────────────────────
 async function fetchMenu(mid) {
   const [menu] = await dbq('SELECT * FROM menu WHERE mid = $1', [mid])
   if (!menu) return null
   const recipes = await dbq(`
-    SELECT r.rid, r.name, r.description, r.price, r.currency, c.name AS category
+    SELECT r.rid, r.name, r.description, r.price, r.currency,
+           r.deliverable, r.image_url, r.image_thumb_url, c.name AS category
     FROM menu_recipe mr
     JOIN recipe r ON r.rid = mr.rid
     LEFT JOIN recipe_category c ON c.caid = r.caid
@@ -84,21 +113,48 @@ async function fetchOrder(oid) {
     FROM order_item oi JOIN recipe r ON r.rid = oi.rid
     WHERE oi.oid = $1`, [oid])
   const [customer] = await dbq(
-    'SELECT uid, first_name, last_name, email FROM "user" WHERE uid = $1',
-    [order.owner_uid])
+    'SELECT uid, first_name, last_name, email FROM "user" WHERE uid = $1', [order.owner_uid])
   return { ...order, items, customer }
 }
 
-// ─── ROUTER ───────────────────────────────────────────────────────────────────
-const TRANSITIONS = {
-  New: 'Accepted', Accepted: 'Preparing', Preparing: 'Done',
-  Done: 'Dispatched', Dispatched: 'Delivered'
+// ─── MULTIPART PARSER ─────────────────────────────────────────────────────────
+function parseMultipart(event) {
+  const ct = event.headers['content-type'] || ''
+  const boundary = ct.split('boundary=')[1]?.split(';')[0]
+  if (!boundary) return null
+
+  const raw = event.isBase64Encoded
+    ? Buffer.from(event.body, 'base64').toString('binary')
+    : event.body
+
+  const parts = raw.split(`--${boundary}`).slice(1, -1)
+  const fields = {}
+
+  for (const part of parts) {
+    const sep = part.indexOf('\r\n\r\n')
+    if (sep === -1) continue
+    const header = part.slice(0, sep)
+    const bodyRaw = part.slice(sep + 4).replace(/\r\n$/, '')
+    const nameMatch = header.match(/name="([^"]+)"/)
+    if (!nameMatch) continue
+    const name = nameMatch[1]
+    if (header.includes('filename=')) {
+      const mimeMatch = header.match(/Content-Type:\s*([^\r\n]+)/)
+      const mime = mimeMatch ? mimeMatch[1].trim() : 'image/jpeg'
+      const b64 = Buffer.from(bodyRaw, 'binary').toString('base64')
+      fields[name] = `data:${mime};base64,${b64}`
+    } else {
+      fields[name] = bodyRaw
+    }
+  }
+  return fields
 }
 
-async function route(method, segments, body, headers) {
-  const user = getUser(headers)
+// ─── ROUTER ───────────────────────────────────────────────────────────────────
+const TRANSITIONS = { New:'Accepted', Accepted:'Preparing', Preparing:'Done', Done:'Dispatched', Dispatched:'Delivered' }
 
-  // segments = path split by '/', e.g. ['auth','login'] or ['menus','5','recipes']
+async function route(method, segments, body, headers, event) {
+  const user = getUser(headers)
   const [r0, r1, r2] = segments
 
   // ── AUTH ──────────────────────────────────────────────────────────────────
@@ -108,35 +164,29 @@ async function route(method, segments, body, headers) {
       const [u] = await dbq('SELECT * FROM "user" WHERE email = $1', [email?.toLowerCase()])
       if (!u || !(await bcrypt.compare(password, u.password_hash)))
         return [401, { error: 'Invalid email or password' }]
-      return [200, { token: signToken({ uid: u.uid, email: u.email, is_manufacturer: u.is_manufacturer }), user: safe(u) }]
+      return [200, { token: signToken({ uid:u.uid, email:u.email, is_manufacturer:u.is_manufacturer }), user: safe(u) }]
     }
-
     if (r1 === 'register' && method === 'POST') {
       const { first_name, last_name, email, phone, street_address, city, zip,
               password, is_manufacturer, business_name } = body
-      if (!first_name || !last_name || !email || !password)
-        return [400, { error: 'Missing required fields' }]
-      if (password.trim().length < 6)
-        return [400, { error: 'Password must be at least 6 characters' }]
+      if (!first_name || !last_name || !email || !password) return [400, { error: 'Missing required fields' }]
+      if (password.trim().length < 6) return [400, { error: 'Password must be at least 6 characters' }]
       const ex = await dbq('SELECT uid FROM "user" WHERE email = $1', [email.toLowerCase()])
       if (ex.length) return [409, { error: 'A username with this email already exists. Please, login.' }]
       const hash = await bcrypt.hash(password.trim(), 10)
       await dbr(
-        `INSERT INTO "user" (first_name,last_name,email,phone,street_address,city,zip,
-                             password_hash,is_manufacturer,business_name)
+        `INSERT INTO "user" (first_name,last_name,email,phone,street_address,city,zip,password_hash,is_manufacturer,business_name)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [first_name, last_name, email.toLowerCase(), phone||null,
-         street_address||null, city||null, zip||null,
+        [first_name, last_name, email.toLowerCase(), phone||null, street_address||null, city||null, zip||null,
          hash, !!is_manufacturer, is_manufacturer?(business_name||null):null])
       const [u] = await dbq('SELECT * FROM "user" WHERE email = $1', [email.toLowerCase()])
       const token = randomBytes(32).toString('hex')
       await dbr(`INSERT INTO auth_token (uid,token,purpose,expires_at) VALUES ($1,$2,'verify',$3)`,
         [u.uid, token, new Date(Date.now() + 3_600_000)])
       await sendMail(u.email, 'Welcome to Pun&Cotta – confirm your email',
-        `Hi, ${u.first_name}\n\nConfirm your email:\n${BASE_URL}/verify/${token}\n\nValid 1 hour.\n\nPunacotta.`)
+        `Hi, ${u.first_name}\n\nConfirm:\n${BASE_URL}/verify/${token}\n\nValid 1 hour.\n\nPunacotta.`)
       return [201, { message: 'Please check your email to find a welcome message.' }]
     }
-
     if (r1 === 'forgot' && method === 'POST') {
       const [u] = await dbq('SELECT * FROM "user" WHERE email = $1', [body.email?.toLowerCase()])
       if (u) {
@@ -144,11 +194,10 @@ async function route(method, segments, body, headers) {
         await dbr(`INSERT INTO auth_token (uid,token,purpose,expires_at) VALUES ($1,$2,'reset',$3)`,
           [u.uid, token, new Date(Date.now() + 3_600_000)])
         await sendMail(u.email, 'Pun&Cotta – reset your password',
-          `Hi, ${u.first_name}\n\nReset your password:\n${BASE_URL}/reset/${token}\n\nValid 1 hour.\n\nPunacotta.`)
+          `Hi, ${u.first_name}\n\nReset:\n${BASE_URL}/reset/${token}\n\nValid 1 hour.\n\nPunacotta.`)
       }
       return [200, { message: 'If that email exists, a reset link has been sent.' }]
     }
-
     if (r1 === 'reset' && method === 'POST') {
       const { token, password } = body
       if (!password || password.trim().length < 6) return [400, { error: 'Password must be at least 6 characters' }]
@@ -159,7 +208,6 @@ async function route(method, segments, body, headers) {
       await dbr('UPDATE auth_token SET used=true WHERE tid=$1', [row.tid])
       return [200, { message: 'Password updated. You can now log in.' }]
     }
-
     if (r1 === 'verify' && method === 'POST') {
       const [row] = await dbq(
         `SELECT * FROM auth_token WHERE token=$1 AND purpose='verify' AND used=false AND expires_at>now()`, [body.token])
@@ -167,9 +215,8 @@ async function route(method, segments, body, headers) {
       await dbr('UPDATE "user" SET email_verified=true WHERE uid=$1', [row.uid])
       await dbr('UPDATE auth_token SET used=true WHERE tid=$1', [row.tid])
       const [u] = await dbq('SELECT * FROM "user" WHERE uid=$1', [row.uid])
-      return [200, { token: signToken({ uid: u.uid, email: u.email, is_manufacturer: u.is_manufacturer }), user: safe(u) }]
+      return [200, { token: signToken({ uid:u.uid, email:u.email, is_manufacturer:u.is_manufacturer }), user: safe(u) }]
     }
-
     if (r1 === 'me' && method === 'GET') {
       if (!user) return [401, { error: 'Unauthorized' }]
       const [u] = await dbq('SELECT * FROM "user" WHERE uid=$1', [user.uid])
@@ -177,10 +224,34 @@ async function route(method, segments, body, headers) {
     }
   }
 
+  // ── IMAGES ────────────────────────────────────────────────────────────────
+  if (r0 === 'images') {
+    if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+
+    if (r1 === 'upload' && method === 'POST') {
+      const fields = parseMultipart(event)
+      if (!fields?.image) return [400, { error: 'No image provided' }]
+      const rid = fields.rid || `tmp_${Date.now()}`
+      const publicId = `puncotta/recipes/r_${rid}`
+      if (fields.rid) {
+        const [ex] = await dbq('SELECT cloudinary_id FROM recipe WHERE rid=$1', [fields.rid])
+        if (ex?.cloudinary_id) await cloudinaryDelete(ex.cloudinary_id)
+      }
+      const { url, thumb_url } = await cloudinaryUpload(fields.image, publicId)
+      return [200, { url, thumb_url, cloudinary_id: publicId }]
+    }
+
+    if (r1 === 'remove' && r2 && method === 'DELETE') {
+      const [row] = await dbq('SELECT cloudinary_id FROM recipe WHERE rid=$1', [r2])
+      if (row?.cloudinary_id) await cloudinaryDelete(row.cloudinary_id)
+      await dbr('UPDATE recipe SET image_url=null,image_thumb_url=null,cloudinary_id=null WHERE rid=$1', [r2])
+      return [200, { removed: true }]
+    }
+  }
+
   // ── PRODUCTS ──────────────────────────────────────────────────────────────
   if (r0 === 'products') {
     if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
-
     if (r1 === 'lookups' && method === 'GET') {
       const [units, categories] = await Promise.all([
         dbq('SELECT * FROM units ORDER BY name'),
@@ -188,16 +259,13 @@ async function route(method, segments, body, headers) {
       ])
       return [200, { units, categories }]
     }
-
     if (!r1 || r1 === '') {
-      if (method === 'GET') {
-        return [200, await dbq(`
-          SELECT p.pid, p.name, u.name AS units, u.unid, c.name AS category, c.caid
-          FROM product p
-          LEFT JOIN units u ON u.unid=p.unid
-          LEFT JOIN product_category c ON c.caid=p.caid
-          WHERE p.deleted=false ORDER BY p.name`)]
-      }
+      if (method === 'GET') return [200, await dbq(`
+        SELECT p.pid, p.name, u.name AS units, u.unid, c.name AS category, c.caid
+        FROM product p
+        LEFT JOIN units u ON u.unid=p.unid
+        LEFT JOIN product_category c ON c.caid=p.caid
+        WHERE p.deleted=false ORDER BY p.name`)]
       if (method === 'POST') {
         const { name, unid, caid } = body
         if (!name?.trim()) return [400, { error: 'Name required' }]
@@ -220,17 +288,9 @@ async function route(method, segments, body, headers) {
 
   // ── RECIPES ───────────────────────────────────────────────────────────────
   if (r0 === 'recipes') {
-    const RECIPE_SEL = `
-      SELECT r.rid, r.name, r.description, r.price, r.currency, r.available,
-             u.name AS units, u.unid, c.name AS category, c.caid
-      FROM recipe r
-      LEFT JOIN units u ON u.unid=r.unid
-      LEFT JOIN recipe_category c ON c.caid=r.caid`
-
     if (r1 === 'available' && method === 'GET') {
       return [200, await dbq(RECIPE_SEL + ' WHERE r.deleted=false AND r.available=true ORDER BY r.name')]
     }
-
     if (r1 === 'lookups' && method === 'GET') {
       if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
       const [units, categories] = await Promise.all([
@@ -239,36 +299,54 @@ async function route(method, segments, body, headers) {
       ])
       return [200, { units, categories }]
     }
-
-    // PATCH /recipes/:rid
+    // PUT /recipes/:rid — full update
+    if (r1 && method === 'PUT') {
+      if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+      const { name, description, unid, caid, price, currency, available,
+              deliverable, image_url, image_thumb_url, cloudinary_id } = body
+      if (!name?.trim()) return [400, { error: 'Name required' }]
+      await dbr(`UPDATE recipe SET name=$1,description=$2,unid=$3,caid=$4,price=$5,currency=$6,
+                 available=$7,deliverable=$8,image_url=$9,image_thumb_url=$10,cloudinary_id=$11 WHERE rid=$12`,
+        [name.trim(), description||null, unid||null, caid||null,
+         Number(price)||0, currency||'AMD', available!==false, deliverable!==false,
+         image_url||null, image_thumb_url||null, cloudinary_id||null, r1])
+      const [row] = await dbq(RECIPE_SEL + ' WHERE r.rid=$1', [r1])
+      return [200, row]
+    }
+    // PATCH /recipes/:rid — partial update
     if (r1 && method === 'PATCH') {
       if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
       if (body.available !== undefined)
         await dbr('UPDATE recipe SET available=$1 WHERE rid=$2', [!!body.available, r1])
+      if (body.deliverable !== undefined)
+        await dbr('UPDATE recipe SET deliverable=$1 WHERE rid=$2', [!!body.deliverable, r1])
       const [row] = await dbq(RECIPE_SEL + ' WHERE r.rid=$1', [r1])
       return [200, row]
     }
-
     if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
-
     if (method === 'GET')
       return [200, await dbq(RECIPE_SEL + ' WHERE r.deleted=false ORDER BY r.name')]
-
     if (method === 'POST') {
-      const { name, description, unid, caid, price, currency, available } = body
+      const { name, description, unid, caid, price, currency, available,
+              deliverable, image_url, image_thumb_url, cloudinary_id } = body
       if (!name?.trim()) return [400, { error: 'Name required' }]
       const res = await dbr(
-        `INSERT INTO recipe (name,description,unid,caid,price,currency,available)
-         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING rid`,
+        `INSERT INTO recipe (name,description,unid,caid,price,currency,available,deliverable,
+                             image_url,image_thumb_url,cloudinary_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING rid`,
         [name.trim(), description||null, unid||null, caid||null,
-         Number(price)||0, currency||'AMD', available!==false])
+         Number(price)||0, currency||'AMD', available!==false, deliverable!==false,
+         image_url||null, image_thumb_url||null, cloudinary_id||null])
       const [row] = await dbq(RECIPE_SEL + ' WHERE r.rid=$1', [res.rows[0].rid])
       return [201, row]
     }
-
     if (method === 'DELETE') {
       const { ids } = body
       if (!Array.isArray(ids) || !ids.length) return [400, { error: 'ids required' }]
+      for (const rid of ids) {
+        const [r] = await dbq('SELECT cloudinary_id FROM recipe WHERE rid=$1', [rid])
+        if (r?.cloudinary_id) await cloudinaryDelete(r.cloudinary_id)
+      }
       await dbr('UPDATE recipe SET deleted=true WHERE rid=ANY($1::int[])', [ids])
       return [200, { deleted: ids }]
     }
@@ -277,8 +355,6 @@ async function route(method, segments, body, headers) {
   // ── MENUS ─────────────────────────────────────────────────────────────────
   if (r0 === 'menus') {
     if (!user) return [401, { error: 'Unauthorized' }]
-
-    // /menus/:mid/recipes
     if (r1 && r2 === 'recipes') {
       if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
       if (method === 'POST') {
@@ -292,13 +368,8 @@ async function route(method, segments, body, headers) {
         return [200, await fetchMenu(r1)]
       }
     }
-
-    // /menus/:mid
     if (r1) {
-      if (method === 'GET') {
-        const m = await fetchMenu(r1)
-        return m ? [200, m] : [404, { error: 'Not found' }]
-      }
+      if (method === 'GET') { const m = await fetchMenu(r1); return m ? [200, m] : [404, { error: 'Not found' }] }
       if (method === 'PATCH') {
         if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
         const { name, available, delivery_fee } = body
@@ -308,15 +379,12 @@ async function route(method, segments, body, headers) {
         return [200, await fetchMenu(r1)]
       }
     }
-
-    // /menus
     if (method === 'GET') {
       const rows = user.is_manufacturer
         ? await dbq('SELECT mid FROM menu WHERE owner_uid=$1 ORDER BY mid', [user.uid])
         : await dbq('SELECT mid FROM menu WHERE available=true ORDER BY mid')
       return [200, await Promise.all(rows.map(r => fetchMenu(r.mid)))]
     }
-
     if (method === 'POST') {
       if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
       const { name, available, delivery_fee, recipe_ids } = body
@@ -334,8 +402,6 @@ async function route(method, segments, body, headers) {
   // ── ORDERS ────────────────────────────────────────────────────────────────
   if (r0 === 'orders') {
     if (!user) return [401, { error: 'Unauthorized' }]
-
-    // /orders/:oid/:action
     if (r1 && r2) {
       if (r2 === 'advance') {
         if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
@@ -369,8 +435,6 @@ async function route(method, segments, body, headers) {
         return [200, await fetchOrder(r1)]
       }
     }
-
-    // /orders
     if (method === 'GET') {
       const rows = user.is_manufacturer
         ? await dbq(`SELECT o.oid FROM "order" o JOIN menu m ON m.mid=o.mid
@@ -378,7 +442,6 @@ async function route(method, segments, body, headers) {
         : await dbq('SELECT oid FROM "order" WHERE owner_uid=$1 ORDER BY created_at DESC', [user.uid])
       return [200, await Promise.all(rows.map(r => fetchOrder(r.oid)))]
     }
-
     if (method === 'POST') {
       if (user.is_manufacturer) return [403, { error: 'Manufacturers cannot place orders' }]
       const { mid, pickup, items, delivery_address } = body
@@ -417,15 +480,25 @@ async function route(method, segments, body, headers) {
 export const handler = async (event) => {
   const method = event.httpMethod
 
-  // Parse path: /.netlify/functions/api/auth/login → ['auth','login']
+  if (method === 'OPTIONS') {
+    return { statusCode: 204, headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+    }, body: '' }
+  }
+
   const raw = event.path.replace('/.netlify/functions/api', '').replace('/api', '')
   const segments = raw.split('/').filter(Boolean)
 
+  const ct = event.headers['content-type'] || ''
   let body = {}
-  try { body = event.body ? JSON.parse(event.body) : {} } catch {}
+  if (!ct.includes('multipart')) {
+    try { body = event.body ? JSON.parse(event.body) : {} } catch {}
+  }
 
   try {
-    const [status, data] = await route(method, segments, body, event.headers)
+    const [status, data] = await route(method, segments, body, event.headers, event)
     return {
       statusCode: status,
       headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
@@ -436,7 +509,7 @@ export const handler = async (event) => {
     return {
       statusCode: 500,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: 'Internal server error' }),
+      body: JSON.stringify({ error: err.message || 'Internal server error' }),
     }
   }
 }
