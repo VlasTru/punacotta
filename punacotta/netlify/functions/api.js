@@ -357,7 +357,21 @@ async function route(method, segments, body, headers, event) {
     if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
     if (method === 'GET') {
       const [row] = await dbq('SELECT schedule FROM "user" WHERE uid=$1', [user.uid])
-      return [200, row?.schedule || { schedule: {}, timezone: 'UTC', latest_order_before: '01:00' }]
+      const stored = row?.schedule
+      if (stored && typeof stored === 'object' && stored.schedule) {
+        return [200, stored]
+      }
+      // Return sensible defaults if nothing saved yet
+      return [200, {
+        schedule: {
+          monday:[{start:"09:00",end:"21:00"}], tuesday:[{start:"09:00",end:"21:00"}],
+          wednesday:[{start:"09:00",end:"21:00"}], thursday:[{start:"09:00",end:"21:00"}],
+          friday:[{start:"09:00",end:"21:00"}], saturday:[{start:"10:00",end:"18:00"}],
+          sunday:[]
+        },
+        timezone: 'Asia/Yerevan',
+        latest_order_before: '01:00'
+      }]
     }
     if (method === 'PUT') {
       const { schedule, timezone, latest_order_before } = body

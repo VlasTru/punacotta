@@ -273,12 +273,15 @@ function Nav({ user, page, setPage, logout }) {
   const links = isM
     ? [{key:"orders-manuf",label:"Orders"},{key:"products",label:"Products"},{key:"recipes",label:"Recipes"},{key:"menus",label:"Menus"}]
     : [{key:"restaurants",label:"Restaurants"},{key:"orders-cust",label:"My Orders"}];
+
+  const navigate = key => { setPage(key); setDropOpen(false); };
+
   return (
     <nav style={{ background:G.white, borderBottom:`1px solid ${G.border}`, padding:"0 32px", display:"flex", alignItems:"center", height:60, position:"sticky", top:0, zIndex:100, boxShadow:"0 1px 12px rgba(44,24,16,0.06)" }}>
-      <button onClick={()=>setPage(isM?"orders-manuf":"restaurants")} style={{ fontFamily:G.font, fontSize:22, fontWeight:700, color:G.caramel, background:"none", border:"none", cursor:"pointer", marginRight:32, fontStyle:"italic" }}>Pun&Cotta</button>
+      <button onClick={()=>navigate(isM?"orders-manuf":"restaurants")} style={{ fontFamily:G.font, fontSize:22, fontWeight:700, color:G.caramel, background:"none", border:"none", cursor:"pointer", marginRight:32, fontStyle:"italic" }}>Pun&Cotta</button>
       <div style={{ display:"flex", gap:4, flex:1 }}>
         {links.map(l=>(
-          <button key={l.key} onClick={()=>setPage(l.key)} style={{ background:page===l.key?G.sand:"none", border:"none", padding:"6px 14px", borderRadius:8, fontFamily:G.mono, fontSize:14, fontWeight:page===l.key?600:400, color:page===l.key?G.caramel:G.muted, cursor:"pointer", transition:"all 0.15s" }}>{l.label}</button>
+          <button key={l.key} onClick={()=>navigate(l.key)} style={{ background:page===l.key?G.sand:"none", border:"none", padding:"6px 14px", borderRadius:8, fontFamily:G.mono, fontSize:14, fontWeight:page===l.key?600:400, color:page===l.key?G.caramel:G.muted, cursor:"pointer", transition:"all 0.15s" }}>{l.label}</button>
         ))}
       </div>
       <div style={{ position:"relative" }}>
@@ -287,22 +290,22 @@ function Nav({ user, page, setPage, logout }) {
           <span style={{ fontSize:10, opacity:0.6 }}>▾</span>
         </button>
         {dropOpen&&(
-          <div onClick={()=>setDropOpen(false)} style={{ position:"fixed", inset:0, zIndex:149 }} />
-        )}
-        {dropOpen&&(
-          <div style={{ position:"absolute", right:0, top:"calc(100% + 6px)", background:G.white, border:`1px solid ${G.border}`, borderRadius:10, boxShadow:"0 8px 24px rgba(44,24,16,0.12)", minWidth:160, zIndex:150, overflow:"hidden", animation:"fadeIn 0.15s ease" }}>
-            {isM&&(
-              <button onClick={()=>{setPage("schedule");setDropOpen(false);}} style={{ width:"100%", textAlign:"left", padding:"10px 16px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.dark }}
-                onMouseEnter={e=>e.target.style.background=G.sand} onMouseLeave={e=>e.target.style.background="none"}>
-                🕐 Schedule
+          <>
+            <div onClick={()=>setDropOpen(false)} style={{ position:"fixed", inset:0, zIndex:149 }} />
+            <div style={{ position:"absolute", right:0, top:"calc(100% + 6px)", background:G.white, border:`1px solid ${G.border}`, borderRadius:10, boxShadow:"0 8px 24px rgba(44,24,16,0.12)", minWidth:160, zIndex:150, overflow:"hidden", animation:"fadeIn 0.15s ease" }}>
+              {isM&&(
+                <button onClick={()=>navigate("schedule")} style={{ width:"100%", textAlign:"left", padding:"10px 16px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.dark }}
+                  onMouseEnter={e=>e.currentTarget.style.background=G.sand} onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                  🕐 Schedule
+                </button>
+              )}
+              <div style={{ height:1, background:G.border }} />
+              <button onClick={()=>{logout();setDropOpen(false);}} style={{ width:"100%", textAlign:"left", padding:"10px 16px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.red }}
+                onMouseEnter={e=>e.currentTarget.style.background=G.sand} onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                Log out
               </button>
-            )}
-            <div style={{ height:1, background:G.border }} />
-            <button onClick={()=>{logout();setDropOpen(false);}} style={{ width:"100%", textAlign:"left", padding:"10px 16px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.red }}
-              onMouseEnter={e=>e.target.style.background=G.sand} onMouseLeave={e=>e.target.style.background="none"}>
-              Log out
-            </button>
-          </div>
+            </div>
+          </>
         )}
       </div>
     </nav>
