@@ -66,6 +66,11 @@ CREATE TABLE IF NOT EXISTS recipe (
   deleted     BOOLEAN      NOT NULL DEFAULT false
 );
 
+-- Add availability hours columns to menu (safe to re-run)
+ALTER TABLE menu ADD COLUMN IF NOT EXISTS hours_from  VARCHAR(5);
+ALTER TABLE menu ADD COLUMN IF NOT EXISTS hours_until VARCHAR(5);
+ALTER TABLE menu ADD COLUMN IF NOT EXISTS hours_days  TEXT[] DEFAULT '{}';
+
 -- Add new columns to recipe if they don't exist yet (safe to re-run)
 ALTER TABLE recipe ADD COLUMN IF NOT EXISTS deliverable    BOOLEAN DEFAULT true;
 ALTER TABLE recipe ADD COLUMN IF NOT EXISTS image_url      TEXT;

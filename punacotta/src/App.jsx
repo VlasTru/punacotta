@@ -583,6 +583,134 @@ function RecipesPage({ toast }) {
   );
 }
 
+// ─── MENU CALENDAR ────────────────────────────────────────────────────────────
+const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
+const DAY_LABELS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+
+// Default store hours — replaced by Working Hours feature when built
+const DEFAULT_STORE = {
+  monday:    [{start:"09:00",end:"21:00"}],
+  tuesday:   [{start:"09:00",end:"21:00"}],
+  wednesday: [{start:"09:00",end:"21:00"}],
+  thursday:  [{start:"09:00",end:"21:00"}],
+  friday:    [{start:"09:00",end:"21:00"}],
+  saturday:  [{start:"10:00",end:"18:00"}],
+  sunday:    [],
+};
+
+const MENU_COLORS = [
+  {bg:"#dbeafe",border:"#3b82f6",text:"#1d4ed8"},
+  {bg:"#dcfce7",border:"#22c55e",text:"#15803d"},
+  {bg:"#fef9c3",border:"#eab308",text:"#854d0e"},
+  {bg:"#fce7f3",border:"#ec4899",text:"#9d174d"},
+  {bg:"#ede9fe",border:"#8b5cf6",text:"#5b21b6"},
+  {bg:"#ffedd5",border:"#f97316",text:"#9a3412"},
+];
+
+function timeToMins(t) {
+  if (!t) return 0;
+  const [h,m] = t.split(":").map(Number);
+  return h*60+(m||0);
+}
+
+function MenuCalendar({ menus, storeSchedule=DEFAULT_STORE }) {
+  const START_H = 7, END_H = 23, TOTAL = (END_H-START_H)*60;
+  const colW = 110, rowH = 48, labelW = 52;
+
+  const menusWithHours = menus.filter(m=>m.hours_from&&m.hours_until&&m.hours_days?.length);
+
+  return (
+    <div style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, overflow:"hidden", marginTop:32 }}>
+      <div style={{ padding:"16px 20px", borderBottom:`1px solid ${G.border}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <h3 style={{ fontFamily:G.font, fontSize:17 }}>Weekly Schedule</h3>
+        <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
+          {menusWithHours.map((m,i)=>{
+            const c=MENU_COLORS[i%MENU_COLORS.length];
+            return <span key={m.mid} style={{ fontSize:12, padding:"3px 10px", borderRadius:20, background:c.bg, color:c.text, border:`1px solid ${c.border}`, fontWeight:600 }}>{m.name}</span>;
+          })}
+        </div>
+      </div>
+      <div style={{ overflowX:"auto" }}>
+        <div style={{ minWidth: labelW + colW*7, position:"relative" }}>
+          {/* Header row */}
+          <div style={{ display:"flex", borderBottom:`1px solid ${G.border}` }}>
+            <div style={{ width:labelW, flexShrink:0 }} />
+            {DAYS.map((d,i)=>(
+              <div key={d} style={{ width:colW, flexShrink:0, padding:"8px 0", textAlign:"center", fontSize:12, fontWeight:700, color:G.muted, letterSpacing:"0.04em", borderLeft:`1px solid ${G.border}` }}>
+                {DAY_LABELS[i]}
+              </div>
+            ))}
+          </div>
+
+          {/* Grid body */}
+          <div style={{ position:"relative" }}>
+            {/* Hour grid lines + labels */}
+            {Array.from({length:END_H-START_H+1},(_,i)=>i).map(i=>{
+              const pct=(i*60/TOTAL)*100;
+              return (
+                <div key={i} style={{ position:"absolute", top:`${pct}%`, left:0, right:0, display:"flex", pointerEvents:"none" }}>
+                  <div style={{ width:labelW, flexShrink:0, textAlign:"right", paddingRight:8, fontSize:10, color:G.muted, transform:"translateY(-50%)" }}>{String(START_H+i).padStart(2,"0")}:00</div>
+                  <div style={{ flex:1, borderTop:`1px solid ${G.border}`, opacity:0.5 }} />
+                </div>
+              );
+            })}
+
+            {/* Day columns */}
+            <div style={{ display:"flex", height: (END_H-START_H)*rowH }}>
+              <div style={{ width:labelW, flexShrink:0 }} />
+              {DAYS.map((day,di)=>{
+                const storePeriods = storeSchedule[day]||[];
+                return (
+                  <div key={day} style={{ width:colW, flexShrink:0, position:"relative", borderLeft:`1px solid ${G.border}` }}>
+                    {/* Outside-store-hours hatching */}
+                    {storePeriods.length===0?(
+                      <div style={{ position:"absolute", inset:0, background:"repeating-linear-gradient(45deg,rgba(0,0,0,0.04),rgba(0,0,0,0.04) 4px,transparent 4px,transparent 10px)" }} />
+                    ):(()=>{
+                      const open=timeToMins(storePeriods[0].start)-START_H*60;
+                      const close=timeToMins(storePeriods[storePeriods.length-1].end)-START_H*60;
+                      const pOpen=(open/TOTAL)*100, pClose=(close/TOTAL)*100;
+                      return <>
+                        <div style={{ position:"absolute", top:0, left:0, right:0, height:`${Math.max(0,pOpen)}%`, background:"repeating-linear-gradient(45deg,rgba(0,0,0,0.04),rgba(0,0,0,0.04) 4px,transparent 4px,transparent 10px)" }} />
+                        <div style={{ position:"absolute", bottom:0, left:0, right:0, height:`${Math.max(0,100-pClose)}%`, background:"repeating-linear-gradient(45deg,rgba(0,0,0,0.04),rgba(0,0,0,0.04) 4px,transparent 4px,transparent 10px)" }} />
+                      </>;
+                    })()}
+
+                    {/* Menu availability blocks */}
+                    {menusWithHours.map((m,mi)=>{
+                      if (!m.hours_days?.includes(day)) return null;
+                      const c=MENU_COLORS[mi%MENU_COLORS.length];
+                      const fromMins=timeToMins(m.hours_from)-START_H*60;
+                      const toMins=timeToMins(m.hours_until)-START_H*60;
+                      const top=(Math.max(0,fromMins)/TOTAL)*100;
+                      const height=((toMins-fromMins)/TOTAL)*100;
+                      return (
+                        <div key={m.mid} style={{
+                          position:"absolute", left:3, right:3,
+                          top:`${top}%`, height:`${height}%`,
+                          background:c.bg, border:`1px solid ${c.border}`,
+                          borderRadius:4, padding:"2px 4px", overflow:"hidden",
+                          fontSize:10, color:c.text, fontWeight:600, lineHeight:1.3,
+                        }}>
+                          {m.name}<br/>{m.hours_from}–{m.hours_until}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+      {menusWithHours.length===0&&(
+        <div style={{ padding:"20px 20px 20px 20px", fontSize:13, color:G.muted }}>
+          No menus have availability hours set yet. Open a menu and set its hours to see them here.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── MENUS PAGE ───────────────────────────────────────────────────────────────
 function MenusPage({ toast }) {
   const [menus, setMenus] = useState([]); const [loading, setLoading] = useState(true); const [viewMid, setViewMid] = useState(null);
@@ -590,15 +718,68 @@ function MenusPage({ toast }) {
   const [sidebarCat, setSidebarCat] = useState(""); const [form, setForm] = useState({name:"",available:true,delivery_fee:"",recipe_ids:[]});
   const [dialog, setDialog] = useState(null); const [toRemove, setToRemove] = useState([]); const [editTitle, setEditTitle] = useState(false); const [titleVal, setTitleVal] = useState(""); const [saving, setSaving] = useState(false);
 
+  // Availability hours state for detail view
+  const [hoursFrom, setHoursFrom] = useState("09:00");
+  const [hoursUntil, setHoursUntil] = useState("21:00");
+  const [hoursDays, setHoursDays] = useState([]);
+  const [hoursWarning, setHoursWarning] = useState("");
+  const [applyingHours, setApplyingHours] = useState(false);
+
   const load=useCallback(async()=>{ setLoading(true); try{ const[m,r]=await Promise.all([api.getMenus(),api.getAvailableRecipes()]); setMenus(m); setAvailRecipes(r); } catch(e){toast(e.message,"error");} finally{setLoading(false);} },[]);
   useEffect(()=>{load();},[]);
 
+  // Sync hours state when opening a menu
+  useEffect(()=>{
+    if (viewMid) {
+      const m=menus.find(x=>x.mid===viewMid);
+      if (m) {
+        setHoursFrom(m.hours_from||"09:00");
+        setHoursUntil(m.hours_until||"21:00");
+        setHoursDays(m.hours_days||[]);
+        setHoursWarning("");
+      }
+    }
+  },[viewMid]);
+
   const saveNew=async()=>{ if(!form.name.trim())return; setSaving(true); try{ const m=await api.createMenu({name:form.name,available:form.available,delivery_fee:Number(form.delivery_fee)||0,recipe_ids:form.recipe_ids}); setMenus(prev=>[...prev,m]); toast(`"${m.name}" saved`); setShowNew(false); setForm({name:"",available:true,delivery_fee:"",recipe_ids:[]}); } catch(e){toast(e.message,"error");} finally{setSaving(false);} };
-  const patchMenu=async(mid,data)=>{ try{ const u=await api.patchMenu(mid,data); setMenus(prev=>prev.map(m=>m.mid===mid?u:m)); } catch(e){toast(e.message,"error");} };
+  const patchMenu=async(mid,data)=>{ try{ const u=await api.patchMenu(mid,data); setMenus(prev=>prev.map(m=>m.mid===mid?u:m)); return u; } catch(e){toast(e.message,"error");} };
   const removeRecipes=async()=>{ try{ const u=await api.removeMenuRecipes(viewMid,toRemove); setMenus(prev=>prev.map(m=>m.mid===viewMid?u:m)); toast("Removed from menu"); setToRemove([]); setDialog(null); } catch(e){toast(e.message,"error");} };
+
+  const applyHours = async () => {
+    if (!hoursDays.length) { setHoursWarning("Select at least one day."); return; }
+    setApplyingHours(true);
+    setHoursWarning("");
+
+    // Validate against default store hours
+    const store = DEFAULT_STORE;
+    const fromMins = timeToMins(hoursFrom);
+    const toMins   = timeToMins(hoursUntil);
+    const badDays  = [];
+
+    for (const day of hoursDays) {
+      const periods = store[day]||[];
+      if (periods.length === 0) { badDays.push(day); continue; }
+      const storeOpen  = timeToMins(periods[0].start);
+      const storeClose = timeToMins(periods[periods.length-1].end);
+      if (fromMins < storeOpen || toMins > storeClose) badDays.push(day);
+    }
+
+    if (badDays.length) {
+      const names = badDays.map(d=>d.charAt(0).toUpperCase()+d.slice(1)).join(", ");
+      setHoursWarning(`Menu is available outside store hours on ${names}. Review menu hours and edit, if necessary.`);
+    }
+
+    try {
+      await patchMenu(viewMid, { hours_from:hoursFrom, hours_until:hoursUntil, hours_days:hoursDays });
+      toast("Availability hours saved");
+    } catch(e) { toast(e.message,"error"); }
+    finally { setApplyingHours(false); }
+  };
 
   const sidebarCats=[...new Set(availRecipes.map(r=>r.category))].filter(Boolean);
   const sidebarRecs=availRecipes.filter(r=>!sidebarCat||r.category===sidebarCat);
+
+  const toggleDay = day => setHoursDays(p=>p.includes(day)?p.filter(d=>d!==day):[...p,day]);
 
   if (viewMid) {
     const menu=menus.find(m=>m.mid===viewMid);
@@ -616,14 +797,71 @@ function MenusPage({ toast }) {
               style={{ fontFamily:G.font, fontSize:28, fontWeight:700, cursor:"text", display:"inline-block", borderBottom:"2px solid transparent", transition:"border-color 0.2s" }}
               onMouseEnter={e=>e.target.style.borderColor=G.caramel} onMouseLeave={e=>e.target.style.borderColor="transparent"}>{menu.name}</h1>
           )}
-          <div style={{ display:"flex", alignItems:"center", gap:16, marginTop:12 }}>
+
+          {/* Availability row */}
+          <div style={{ display:"flex", alignItems:"center", gap:16, marginTop:12, flexWrap:"wrap" }}>
             <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontSize:14 }}>
               <input type="checkbox" checked={menu.available} onChange={()=>patchMenu(menu.mid,{available:!menu.available})} style={{accentColor:G.caramel}} />
               Available to customers
             </label>
             {toRemove.length>0&&<Btn variant="danger" size="sm" onClick={()=>setDialog("remove")}>Remove selected ({toRemove.length})</Btn>}
           </div>
+
+          {/* Availability hours */}
+          <div style={{ marginTop:20, background:G.sand, borderRadius:12, padding:20 }}>
+            <p style={{ fontSize:13, fontWeight:700, color:G.dark, marginBottom:14, letterSpacing:"0.02em" }}>Availability Hours</p>
+
+            {/* Day toggles */}
+            <div style={{ display:"flex", gap:6, marginBottom:14, flexWrap:"wrap" }}>
+              {DAYS.map((d,i)=>(
+                <button key={d} onClick={()=>toggleDay(d)} style={{
+                  padding:"5px 12px", borderRadius:20, border:"none", cursor:"pointer", fontSize:12, fontWeight:700,
+                  background:hoursDays.includes(d)?G.caramel:G.white, color:hoursDays.includes(d)?G.white:G.muted,
+                  transition:"all 0.15s"
+                }}>{DAY_LABELS[i]}</button>
+              ))}
+            </div>
+
+            {/* Time range */}
+            <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <label style={{ fontSize:13, color:G.muted, fontWeight:600 }}>From</label>
+                <input type="time" value={hoursFrom} onChange={e=>setHoursFrom(e.target.value)}
+                  style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${G.border}`, background:G.white, fontSize:13, fontFamily:G.mono, outline:"none" }} />
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <label style={{ fontSize:13, color:G.muted, fontWeight:600 }}>Until</label>
+                <input type="time" value={hoursUntil} onChange={e=>setHoursUntil(e.target.value)}
+                  style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${G.border}`, background:G.white, fontSize:13, fontFamily:G.mono, outline:"none" }} />
+              </div>
+              <Btn size="sm" onClick={applyHours} loading={applyingHours}>Apply</Btn>
+              {menu.hours_from&&(
+                <Btn size="sm" variant="ghost" onClick={async()=>{
+                  await patchMenu(menu.mid,{hours_from:null,hours_until:null,hours_days:[]});
+                  setHoursFrom("09:00"); setHoursUntil("21:00"); setHoursDays([]); setHoursWarning("");
+                  toast("Hours cleared");
+                }}>Clear hours</Btn>
+              )}
+            </div>
+
+            {/* Warning */}
+            {hoursWarning&&(
+              <div style={{ marginTop:12, padding:"10px 14px", background:"#fefce8", border:"1px solid #eab308", borderLeft:"3px solid #eab308", borderRadius:8, fontSize:13, color:"#854d0e", display:"flex", alignItems:"flex-start", gap:8, animation:"fadeIn 0.2s ease" }}>
+                <span>⚠️</span>
+                <span style={{flex:1}}>{hoursWarning}</span>
+                <button onClick={()=>setHoursWarning("")} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:16,lineHeight:1,flexShrink:0}}>×</button>
+              </div>
+            )}
+
+            {menu.hours_from&&(
+              <p style={{ fontSize:12, color:G.muted, marginTop:10 }}>
+                Currently active: <b>{menu.hours_days?.map(d=>d.charAt(0).toUpperCase()+d.slice(1)).join(", ")}</b> · {menu.hours_from} – {menu.hours_until}
+              </p>
+            )}
+          </div>
         </div>
+
+        {/* Recipe list */}
         <div style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, overflow:"hidden" }}>
           {Object.entries(grouped).map(([cat,recs])=>(
             <div key={cat}>
@@ -713,6 +951,7 @@ function MenusPage({ toast }) {
           {menus.length===0&&<p style={{color:G.muted,fontSize:14}}>No menus yet.</p>}
         </div>
       )}
+      {!loading&&<MenuCalendar menus={menus} />}
     </Page>
   );
 }

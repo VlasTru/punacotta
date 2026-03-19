@@ -372,10 +372,13 @@ async function route(method, segments, body, headers, event) {
       if (method === 'GET') { const m = await fetchMenu(r1); return m ? [200, m] : [404, { error: 'Not found' }] }
       if (method === 'PATCH') {
         if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
-        const { name, available, delivery_fee } = body
+        const { name, available, delivery_fee, hours_from, hours_until, hours_days } = body
         if (name !== undefined) await dbr('UPDATE menu SET name=$1 WHERE mid=$2', [name.trim(), r1])
         if (available !== undefined) await dbr('UPDATE menu SET available=$1 WHERE mid=$2', [!!available, r1])
         if (delivery_fee !== undefined) await dbr('UPDATE menu SET delivery_fee=$1 WHERE mid=$2', [Number(delivery_fee), r1])
+        if (hours_from !== undefined) await dbr('UPDATE menu SET hours_from=$1 WHERE mid=$2', [hours_from||null, r1])
+        if (hours_until !== undefined) await dbr('UPDATE menu SET hours_until=$1 WHERE mid=$2', [hours_until||null, r1])
+        if (hours_days !== undefined) await dbr('UPDATE menu SET hours_days=$1 WHERE mid=$2', [hours_days||[], r1])
         return [200, await fetchMenu(r1)]
       }
     }
