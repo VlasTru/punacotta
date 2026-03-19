@@ -352,6 +352,23 @@ async function route(method, segments, body, headers, event) {
     }
   }
 
+  // ── SCHEDULE ──────────────────────────────────────────────────────────────
+  if (r0 === 'schedule') {
+    if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+    if (method === 'GET') {
+      const [row] = await dbq('SELECT schedule FROM "user" WHERE uid=$1', [user.uid])
+      return [200, row?.schedule || { schedule: {}, timezone: 'UTC', latest_order_before: '01:00' }]
+    }
+    if (method === 'PUT') {
+      const { schedule, timezone, latest_order_before } = body
+      await dbr(
+        'UPDATE "user" SET schedule=$1 WHERE uid=$2',
+        [JSON.stringify({ schedule, timezone, latest_order_before }), user.uid]
+      )
+      return [200, { schedule, timezone, latest_order_before }]
+    }
+  }
+
   // ── MENUS ─────────────────────────────────────────────────────────────────
   if (r0 === 'menus') {
     if (!user) return [401, { error: 'Unauthorized' }]
@@ -367,6 +384,29 @@ async function route(method, segments, body, headers, event) {
           await dbr('DELETE FROM menu_recipe WHERE mid=$1 AND rid=$2', [r1, rid])
         return [200, await fetchMenu(r1)]
       }
+    }
+    // POST /menus/:mid/duplicate
+    if (r1 && r2 === 'duplicate' && method === 'POST') {
+      if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+      const src = await fetchMenu(r1)
+      if (!src) return [404, { error: 'Menu not found' }]
+      // Find next available copy name: "Name (1)", "Name (2)", ...
+      const baseName = src.name.replace(/\s*\(\d+\)$/, '')
+      const existing = await dbq(
+        `SELECT name FROM menu WHERE owner_uid=$1 AND name LIKE $2`,
+        [user.uid, `${baseName}%`]
+      )
+      let n = 1
+      while (existing.find(r => r.name === `${baseName} (${n})`)) n++
+      const newName = `${baseName} (${n})`
+      const res = await dbr(
+        'INSERT INTO menu (name,available,delivery_fee,owner_uid) VALUES ($1,false,$2,$3) RETURNING mid',
+        [newName, src.delivery_fee, user.uid]
+      )
+      const newMid = res.rows[0].mid
+      for (const r of src.recipes||[])
+        await dbr('INSERT INTO menu_recipe (mid,rid) VALUES ($1,$2) ON CONFLICT DO NOTHING', [newMid, r.rid])
+      return [201, await fetchMenu(newMid)]
     }
     if (r1) {
       if (method === 'GET') { const m = await fetchMenu(r1); return m ? [200, m] : [404, { error: 'Not found' }] }

@@ -269,6 +269,7 @@ function RecipeForm({ initial, lookups, onSave, onCancel, saving }) {
 // ─── NAV ──────────────────────────────────────────────────────────────────────
 function Nav({ user, page, setPage, logout }) {
   const isM = user?.is_manufacturer;
+  const [dropOpen, setDropOpen] = useState(false);
   const links = isM
     ? [{key:"orders-manuf",label:"Orders"},{key:"products",label:"Products"},{key:"recipes",label:"Recipes"},{key:"menus",label:"Menus"}]
     : [{key:"restaurants",label:"Restaurants"},{key:"orders-cust",label:"My Orders"}];
@@ -280,9 +281,29 @@ function Nav({ user, page, setPage, logout }) {
           <button key={l.key} onClick={()=>setPage(l.key)} style={{ background:page===l.key?G.sand:"none", border:"none", padding:"6px 14px", borderRadius:8, fontFamily:G.mono, fontSize:14, fontWeight:page===l.key?600:400, color:page===l.key?G.caramel:G.muted, cursor:"pointer", transition:"all 0.15s" }}>{l.label}</button>
         ))}
       </div>
-      <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-        <span style={{ fontSize:13, color:G.muted }}>{user?.first_name} {user?.last_name}</span>
-        <Btn variant="ghost" size="sm" onClick={logout}>Log out</Btn>
+      <div style={{ position:"relative" }}>
+        <button onClick={()=>setDropOpen(p=>!p)} style={{ display:"flex", alignItems:"center", gap:6, background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:13, color:G.muted, padding:"6px 10px", borderRadius:8 }}>
+          {user?.first_name} {user?.last_name}
+          <span style={{ fontSize:10, opacity:0.6 }}>▾</span>
+        </button>
+        {dropOpen&&(
+          <div onClick={()=>setDropOpen(false)} style={{ position:"fixed", inset:0, zIndex:149 }} />
+        )}
+        {dropOpen&&(
+          <div style={{ position:"absolute", right:0, top:"calc(100% + 6px)", background:G.white, border:`1px solid ${G.border}`, borderRadius:10, boxShadow:"0 8px 24px rgba(44,24,16,0.12)", minWidth:160, zIndex:150, overflow:"hidden", animation:"fadeIn 0.15s ease" }}>
+            {isM&&(
+              <button onClick={()=>{setPage("schedule");setDropOpen(false);}} style={{ width:"100%", textAlign:"left", padding:"10px 16px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.dark }}
+                onMouseEnter={e=>e.target.style.background=G.sand} onMouseLeave={e=>e.target.style.background="none"}>
+                🕐 Schedule
+              </button>
+            )}
+            <div style={{ height:1, background:G.border }} />
+            <button onClick={()=>{logout();setDropOpen(false);}} style={{ width:"100%", textAlign:"left", padding:"10px 16px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.red }}
+              onMouseEnter={e=>e.target.style.background=G.sand} onMouseLeave={e=>e.target.style.background="none"}>
+              Log out
+            </button>
+          </div>
+        )}
       </div>
     </nav>
   );
@@ -717,6 +738,7 @@ function MenusPage({ toast }) {
   const [showNew, setShowNew] = useState(false); const [showSidebar, setShowSidebar] = useState(false); const [availRecipes, setAvailRecipes] = useState([]);
   const [sidebarCat, setSidebarCat] = useState(""); const [form, setForm] = useState({name:"",available:true,delivery_fee:"",recipe_ids:[]});
   const [dialog, setDialog] = useState(null); const [toRemove, setToRemove] = useState([]); const [editTitle, setEditTitle] = useState(false); const [titleVal, setTitleVal] = useState(""); const [saving, setSaving] = useState(false);
+  const [storeSchedule, setStoreSchedule] = useState(DEFAULT_STORE);
 
   // Availability hours state for detail view
   const [hoursFrom, setHoursFrom] = useState("09:00");
@@ -725,7 +747,11 @@ function MenusPage({ toast }) {
   const [hoursWarning, setHoursWarning] = useState("");
   const [applyingHours, setApplyingHours] = useState(false);
 
-  const load=useCallback(async()=>{ setLoading(true); try{ const[m,r]=await Promise.all([api.getMenus(),api.getAvailableRecipes()]); setMenus(m); setAvailRecipes(r); } catch(e){toast(e.message,"error");} finally{setLoading(false);} },[]);
+  const load=useCallback(async()=>{ setLoading(true); try{
+    const[m,r,s]=await Promise.all([api.getMenus(),api.getAvailableRecipes(),api.getSchedule().catch(()=>null)]);
+    setMenus(m); setAvailRecipes(r);
+    if (s?.schedule) setStoreSchedule(s.schedule);
+  } catch(e){toast(e.message,"error");} finally{setLoading(false);} },[]);
   useEffect(()=>{load();},[]);
 
   // Sync hours state when opening a menu
@@ -750,8 +776,8 @@ function MenusPage({ toast }) {
     setApplyingHours(true);
     setHoursWarning("");
 
-    // Validate against default store hours
-    const store = DEFAULT_STORE;
+    // Validate against live store hours
+    const store = storeSchedule;
     const fromMins = timeToMins(hoursFrom);
     const toMins   = timeToMins(hoursUntil);
     const badDays  = [];
@@ -787,7 +813,20 @@ function MenusPage({ toast }) {
     const grouped={};
     (menu.recipes||[]).forEach(r=>{if(!grouped[r.category])grouped[r.category]=[];grouped[r.category].push(r);});
     return (
-      <Page actions={<Btn variant="ghost" size="sm" onClick={()=>setViewMid(null)}>← All menus</Btn>}>
+      <Page actions={
+        <div style={{display:"flex",gap:10}}>
+          <Btn variant="secondary" size="sm" onClick={async()=>{
+            try {
+              const copy = await api.duplicateMenu(viewMid);
+              setMenus(prev=>[...prev,copy]);
+              const baseName = menu.name.replace(/\s*\(\d+\)$/,"");
+              toast(`"${copy.name}" created`);
+              setViewMid(copy.mid);
+            } catch(e){ toast(e.message,"error"); }
+          }}>Duplicate</Btn>
+          <Btn variant="ghost" size="sm" onClick={()=>setViewMid(null)}>← All menus</Btn>
+        </div>
+      }>
         <div style={{ marginBottom:20 }}>
           {editTitle?(
             <input autoFocus value={titleVal} onChange={e=>setTitleVal(e.target.value)} onBlur={()=>{patchMenu(menu.mid,{name:titleVal});setEditTitle(false);}} onKeyDown={e=>e.key==="Enter"&&e.target.blur()}
@@ -951,7 +990,7 @@ function MenusPage({ toast }) {
           {menus.length===0&&<p style={{color:G.muted,fontSize:14}}>No menus yet.</p>}
         </div>
       )}
-      {!loading&&<MenuCalendar menus={menus} />}
+      {!loading&&<MenuCalendar menus={menus} storeSchedule={storeSchedule} />}
     </Page>
   );
 }
@@ -1216,6 +1255,145 @@ function OrdersCustPage({ toast }) {
   );
 }
 
+// ─── SCHEDULE PAGE ────────────────────────────────────────────────────────────
+const TIMEZONES = [
+  "Africa/Cairo","Africa/Lagos","Africa/Nairobi","America/Anchorage","America/Bogota",
+  "America/Chicago","America/Denver","America/Los_Angeles","America/Mexico_City",
+  "America/New_York","America/Sao_Paulo","America/Toronto","Asia/Bangkok","Asia/Dubai",
+  "Asia/Hong_Kong","Asia/Jakarta","Asia/Karachi","Asia/Kolkata","Asia/Seoul",
+  "Asia/Shanghai","Asia/Singapore","Asia/Taipei","Asia/Tehran","Asia/Tokyo",
+  "Asia/Yerevan","Australia/Melbourne","Australia/Sydney","Europe/Amsterdam",
+  "Europe/Athens","Europe/Berlin","Europe/Brussels","Europe/Budapest","Europe/Dublin",
+  "Europe/Istanbul","Europe/Lisbon","Europe/London","Europe/Madrid","Europe/Moscow",
+  "Europe/Oslo","Europe/Paris","Europe/Prague","Europe/Rome","Europe/Stockholm",
+  "Europe/Vienna","Europe/Warsaw","Europe/Zurich","Pacific/Auckland","Pacific/Honolulu",
+  "UTC",
+];
+
+const BLANK_SCHEDULE = {
+  monday:[{start:"09:00",end:"21:00"}], tuesday:[{start:"09:00",end:"21:00"}],
+  wednesday:[{start:"09:00",end:"21:00"}], thursday:[{start:"09:00",end:"21:00"}],
+  friday:[{start:"09:00",end:"21:00"}], saturday:[{start:"10:00",end:"18:00"}],
+  sunday:[],
+};
+
+function periodDiff(start, end) {
+  // returns "HH:MM" for the duration between two "HH:MM" strings
+  const s=timeToMins(start), e=timeToMins(end);
+  if (e<=s) return "00:00";
+  const diff=e-s;
+  return `${String(Math.floor(diff/60)).padStart(2,"0")}:${String(diff%60).padStart(2,"0")}`;
+}
+
+function maxLatestOrder(periods) {
+  if (!periods||!periods.length) return "00:00";
+  const last = periods[periods.length-1];
+  return periodDiff(last.start, last.end);
+}
+
+function SchedulePage({ toast }) {
+  const [schedule, setSchedule] = useState(BLANK_SCHEDULE);
+  const [timezone, setTimezone] = useState(
+    Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
+  );
+  const [latestOrder, setLatestOrder] = useState("01:00");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(()=>{
+    api.getSchedule().then(s=>{
+      if (s?.schedule) setSchedule(s.schedule);
+      if (s?.timezone) setTimezone(s.timezone);
+      if (s?.latest_order_before) setLatestOrder(s.latest_order_before);
+    }).catch(()=>{}).finally(()=>setLoading(false));
+  },[]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.saveSchedule({ schedule, timezone, latest_order_before: latestOrder });
+      toast("Schedule saved");
+    } catch(e){ toast(e.message,"error"); }
+    finally { setSaving(false); }
+  };
+
+  const addPeriod = day => setSchedule(p=>({...p,[day]:[...p[day],{start:"09:00",end:"17:00"}]}));
+  const removePeriod = (day,i) => setSchedule(p=>({...p,[day]:p[day].filter((_,j)=>j!==i)}));
+  const updatePeriod = (day,i,field,val) => setSchedule(p=>({...p,[day]:p[day].map((per,j)=>j===i?{...per,[field]:val}:per)}));
+
+  if (loading) return <Page title="Schedule"><Spinner/></Page>;
+
+  // Max allowed latest_order for any day (minimum of all max values)
+  const allMaxes = DAYS.map(d=>maxLatestOrder(schedule[d])).filter(v=>v!=="00:00");
+  const globalMax = allMaxes.length ? allMaxes.reduce((a,b)=>timeToMins(a)<timeToMins(b)?a:b) : "12:00";
+
+  return (
+    <Page title="Schedule" actions={<Btn onClick={save} loading={saving}>Save schedule</Btn>}>
+      {/* Timezone */}
+      <div style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, padding:24, marginBottom:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20, alignItems:"end" }}>
+          <Select label="Time zone" value={timezone} onChange={setTimezone}
+            options={TIMEZONES.map(tz=>({value:tz,label:tz.replace("_"," ")}))} />
+          <div>
+            <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:6 }}>
+              Latest order no later than <span style={{color:G.caramel}}>___</span> before closing
+            </label>
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <input type="time" value={latestOrder} min="00:00" max={globalMax}
+                onChange={e=>setLatestOrder(e.target.value)}
+                style={{ padding:"9px 12px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:14, fontFamily:G.mono, outline:"none" }} />
+              <span style={{ fontSize:12, color:G.muted }}>max {globalMax}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Day rows */}
+      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+        {DAYS.map((day,di)=>{
+          const periods = schedule[day]||[];
+          const isOff = periods.length===0;
+          return (
+            <div key={day} style={{ background:G.white, borderRadius:12, border:`1px solid ${G.border}`, padding:"16px 20px" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:16, flexWrap:"wrap" }}>
+                {/* Day label + on/off toggle */}
+                <div style={{ display:"flex", alignItems:"center", gap:10, minWidth:120 }}>
+                  <label style={{ display:"flex", alignItems:"center", gap:7, cursor:"pointer" }}>
+                    <input type="checkbox" checked={!isOff}
+                      onChange={e=>{ if(e.target.checked) addPeriod(day); else setSchedule(p=>({...p,[day]:[]})); }}
+                      style={{accentColor:G.caramel, width:16, height:16}} />
+                    <span style={{ fontWeight:700, fontSize:14, color:isOff?G.muted:G.dark }}>{DAY_LABELS[di]}</span>
+                  </label>
+                  {isOff&&<span style={{ fontSize:12, color:G.muted, fontStyle:"italic" }}>Closed</span>}
+                </div>
+
+                {/* Periods */}
+                <div style={{ display:"flex", flexDirection:"column", gap:8, flex:1 }}>
+                  {periods.map((per,i)=>(
+                    <div key={i} style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+                      <input type="time" value={per.start} onChange={e=>updatePeriod(day,i,"start",e.target.value)}
+                        style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none" }} />
+                      <span style={{ color:G.muted, fontSize:13 }}>–</span>
+                      <input type="time" value={per.end} onChange={e=>updatePeriod(day,i,"end",e.target.value)}
+                        style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none" }} />
+                      <button onClick={()=>removePeriod(day,i)} style={{ background:"none", border:"none", color:G.red, cursor:"pointer", fontSize:13, fontFamily:G.mono, padding:"0 4px" }}>Remove</button>
+                    </div>
+                  ))}
+                  {!isOff&&(
+                    <button onClick={()=>addPeriod(day)} style={{ background:"none", border:`1px dashed ${G.border}`, color:G.caramel, cursor:"pointer", fontSize:12, fontFamily:G.mono, padding:"5px 12px", borderRadius:8, alignSelf:"flex-start", fontWeight:600 }}>
+                      + Add period
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Page>
+  );
+}
+
 // ─── APP ROOT ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [user, setUser] = useState(()=>{
@@ -1247,6 +1425,7 @@ export default function App() {
           {page==="restaurants"  &&<RestaurantsPage setPage={setPage} setActiveMenu={setActiveMenu}/>}
           {page==="order"        &&<OrderPage menu={activeMenu} user={user} setPage={setPage} toast={toast}/>}
           {page==="orders-cust"  &&<OrdersCustPage toast={toast}/>}
+          {page==="schedule"     &&<SchedulePage toast={toast}/>}
         </>
       )}
     </>

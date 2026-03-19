@@ -63,8 +63,13 @@ export const api = {
   getMenu:           (mid)       => req('GET',    `/menus/${mid}`),
   createMenu:        (data)      => req('POST',   '/menus', data),
   patchMenu:         (mid, data) => req('PATCH',  `/menus/${mid}`, data),
+  duplicateMenu:     (mid)       => req('POST',   `/menus/${mid}/duplicate`),
   addMenuRecipes:    (mid, ids)  => req('POST',   `/menus/${mid}/recipes`, { recipe_ids: ids }),
   removeMenuRecipes: (mid, ids)  => req('DELETE', `/menus/${mid}/recipes`, { recipe_ids: ids }),
+
+  // Schedule
+  getSchedule:  ()     => req('GET',   '/schedule'),
+  saveSchedule: (data) => req('PUT',   '/schedule', data),
 
   // Orders
   getOrders:       ()     => req('GET',   '/orders'),

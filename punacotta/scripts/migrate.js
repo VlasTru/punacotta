@@ -66,6 +66,9 @@ CREATE TABLE IF NOT EXISTS recipe (
   deleted     BOOLEAN      NOT NULL DEFAULT false
 );
 
+-- Add schedule column to user table (safe to re-run)
+ALTER TABLE "user" ADD COLUMN IF NOT EXISTS schedule JSONB;
+
 -- Add availability hours columns to menu (safe to re-run)
 ALTER TABLE menu ADD COLUMN IF NOT EXISTS hours_from  VARCHAR(5);
 ALTER TABLE menu ADD COLUMN IF NOT EXISTS hours_until VARCHAR(5);
