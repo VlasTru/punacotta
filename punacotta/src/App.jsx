@@ -1208,7 +1208,6 @@ function NewOrderModal({ onClose, onCreated, toast }) {
 function OrdersManufPage({ toast }) {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState([]);
   const [dialog, setDialog] = useState(null);
   const [pending, setPending] = useState(null);
   const [view, setView] = useState("kanban");
@@ -1232,8 +1231,13 @@ function OrdersManufPage({ toast }) {
   const statuses = Object.keys(STATUS_CONFIG);
   const advance  = async oid => { try{ const u=await api.advanceOrder(oid); setOrders(p=>p.map(o=>o.oid===oid?u:o)); toast(`Order #${oid} updated`); } catch(e){ toast(e.message,"error"); } };
   const decline  = async ()  => { try{ const u=await api.declineOrder(pending); setOrders(p=>p.map(o=>o.oid===pending?u:o)); toast(`Order #${pending} declined`); setDialog(null); } catch(e){ toast(e.message,"error"); } };
-  const toggleFilter = s => setFilter(p=>p.includes(s)?p.filter(x=>x!==s):[...p,s]);
   const toggleSort   = k => { if(sortKey===k) setSortDir(d=>d==="asc"?"desc":"asc"); else { setSortKey(k); setSortDir("desc"); } };
+
+  // filter = statuses that ARE shown (all by default)
+  const [filter, setFilter] = useState(statuses);
+  const [statusOpen, setStatusOpen] = useState(false);
+  const toggleStatus = s => setFilter(p => p.includes(s) ? p.filter(x=>x!==s) : [...p, s]);
+  const allSelected = filter.length === statuses.length;
 
   // Filter by date range
   const fromDate = parseLocalDate(dateFrom);
@@ -1246,8 +1250,8 @@ function OrdersManufPage({ toast }) {
     return true;
   });
 
-  // Status filter
-  const statusFiltered = filter.length ? dateFiltered.filter(o=>filter.includes(o.status)) : dateFiltered;
+  // Status filter — filter contains the statuses to SHOW
+  const statusFiltered = dateFiltered.filter(o=>filter.includes(o.status));
 
   // Search (≥3 chars, fuzzy)
   const q = search.trim();
@@ -1325,8 +1329,53 @@ function OrdersManufPage({ toast }) {
     </div>
   );
 
+  const StatusDropdown = () => (
+    <div style={{ position:"relative" }}>
+      <button onClick={()=>setStatusOpen(p=>!p)} style={{
+        display:"flex", alignItems:"center", gap:6, padding:"6px 12px",
+        borderRadius:8, border:`1px solid ${G.border}`, background:G.white,
+        fontFamily:G.mono, fontSize:13, cursor:"pointer", color:G.dark, whiteSpace:"nowrap"
+      }}>
+        Status{!allSelected ? ` (${filter.length}/${statuses.length})` : ""}
+        <span style={{ fontSize:10, color:G.muted }}>▾</span>
+      </button>
+      {statusOpen && (
+        <>
+          <div onClick={()=>setStatusOpen(false)} style={{ position:"fixed", inset:0, zIndex:149 }} />
+          <div style={{
+            position:"absolute", top:"calc(100% + 6px)", right:0, background:G.white,
+            border:`1px solid ${G.border}`, borderRadius:10, boxShadow:"0 8px 24px rgba(44,24,16,0.12)",
+            zIndex:150, minWidth:180, overflow:"hidden", animation:"fadeIn 0.15s ease"
+          }}>
+            {/* Select all / none */}
+            <button onClick={()=>{ setFilter(allSelected ? [] : [...statuses]); setPage(0); }}
+              style={{ width:"100%", textAlign:"left", padding:"9px 14px", background:"none", border:"none", borderBottom:`1px solid ${G.border}`, cursor:"pointer", fontFamily:G.mono, fontSize:12, fontWeight:700, color:G.muted }}
+              onMouseEnter={e=>e.currentTarget.style.background=G.sand}
+              onMouseLeave={e=>e.currentTarget.style.background="none"}>
+              {allSelected ? "Deselect all" : "Select all"}
+            </button>
+            {statuses.map(s=>{
+              const cfg = STATUS_CONFIG[s];
+              const checked = filter.includes(s);
+              return (
+                <label key={s} style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 14px", cursor:"pointer" }}
+                  onMouseEnter={e=>e.currentTarget.style.background=G.sand}
+                  onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                  <input type="checkbox" checked={checked}
+                    onChange={()=>{ toggleStatus(s); setPage(0); }}
+                    style={{ accentColor:cfg.color, width:14, height:14 }} />
+                  <span style={{ fontSize:13, color:checked?cfg.color:G.muted, fontWeight:checked?600:400 }}>{s}</span>
+                </label>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+
   const toolbar = (
-    <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+    <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"nowrap" }}>
       <Btn size="sm" onClick={()=>setShowNewOrder(true)}>+ New order</Btn>
       <SearchBox />
       <span style={{ fontSize:12, color:G.muted }}>From</span>
@@ -1334,14 +1383,7 @@ function OrdersManufPage({ toast }) {
       <span style={{ fontSize:12, color:G.muted }}>To</span>
       <DateInput value={dateTo}   onChange={v=>{setDateTo(v);setPage(0);}} />
       <ViewToggle />
-      {statuses.map(s=>(
-        <button key={s} onClick={()=>{toggleFilter(s);setPage(0);}} style={{
-          padding:"5px 12px", borderRadius:20, border:`1px solid ${filter.includes(s)?STATUS_CONFIG[s].color:G.border}`,
-          background:filter.includes(s)?STATUS_CONFIG[s].bg:G.white, color:filter.includes(s)?STATUS_CONFIG[s].color:G.muted,
-          fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:G.mono, transition:"all 0.15s"
-        }}>{s}</button>
-      ))}
-      {filter.length>0&&<button onClick={()=>setFilter([])} style={{ padding:"5px 12px", borderRadius:20, border:`1px solid ${G.border}`, background:"none", color:G.muted, fontSize:12, cursor:"pointer", fontFamily:G.mono }}>Clear</button>}
+      <StatusDropdown />
     </div>
   );
 
@@ -1357,7 +1399,7 @@ function OrdersManufPage({ toast }) {
       {loading ? <Spinner/> : view==="kanban" ? (
         // ── KANBAN ────────────────────────────────────────────────────────────
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(240px, 1fr))", gap:14 }}>
-          {(filter.length?filter:statuses).map(status=>{
+          {filter.map(status=>{
             const cfg=STATUS_CONFIG[status]; const col=searched.filter(o=>o.status===status);
             return (
               <div key={status} style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, overflow:"hidden" }}>
