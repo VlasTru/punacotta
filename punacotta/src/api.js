@@ -71,6 +71,9 @@ export const api = {
   getSchedule:  ()     => req('GET',   '/schedule'),
   saveSchedule: (data) => req('PUT',   '/schedule', data),
 
+  // Customers
+  searchCustomers: (q) => req('GET', `/customers/${encodeURIComponent(q)}`),
+
   // Orders
   getOrders:       ()     => req('GET',   '/orders'),
   placeOrder:      (data) => req('POST',  '/orders', data),

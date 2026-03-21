@@ -736,12 +736,11 @@ function MenuCalendar({ menus, storeSchedule=DEFAULT_STORE }) {
 }
 
 // ─── MENUS PAGE ───────────────────────────────────────────────────────────────
-function MenusPage({ toast }) {
+function MenusPage({ toast, storeSchedule, setStoreSchedule }) {
   const [menus, setMenus] = useState([]); const [loading, setLoading] = useState(true); const [viewMid, setViewMid] = useState(null);
   const [showNew, setShowNew] = useState(false); const [showSidebar, setShowSidebar] = useState(false); const [availRecipes, setAvailRecipes] = useState([]);
   const [sidebarCat, setSidebarCat] = useState(""); const [form, setForm] = useState({name:"",available:true,delivery_fee:"",recipe_ids:[]});
   const [dialog, setDialog] = useState(null); const [toRemove, setToRemove] = useState([]); const [editTitle, setEditTitle] = useState(false); const [titleVal, setTitleVal] = useState(""); const [saving, setSaving] = useState(false);
-  const [storeSchedule, setStoreSchedule] = useState(DEFAULT_STORE);
 
   // Availability hours state for detail view
   const [hoursFrom, setHoursFrom] = useState("09:00");
@@ -754,8 +753,7 @@ function MenusPage({ toast }) {
     const[m,r,s]=await Promise.all([api.getMenus(),api.getAvailableRecipes(),api.getSchedule().catch(()=>null)]);
     setMenus(m); setAvailRecipes(r);
     if (s?.schedule) setStoreSchedule(s.schedule);
-  } catch(e){toast(e.message,"error");} finally{setLoading(false);} },[]);
-  useEffect(()=>{load();},[]);
+  } catch(e){toast(e.message,"error");} finally{setLoading(false);} },[]);  useEffect(()=>{load();},[]);
 
   // Sync hours state when opening a menu
   useEffect(()=>{
@@ -795,7 +793,8 @@ function MenusPage({ toast }) {
 
     if (badDays.length) {
       const names = badDays.map(d=>d.charAt(0).toUpperCase()+d.slice(1)).join(", ");
-      setHoursWarning(`Menu is available outside store hours on ${names}. Review menu hours and edit, if necessary.`);
+      setHoursWarning(`Menu is available outside store hours on ${names}. Review menu hours and store hours. Make changes to resolve collision, if necessary.`);
+      setTimeout(()=>setHoursWarning(""), 5000);
     }
 
     try {
@@ -999,19 +998,367 @@ function MenusPage({ toast }) {
 }
 
 // ─── ORDERS (MANUFACTURER) ────────────────────────────────────────────────────
-function OrdersManufPage({ toast }) {
-  const [orders, setOrders] = useState([]); const [loading, setLoading] = useState(true); const [filter, setFilter] = useState([]); const [dialog, setDialog] = useState(null); const [pending, setPending] = useState(null);
-  const load=useCallback(async()=>{setLoading(true);try{setOrders(await api.getOrders());}catch(e){toast(e.message,"error");}finally{setLoading(false);}},[]); useEffect(()=>{load();},[]);
-  const statuses=Object.keys(STATUS_CONFIG); const filtered=filter.length?orders.filter(o=>filter.includes(o.status)):orders;
-  const advance=async oid=>{try{const u=await api.advanceOrder(oid);setOrders(prev=>prev.map(o=>o.oid===oid?u:o));toast(`Order #${oid} updated`);}catch(e){toast(e.message,"error");}};
-  const decline=async()=>{try{const u=await api.declineOrder(pending);setOrders(prev=>prev.map(o=>o.oid===pending?u:o));toast(`Order #${pending} declined`);setDialog(null);}catch(e){toast(e.message,"error");}};
-  const toggleFilter=s=>setFilter(p=>p.includes(s)?p.filter(x=>x!==s):[...p,s]);
+function todayStr() {
+  const d = new Date();
+  return `${String(d.getDate()).padStart(2,"0")}-${String(d.getMonth()+1).padStart(2,"0")}-${d.getFullYear()}`;
+}
+function parseLocalDate(str) {
+  // DD-MM-YYYY → Date
+  const [dd,mm,yyyy] = str.split("-").map(Number);
+  if (!dd||!mm||!yyyy) return null;
+  return new Date(yyyy, mm-1, dd);
+}
+function fuzzyMatch(hay, needle) {
+  // 1-char fuzzy: for each position in hay, check if needle fits with ≤1 substitution/deletion
+  if (!needle) return true;
+  hay = hay.toLowerCase(); needle = needle.toLowerCase();
+  if (hay.includes(needle)) return true;
+  // allow 1 char difference via sliding window
+  for (let i = 0; i <= hay.length - needle.length + 1; i++) {
+    let mismatches = 0;
+    for (let j = 0; j < needle.length && j + i < hay.length; j++) {
+      if (hay[i+j] !== needle[j]) mismatches++;
+      if (mismatches > 1) break;
+    }
+    if (mismatches <= 1) return true;
+  }
+  return false;
+}
+
+// ─── NEW ORDER MODAL ──────────────────────────────────────────────────────────
+function NewOrderModal({ onClose, onCreated, toast }) {
+  const [menus, setMenus]         = useState([]);
+  const [mid, setMid]             = useState("");
+  const [selectedMenu, setSelectedMenu] = useState(null);
+  const [qty, setQty]             = useState({});
+  const [pickup, setPickup]       = useState(true);
+  const [delivery, setDelivery]   = useState("");
+  const [customerQ, setCustomerQ] = useState("");
+  const [results, setResults]     = useState([]);
+  const [customer, setCustomer]   = useState(null); // {uid, first_name, last_name} or null for walk-in
+  const [saving, setSaving]       = useState(false);
+  const searchRef                 = useRef(null);
+
+  // Load menus on open
+  useEffect(()=>{
+    api.getMenus().then(m=>{ setMenus(m); if(m.length===1){setMid(String(m[0].mid));setSelectedMenu(m[0]);} }).catch(()=>{});
+  },[]);
+
+  // Customer search with debounce
+  useEffect(()=>{
+    if (customerQ.length < 2) { setResults([]); return; }
+    const t = setTimeout(async()=>{
+      try { const r=await api.searchCustomers(customerQ); setResults(r); } catch{}
+    }, 300);
+    return ()=>clearTimeout(t);
+  },[customerQ]);
+
+  const selectMenu = id => {
+    const m = menus.find(x=>String(x.mid)===id);
+    setMid(id); setSelectedMenu(m||null); setQty({});
+  };
+
+  const changeQty = (rid, delta) =>
+    setQty(p=>({ ...p, [rid]: Math.max(0, Math.min(20, (p[rid]||0)+delta)) }));
+
+  const items = (selectedMenu?.recipes||[])
+    .filter(r=>(qty[r.rid]||0)>0)
+    .map(r=>({ rid:r.rid, name:r.name, qty:qty[r.rid], price:r.price }));
+
+  const total = items.reduce((s,it)=>s+it.qty*it.price, 0)
+    + (!pickup && selectedMenu ? selectedMenu.delivery_fee : 0);
+
+  const submit = async () => {
+    if (!mid) { toast("Select a menu","error"); return; }
+    if (!items.length) { toast("Add at least one item","error"); return; }
+    setSaving(true);
+    try {
+      const payload = {
+        mid: Number(mid),
+        pickup,
+        items,
+        delivery_address: !pickup ? delivery : null,
+        ...(customer?.uid ? { customer_uid: customer.uid } : { walkin_name: customerQ||"Walk-in" }),
+      };
+      const order = await api.placeOrder(payload);
+      toast(`Order #${order.oid} created`);
+      onCreated(order);
+      onClose();
+    } catch(e){ toast(e.message,"error"); }
+    finally { setSaving(false); }
+  };
+
+  // Group recipes by category for display
+  const grouped = {};
+  (selectedMenu?.recipes||[]).forEach(r=>{
+    if(!grouped[r.category])grouped[r.category]=[];
+    grouped[r.category].push(r);
+  });
+
   return (
-    <Page title="Orders" actions={<div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>{statuses.map(s=>(<button key={s} onClick={()=>toggleFilter(s)} style={{ padding:"5px 12px", borderRadius:20, border:`1px solid ${filter.includes(s)?STATUS_CONFIG[s].color:G.border}`, background:filter.includes(s)?STATUS_CONFIG[s].bg:G.white, color:filter.includes(s)?STATUS_CONFIG[s].color:G.muted, fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:G.mono, transition:"all 0.15s" }}>{s}</button>))}{filter.length>0&&<button onClick={()=>setFilter([])} style={{ padding:"5px 12px", borderRadius:20, border:`1px solid ${G.border}`, background:"none", color:G.muted, fontSize:12, cursor:"pointer", fontFamily:G.mono }}>Clear</button>}</div>}>
-      {loading?<Spinner/>:(
+    <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+      <div style={{ background:G.white, borderRadius:16, width:"100%", maxWidth:680, maxHeight:"92vh", display:"flex", flexDirection:"column", boxShadow:"0 20px 60px rgba(44,24,16,0.2)", animation:"fadeIn 0.2s ease" }}>
+
+        {/* Header */}
+        <div style={{ padding:"20px 24px", borderBottom:`1px solid ${G.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <h3 style={{ fontFamily:G.font, fontSize:20 }}>New order</h3>
+          <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, cursor:"pointer", color:G.muted, lineHeight:1 }}>×</button>
+        </div>
+
+        {/* Body — scrollable */}
+        <div style={{ flex:1, overflowY:"auto", padding:24, display:"flex", flexDirection:"column", gap:20 }}>
+
+          {/* Customer */}
+          <div>
+            <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:6 }}>Customer</label>
+            {customer ? (
+              <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px", background:G.sand, borderRadius:8 }}>
+                <span style={{ flex:1, fontSize:14 }}>👤 {customer.first_name} {customer.last_name}</span>
+                <button onClick={()=>{setCustomer(null);setCustomerQ("");}} style={{ background:"none", border:"none", color:G.red, cursor:"pointer", fontSize:13, fontFamily:G.mono }}>Remove</button>
+              </div>
+            ) : (
+              <div style={{ position:"relative" }}>
+                <input ref={searchRef} value={customerQ} onChange={e=>setCustomerQ(e.target.value)}
+                  placeholder="Search by name, email, phone — or type a walk-in name"
+                  style={{ width:"100%", padding:"10px 14px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:14, fontFamily:G.mono, outline:"none" }}
+                  onFocus={e=>e.target.style.borderColor=G.caramel} onBlur={e=>e.target.style.borderColor=G.border}
+                />
+                {results.length>0 && (
+                  <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, background:G.white, border:`1px solid ${G.border}`, borderRadius:10, boxShadow:"0 8px 24px rgba(44,24,16,0.12)", zIndex:10, overflow:"hidden" }}>
+                    {results.map(r=>(
+                      <button key={r.uid} onClick={()=>{ setCustomer(r); setCustomerQ(`${r.first_name} ${r.last_name}`); setResults([]); }}
+                        style={{ width:"100%", textAlign:"left", padding:"10px 14px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, display:"flex", gap:10 }}
+                        onMouseEnter={e=>e.currentTarget.style.background=G.sand}
+                        onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                        <span style={{flex:1}}>{r.first_name} {r.last_name}</span>
+                        <span style={{color:G.muted,fontSize:12}}>{r.email}</span>
+                      </button>
+                    ))}
+                    <div style={{ padding:"8px 14px", fontSize:12, color:G.muted, borderTop:`1px solid ${G.border}` }}>
+                      Not listed? The typed name will be used as a walk-in.
+                    </div>
+                  </div>
+                )}
+                {customerQ.length>0&&results.length===0&&customerQ.length>=2&&(
+                  <p style={{ fontSize:12, color:G.muted, marginTop:4 }}>No matching accounts — will be saved as walk-in "{customerQ||"Walk-in"}"</p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Menu selector */}
+          <Select label="Menu" value={mid} onChange={selectMenu}
+            options={menus.map(m=>({value:String(m.mid),label:m.name+(m.available?"":" (draft)")}))}
+            placeholder="Select a menu" required />
+
+          {/* Recipe picker */}
+          {selectedMenu && (
+            <div>
+              <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:10 }}>Items</label>
+              {Object.entries(grouped).map(([cat,recs])=>(
+                <div key={cat} style={{ marginBottom:12 }}>
+                  <p style={{ fontSize:11, fontWeight:700, color:G.muted, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:6 }}>{cat}</p>
+                  {recs.map(r=>(
+                    <div key={r.rid} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:`1px solid ${G.border}` }}>
+                      <span style={{ flex:1, fontSize:14 }}>{r.name}</span>
+                      <span style={{ fontSize:13, color:G.caramel, fontWeight:600, minWidth:70, textAlign:"right" }}>{r.price} {r.currency}</span>
+                      <button onClick={()=>changeQty(r.rid,-1)} style={{ width:26, height:26, borderRadius:6, border:`1px solid ${G.border}`, background:G.white, cursor:"pointer", fontSize:15, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>−</button>
+                      <span style={{ minWidth:18, textAlign:"center", fontWeight:700, fontSize:14 }}>{qty[r.rid]||0}</span>
+                      <button onClick={()=>changeQty(r.rid,1)} style={{ width:26, height:26, borderRadius:6, border:"none", background:G.caramel, cursor:"pointer", fontSize:15, fontWeight:700, color:G.white, display:"flex", alignItems:"center", justifyContent:"center" }}>+</button>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Fulfillment */}
+          {selectedMenu && (
+            <div>
+              <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:8 }}>Fulfillment</label>
+              <div style={{ display:"flex", gap:10 }}>
+                {[{val:true,label:"Pickup (free)"},{val:false,label:`Delivery (+${selectedMenu.delivery_fee} AMD)`}].map(opt=>(
+                  <label key={String(opt.val)} style={{ display:"flex", alignItems:"center", gap:7, cursor:"pointer", fontSize:14 }}>
+                    <input type="radio" name="mo_pickup" checked={pickup===opt.val} onChange={()=>setPickup(opt.val)} style={{accentColor:G.caramel}} />
+                    {opt.label}
+                  </label>
+                ))}
+              </div>
+              {!pickup && (
+                <Input label="Delivery address" value={delivery} onChange={setDelivery}
+                  placeholder="Street, city, ZIP" style={{marginTop:10}} />
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding:"16px 24px", borderTop:`1px solid ${G.border}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <span style={{ fontWeight:700, fontSize:16, color:G.caramel }}>{total > 0 ? `${total} AMD` : "—"}</span>
+          <div style={{ display:"flex", gap:10 }}>
+            <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+            <Btn onClick={submit} loading={saving} disabled={!items.length||!mid}>Place order</Btn>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OrdersManufPage({ toast }) {
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState([]);
+  const [dialog, setDialog] = useState(null);
+  const [pending, setPending] = useState(null);
+  const [view, setView] = useState("kanban");
+  const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState(todayStr());
+  const [dateTo, setDateTo]     = useState(todayStr());
+  const [sortKey, setSortKey]   = useState("oid");
+  const [sortDir, setSortDir]   = useState("desc");
+  const [page, setPage]         = useState(0);
+  const [pageSize, setPageSize] = useState(25);
+  const [showNewOrder, setShowNewOrder] = useState(false);
+
+  const load = useCallback(async()=>{
+    setLoading(true);
+    try { setOrders(await api.getOrders()); }
+    catch(e){ toast(e.message,"error"); }
+    finally { setLoading(false); }
+  },[]);
+  useEffect(()=>{ load(); },[]);
+
+  const statuses = Object.keys(STATUS_CONFIG);
+  const advance  = async oid => { try{ const u=await api.advanceOrder(oid); setOrders(p=>p.map(o=>o.oid===oid?u:o)); toast(`Order #${oid} updated`); } catch(e){ toast(e.message,"error"); } };
+  const decline  = async ()  => { try{ const u=await api.declineOrder(pending); setOrders(p=>p.map(o=>o.oid===pending?u:o)); toast(`Order #${pending} declined`); setDialog(null); } catch(e){ toast(e.message,"error"); } };
+  const toggleFilter = s => setFilter(p=>p.includes(s)?p.filter(x=>x!==s):[...p,s]);
+  const toggleSort   = k => { if(sortKey===k) setSortDir(d=>d==="asc"?"desc":"asc"); else { setSortKey(k); setSortDir("desc"); } };
+
+  // Filter by date range
+  const fromDate = parseLocalDate(dateFrom);
+  const toDate   = parseLocalDate(dateTo);
+
+  const dateFiltered = orders.filter(o=>{
+    const d = new Date(o.created_at);
+    if (fromDate && d < fromDate) return false;
+    if (toDate) { const end=new Date(toDate); end.setDate(end.getDate()+1); if (d >= end) return false; }
+    return true;
+  });
+
+  // Status filter
+  const statusFiltered = filter.length ? dateFiltered.filter(o=>filter.includes(o.status)) : dateFiltered;
+
+  // Search (≥3 chars, fuzzy)
+  const q = search.trim();
+  const searched = q.length >= 3 ? statusFiltered.filter(o=>{
+    const hay = [
+      o.oid?.toString(),
+      o.customer?.first_name,
+      o.customer?.last_name,
+      `${o.customer?.first_name} ${o.customer?.last_name}`,
+      o.status,
+      ...(o.items||[]).map(it=>it.name),
+    ].filter(Boolean).join(" ");
+    return fuzzyMatch(hay, q);
+  }) : statusFiltered;
+
+  // ── TABLE VIEW ──────────────────────────────────────────────────────────────
+  const TABLE_COLS = [
+    { key:"oid",        label:"#" },
+    { key:"created_at", label:"Date placed" },
+    { key:"first_name", label:"First name" },
+    { key:"last_name",  label:"Last name" },
+    { key:"status",     label:"Status" },
+    { key:"total",      label:"Total" },
+  ];
+
+  const tableRows = searched.map(o=>({
+    ...o,
+    first_name: o.customer?.first_name||"",
+    last_name:  o.customer?.last_name||"",
+    total: (o.items||[]).reduce((s,it)=>s+it.qty*it.price,0),
+  }));
+
+  const sorted = [...tableRows].sort((a,b)=>{
+    let av = a[sortKey], bv = b[sortKey];
+    if (sortKey==="created_at") { av=new Date(av); bv=new Date(bv); }
+    else if (sortKey==="oid"||sortKey==="total") { av=Number(av); bv=Number(bv); }
+    else { av=String(av||"").toLowerCase(); bv=String(bv||"").toLowerCase(); }
+    const v = av<bv?-1:av>bv?1:0;
+    return sortDir==="asc"?v:-v;
+  });
+
+  const totalPages = Math.ceil(sorted.length / pageSize);
+  const paged = sorted.slice(page*pageSize, (page+1)*pageSize);
+
+  // ── TOOLBAR ─────────────────────────────────────────────────────────────────
+  const DateInput = ({value, onChange}) => (
+    <input value={value} onChange={e=>onChange(e.target.value)} placeholder="DD-MM-YYYY"
+      style={{ padding:"6px 10px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, width:110, outline:"none" }}
+      onFocus={e=>e.target.style.borderColor=G.caramel} onBlur={e=>e.target.style.borderColor=G.border} />
+  );
+
+  // Search input with × clear
+  const SearchBox = () => (
+    <div style={{ position:"relative", display:"inline-flex", alignItems:"center" }}>
+      <input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}} placeholder="Search…"
+        style={{ padding:"6px 28px 6px 10px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, width:160, outline:"none" }}
+        onFocus={e=>e.target.style.borderColor=G.caramel} onBlur={e=>e.target.style.borderColor=G.border} />
+      {search&&<button onClick={()=>{setSearch("");setPage(0);}} style={{ position:"absolute", right:6, background:"none", border:"none", cursor:"pointer", color:G.muted, fontSize:14, lineHeight:1, padding:0 }}>×</button>}
+    </div>
+  );
+
+  // Kanban/Table toggle
+  const ViewToggle = () => (
+    <div style={{ display:"flex", borderRadius:8, border:`1px solid ${G.border}`, overflow:"hidden" }}>
+      {[{k:"kanban",icon:"⊞"},{k:"table",icon:"☰"}].map(({k,icon})=>(
+        <button key={k} onClick={()=>{
+          setView(k);
+          if (k==="kanban") { setDateFrom(todayStr()); setDateTo(todayStr()); }
+          setPage(0);
+        }} title={k} style={{
+          padding:"5px 11px", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:15,
+          background:view===k?G.caramel:G.white, color:view===k?G.white:G.muted, transition:"all 0.15s"
+        }}>{icon}</button>
+      ))}
+    </div>
+  );
+
+  const toolbar = (
+    <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+      <Btn size="sm" onClick={()=>setShowNewOrder(true)}>+ New order</Btn>
+      <SearchBox />
+      <span style={{ fontSize:12, color:G.muted }}>From</span>
+      <DateInput value={dateFrom} onChange={v=>{setDateFrom(v);setPage(0);}} />
+      <span style={{ fontSize:12, color:G.muted }}>To</span>
+      <DateInput value={dateTo}   onChange={v=>{setDateTo(v);setPage(0);}} />
+      <ViewToggle />
+      {statuses.map(s=>(
+        <button key={s} onClick={()=>{toggleFilter(s);setPage(0);}} style={{
+          padding:"5px 12px", borderRadius:20, border:`1px solid ${filter.includes(s)?STATUS_CONFIG[s].color:G.border}`,
+          background:filter.includes(s)?STATUS_CONFIG[s].bg:G.white, color:filter.includes(s)?STATUS_CONFIG[s].color:G.muted,
+          fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:G.mono, transition:"all 0.15s"
+        }}>{s}</button>
+      ))}
+      {filter.length>0&&<button onClick={()=>setFilter([])} style={{ padding:"5px 12px", borderRadius:20, border:`1px solid ${G.border}`, background:"none", color:G.muted, fontSize:12, cursor:"pointer", fontFamily:G.mono }}>Clear</button>}
+    </div>
+  );
+
+  return (
+    <Page title="Orders" actions={toolbar}>
+      {showNewOrder&&(
+        <NewOrderModal
+          toast={toast}
+          onClose={()=>setShowNewOrder(false)}
+          onCreated={order=>setOrders(prev=>[order,...prev])}
+        />
+      )}
+      {loading ? <Spinner/> : view==="kanban" ? (
+        // ── KANBAN ────────────────────────────────────────────────────────────
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(240px, 1fr))", gap:14 }}>
           {(filter.length?filter:statuses).map(status=>{
-            const cfg=STATUS_CONFIG[status]; const col=filtered.filter(o=>o.status===status);
+            const cfg=STATUS_CONFIG[status]; const col=searched.filter(o=>o.status===status);
             return (
               <div key={status} style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, overflow:"hidden" }}>
                 <div style={{ padding:"10px 14px", background:cfg.bg, borderBottom:`2px solid ${cfg.color}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
@@ -1045,6 +1392,71 @@ function OrdersManufPage({ toast }) {
             );
           })}
         </div>
+      ) : (
+        // ── TABLE ─────────────────────────────────────────────────────────────
+        <>
+          <div style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, overflow:"hidden", marginBottom:14 }}>
+            <table style={{ width:"100%", borderCollapse:"collapse" }}>
+              <thead>
+                <tr style={{ background:G.sand, borderBottom:`1px solid ${G.border}` }}>
+                  {TABLE_COLS.map(c=>(
+                    <th key={c.key} onClick={()=>toggleSort(c.key)} style={{
+                      padding:"11px 16px", textAlign:"left", fontSize:12, fontWeight:700,
+                      letterSpacing:"0.05em", textTransform:"uppercase", color:G.muted,
+                      cursor:"pointer", userSelect:"none", whiteSpace:"nowrap"
+                    }}>
+                      {c.label}{sortKey===c.key&&<span style={{marginLeft:4}}>{sortDir==="asc"?"↑":"↓"}</span>}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {paged.length===0?(
+                  <tr><td colSpan={TABLE_COLS.length} style={{padding:40,textAlign:"center",color:G.muted}}>No orders found.</td></tr>
+                ):paged.map((o,i)=>{
+                  const cfg=STATUS_CONFIG[o.status]||STATUS_CONFIG.New;
+                  const d=new Date(o.created_at);
+                  const dateStr=`${String(d.getDate()).padStart(2,"0")}-${String(d.getMonth()+1).padStart(2,"0")}-${d.getFullYear()}`;
+                  return (
+                    <tr key={o.oid} style={{ borderBottom:i<paged.length-1?`1px solid ${G.border}`:"none", transition:"background 0.1s" }}
+                      onMouseEnter={e=>e.currentTarget.style.background="#fef9f4"}
+                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                      <td style={{padding:"11px 16px",fontSize:14,fontWeight:700}}>#{o.oid}</td>
+                      <td style={{padding:"11px 16px",fontSize:13,color:G.muted}}>{dateStr}</td>
+                      <td style={{padding:"11px 16px",fontSize:14}}>{o.customer?.first_name}</td>
+                      <td style={{padding:"11px 16px",fontSize:14}}>{o.customer?.last_name}</td>
+                      <td style={{padding:"11px 16px"}}>
+                        <span style={{padding:"3px 10px",borderRadius:20,fontSize:12,fontWeight:700,background:cfg.bg,color:cfg.color}}>{o.status}</span>
+                      </td>
+                      <td style={{padding:"11px 16px",fontSize:14,fontWeight:700,color:G.caramel}}>{o.total} AMD</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination */}
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:10 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <span style={{ fontSize:13, color:G.muted }}>Rows per page:</span>
+              {[10,25,50,100].map(n=>(
+                <button key={n} onClick={()=>{setPageSize(n);setPage(0);}} style={{
+                  padding:"4px 10px", borderRadius:6, border:`1px solid ${pageSize===n?G.caramel:G.border}`,
+                  background:pageSize===n?G.caramel:G.white, color:pageSize===n?G.white:G.muted,
+                  fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:G.mono
+                }}>{n}</button>
+              ))}
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+              <span style={{ fontSize:13, color:G.muted }}>{sorted.length} order{sorted.length!==1?"s":""} · page {totalPages?page+1:0}/{totalPages}</span>
+              <button onClick={()=>setPage(0)} disabled={page===0} style={{ padding:"4px 8px", borderRadius:6, border:`1px solid ${G.border}`, background:G.white, cursor:page===0?"not-allowed":"pointer", fontSize:13, opacity:page===0?0.4:1 }}>«</button>
+              <button onClick={()=>setPage(p=>Math.max(0,p-1))} disabled={page===0} style={{ padding:"4px 8px", borderRadius:6, border:`1px solid ${G.border}`, background:G.white, cursor:page===0?"not-allowed":"pointer", fontSize:13, opacity:page===0?0.4:1 }}>‹</button>
+              <button onClick={()=>setPage(p=>Math.min(totalPages-1,p+1))} disabled={page>=totalPages-1} style={{ padding:"4px 8px", borderRadius:6, border:`1px solid ${G.border}`, background:G.white, cursor:page>=totalPages-1?"not-allowed":"pointer", fontSize:13, opacity:page>=totalPages-1?0.4:1 }}>›</button>
+              <button onClick={()=>setPage(totalPages-1)} disabled={page>=totalPages-1} style={{ padding:"4px 8px", borderRadius:6, border:`1px solid ${G.border}`, background:G.white, cursor:page>=totalPages-1?"not-allowed":"pointer", fontSize:13, opacity:page>=totalPages-1?0.4:1 }}>»</button>
+            </div>
+          </div>
+        </>
       )}
       <Dialog open={dialog==="decline"} title="Decline order?" onConfirm={decline} onCancel={()=>setDialog(null)}>Are you sure you want to decline order #{pending}?</Dialog>
     </Page>
@@ -1281,7 +1693,6 @@ const BLANK_SCHEDULE = {
 };
 
 function periodDiff(start, end) {
-  // returns "HH:MM" for the duration between two "HH:MM" strings
   const s=timeToMins(start), e=timeToMins(end);
   if (e<=s) return "00:00";
   const diff=e-s;
@@ -1294,8 +1705,8 @@ function maxLatestOrder(periods) {
   return periodDiff(last.start, last.end);
 }
 
-function SchedulePage({ toast }) {
-  const [schedule, setSchedule] = useState(BLANK_SCHEDULE);
+function SchedulePage({ toast, storeSchedule, setStoreSchedule }) {
+  const [schedule, setSchedule] = useState(storeSchedule);
   const [timezone, setTimezone] = useState(
     Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
   );
@@ -1305,7 +1716,7 @@ function SchedulePage({ toast }) {
 
   useEffect(()=>{
     api.getSchedule().then(s=>{
-      if (s?.schedule) setSchedule(s.schedule);
+      if (s?.schedule) { setSchedule(s.schedule); setStoreSchedule(s.schedule); }
       if (s?.timezone) setTimezone(s.timezone);
       if (s?.latest_order_before) setLatestOrder(s.latest_order_before);
     }).catch(()=>{}).finally(()=>setLoading(false));
@@ -1315,7 +1726,34 @@ function SchedulePage({ toast }) {
     setSaving(true);
     try {
       await api.saveSchedule({ schedule, timezone, latest_order_before: latestOrder });
-      toast("Schedule saved");
+      setStoreSchedule(schedule);
+
+      // Check all menus with hours against the new store schedule
+      const menus = await api.getMenus().catch(()=>[]);
+      const collidingMenus = [];
+      for (const menu of menus) {
+        if (!menu.hours_from || !menu.hours_until || !menu.hours_days?.length) continue;
+        const fromMins = timeToMins(menu.hours_from);
+        const toMins   = timeToMins(menu.hours_until);
+        const badDays  = [];
+        for (const day of menu.hours_days) {
+          const periods = schedule[day]||[];
+          if (periods.length === 0) { badDays.push(day); continue; }
+          const storeOpen  = timeToMins(periods[0].start);
+          const storeClose = timeToMins(periods[periods.length-1].end);
+          if (fromMins < storeOpen || toMins > storeClose) badDays.push(day);
+        }
+        if (badDays.length) collidingMenus.push({ name: menu.name, days: badDays });
+      }
+
+      if (collidingMenus.length) {
+        const detail = collidingMenus.map(m =>
+          `"${m.name}" on ${m.days.map(d=>d.charAt(0).toUpperCase()+d.slice(1)).join(", ")}`
+        ).join("; ");
+        toast(`Schedule saved. Collision detected: ${detail}. Review menu hours and store hours. Make changes to resolve collision, if necessary.`, "error");
+      } else {
+        toast("Schedule saved");
+      }
     } catch(e){ toast(e.message,"error"); }
     finally { setSaving(false); }
   };
@@ -1326,32 +1764,27 @@ function SchedulePage({ toast }) {
 
   if (loading) return <Page title="Schedule"><Spinner/></Page>;
 
-  // Max allowed latest_order for any day (minimum of all max values)
   const allMaxes = DAYS.map(d=>maxLatestOrder(schedule[d])).filter(v=>v!=="00:00");
   const globalMax = allMaxes.length ? allMaxes.reduce((a,b)=>timeToMins(a)<timeToMins(b)?a:b) : "12:00";
 
   return (
     <Page title="Schedule" actions={<Btn onClick={save} loading={saving}>Save schedule</Btn>}>
-      {/* Timezone */}
       <div style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, padding:24, marginBottom:16 }}>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20, alignItems:"end" }}>
           <Select label="Time zone" value={timezone} onChange={setTimezone}
             options={TIMEZONES.map(tz=>({value:tz,label:tz.replace("_"," ")}))} />
           <div>
-            <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:6 }}>
-              Latest order no later than <span style={{color:G.caramel}}>___</span> before closing
-            </label>
+            <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:6 }}>Latest order no later than</label>
             <div style={{ display:"flex", alignItems:"center", gap:10 }}>
               <input type="time" value={latestOrder} min="00:00" max={globalMax}
                 onChange={e=>setLatestOrder(e.target.value)}
                 style={{ padding:"9px 12px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:14, fontFamily:G.mono, outline:"none" }} />
-              <span style={{ fontSize:12, color:G.muted }}>max {globalMax}</span>
+              <span style={{ fontSize:13, color:G.dark, fontWeight:600 }}>before closing</span>
+              <span style={{ fontSize:12, color:G.muted }}>(max {globalMax})</span>
             </div>
           </div>
         </div>
       </div>
-
-      {/* Day rows */}
       <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
         {DAYS.map((day,di)=>{
           const periods = schedule[day]||[];
@@ -1359,7 +1792,6 @@ function SchedulePage({ toast }) {
           return (
             <div key={day} style={{ background:G.white, borderRadius:12, border:`1px solid ${G.border}`, padding:"16px 20px" }}>
               <div style={{ display:"flex", alignItems:"center", gap:16, flexWrap:"wrap" }}>
-                {/* Day label + on/off toggle */}
                 <div style={{ display:"flex", alignItems:"center", gap:10, minWidth:120 }}>
                   <label style={{ display:"flex", alignItems:"center", gap:7, cursor:"pointer" }}>
                     <input type="checkbox" checked={!isOff}
@@ -1369,8 +1801,6 @@ function SchedulePage({ toast }) {
                   </label>
                   {isOff&&<span style={{ fontSize:12, color:G.muted, fontStyle:"italic" }}>Closed</span>}
                 </div>
-
-                {/* Periods */}
                 <div style={{ display:"flex", flexDirection:"column", gap:8, flex:1 }}>
                   {periods.map((per,i)=>(
                     <div key={i} style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
@@ -1404,6 +1834,7 @@ export default function App() {
   });
   const [page, setPage] = useState(()=>user?(user.is_manufacturer?"orders-manuf":"restaurants"):"login");
   const [activeMenu, setActiveMenu] = useState(null);
+  const [storeSchedule, setStoreSchedule] = useState(DEFAULT_STORE);
   const {toasts,toast,remove} = useToast();
   const logout=()=>{localStorage.removeItem("token");setUser(null);setPage("login");};
   const onLogin=u=>{setUser(u);setPage(u.is_manufacturer?"orders-manuf":"restaurants");};
@@ -1423,12 +1854,12 @@ export default function App() {
           <Nav user={user} page={page} setPage={setPage} logout={logout}/>
           {page==="products"     &&<ProductsPage toast={toast}/>}
           {page==="recipes"      &&<RecipesPage  toast={toast}/>}
-          {page==="menus"        &&<MenusPage    toast={toast}/>}
+          {page==="menus"        &&<MenusPage    toast={toast} storeSchedule={storeSchedule} setStoreSchedule={setStoreSchedule}/>}
           {page==="orders-manuf" &&<OrdersManufPage toast={toast}/>}
           {page==="restaurants"  &&<RestaurantsPage setPage={setPage} setActiveMenu={setActiveMenu}/>}
           {page==="order"        &&<OrderPage menu={activeMenu} user={user} setPage={setPage} toast={toast}/>}
           {page==="orders-cust"  &&<OrdersCustPage toast={toast}/>}
-          {page==="schedule"     &&<SchedulePage toast={toast}/>}
+          {page==="schedule"     &&<SchedulePage toast={toast} storeSchedule={storeSchedule} setStoreSchedule={setStoreSchedule}/>}
         </>
       )}
     </>

@@ -112,8 +112,15 @@ async function fetchOrder(oid) {
     SELECT oi.oiid, oi.qty, oi.price, r.name, r.rid
     FROM order_item oi JOIN recipe r ON r.rid = oi.rid
     WHERE oi.oid = $1`, [oid])
-  const [customer] = await dbq(
-    'SELECT uid, first_name, last_name, email FROM "user" WHERE uid = $1', [order.owner_uid])
+  let customer = null
+  if (order.owner_uid) {
+    const [c] = await dbq(
+      'SELECT uid, first_name, last_name, email FROM "user" WHERE uid = $1', [order.owner_uid])
+    customer = c || null
+  }
+  if (!customer && order.walkin_name) {
+    customer = { first_name: order.walkin_name, last_name: '', email: null, uid: null }
+  }
   return { ...order, items, customer }
 }
 
@@ -456,6 +463,31 @@ async function route(method, segments, body, headers, event) {
     }
   }
 
+  // ── CUSTOMERS (search) ────────────────────────────────────────────────────
+  if (r0 === 'customers') {
+    if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+    if (method === 'GET') {
+      const q = (segments[1] || '').toLowerCase()
+      if (!q || q.length < 2) return [200, []]
+      const rows = await dbq(`
+        SELECT uid, first_name, last_name, email, phone, street_address, city, zip
+        FROM "user"
+        WHERE is_manufacturer = false
+          AND (
+            LOWER(first_name) LIKE $1 OR
+            LOWER(last_name)  LIKE $1 OR
+            LOWER(email)      LIKE $1 OR
+            phone             LIKE $1 OR
+            LOWER(CONCAT(first_name,' ',last_name)) LIKE $1
+          )
+        ORDER BY first_name, last_name
+        LIMIT 10`,
+        [`%${q}%`]
+      )
+      return [200, rows]
+    }
+  }
+
   // ── ORDERS ────────────────────────────────────────────────────────────────
   if (r0 === 'orders') {
     if (!user) return [401, { error: 'Unauthorized' }]
@@ -500,32 +532,56 @@ async function route(method, segments, body, headers, event) {
       return [200, await Promise.all(rows.map(r => fetchOrder(r.oid)))]
     }
     if (method === 'POST') {
-      if (user.is_manufacturer) return [403, { error: 'Manufacturers cannot place orders' }]
-      const { mid, pickup, items, delivery_address } = body
+      const { mid, pickup, items, delivery_address, customer_uid, walkin_name } = body
       if (!Array.isArray(items) || !items.length) return [400, { error: 'Order must have at least one item' }]
-      const [menu] = await dbq('SELECT * FROM menu WHERE mid=$1 AND available=true', [mid])
-      if (!menu) return [400, { error: 'Menu not available' }]
+
+      // Manufacturer placing on behalf of customer
+      const isManualOrder = user.is_manufacturer && (customer_uid || walkin_name)
+      if (user.is_manufacturer && !isManualOrder)
+        return [403, { error: 'Specify a customer or walk-in name' }]
+
+      // For menu check: manufacturer can order from their own menu even if unavailable=false
+      const [menu] = user.is_manufacturer
+        ? await dbq('SELECT * FROM menu WHERE mid=$1', [mid])
+        : await dbq('SELECT * FROM menu WHERE mid=$1 AND available=true', [mid])
+      if (!menu) return [400, { error: 'Menu not found' }]
+
       for (const item of items) {
         const [mr] = await dbq('SELECT 1 FROM menu_recipe WHERE mid=$1 AND rid=$2', [mid, item.rid])
         if (!mr) return [400, { error: `Recipe ${item.rid} not in menu` }]
       }
+
+      // Determine owner_uid — use customer account if found, else null (walk-in)
+      const ownerUid = isManualOrder ? (customer_uid || null) : user.uid
+
       const res = await dbr(
-        `INSERT INTO "order" (owner_uid,mid,pickup,delivery_address) VALUES ($1,$2,$3,$4) RETURNING oid`,
-        [user.uid, mid, !!pickup, delivery_address||null])
+        `INSERT INTO "order" (owner_uid, mid, pickup, delivery_address, walkin_name)
+         VALUES ($1,$2,$3,$4,$5) RETURNING oid`,
+        [ownerUid, mid, !!pickup, delivery_address||null,
+         isManualOrder && !customer_uid ? (walkin_name||'Walk-in') : null]
+      )
       const oid = res.rows[0].oid
+
       for (const item of items) {
         const [recipe] = await dbq('SELECT price FROM recipe WHERE rid=$1', [item.rid])
         await dbr('INSERT INTO order_item (oid,rid,qty,price) VALUES ($1,$2,$3,$4)',
           [oid, item.rid, item.qty, recipe.price])
       }
-      if (!pickup && delivery_address)
-        await dbr('UPDATE "user" SET street_address=$1 WHERE uid=$2', [delivery_address, user.uid])
+
+      if (!pickup && delivery_address && ownerUid)
+        await dbr('UPDATE "user" SET street_address=$1 WHERE uid=$2', [delivery_address, ownerUid])
+
       const full = await fetchOrder(oid)
-      const [manuf] = await dbq('SELECT business_name FROM "user" WHERE uid=$1', [menu.owner_uid])
-      const [cust]  = await dbq('SELECT * FROM "user" WHERE uid=$1', [user.uid])
-      await sendMail(cust.email,
-        `Your order #${oid} is heading to the kitchen`,
-        `Hi, ${cust.first_name} ${cust.last_name},\n\nYour order #${oid} is on its way to the kitchen.\n\nKind regards,\n${manuf?.business_name||'Pun&Cotta'}`)
+
+      // Email only for registered customers
+      if (ownerUid && !isManualOrder) {
+        const [manuf] = await dbq('SELECT business_name FROM "user" WHERE uid=$1', [menu.owner_uid])
+        const [cust]  = await dbq('SELECT * FROM "user" WHERE uid=$1', [ownerUid])
+        if (cust?.email) await sendMail(cust.email,
+          `Your order #${oid} is heading to the kitchen`,
+          `Hi, ${cust.first_name} ${cust.last_name},\n\nYour order #${oid} is on its way to the kitchen.\n\nKind regards,\n${manuf?.business_name||'Pun&Cotta'}`)
+      }
+
       return [201, full]
     }
   }
