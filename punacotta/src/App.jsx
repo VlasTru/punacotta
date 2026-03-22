@@ -1430,7 +1430,6 @@ function OrdersManufPage({ toast }) {
               {allSelected ? "Deselect all" : "Select all"}
             </button>
             {statuses.map(s=>{
-              const cfg = STATUS_CONFIG[s];
               const checked = filter.includes(s);
               return (
                 <label key={s} style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 14px", cursor:"pointer" }}
@@ -1438,8 +1437,8 @@ function OrdersManufPage({ toast }) {
                   onMouseLeave={e=>e.currentTarget.style.background="none"}>
                   <input type="checkbox" checked={checked}
                     onChange={()=>{ toggleStatus(s); setPage(0); }}
-                    style={{ accentColor:cfg.color, width:14, height:14 }} />
-                  <span style={{ fontSize:13, color:checked?cfg.color:G.muted, fontWeight:checked?600:400 }}>{s}</span>
+                    style={{ accentColor:G.caramel, width:14, height:14 }} />
+                  <span style={{ fontSize:13, color:G.dark, fontWeight:checked?500:400 }}>{s}</span>
                 </label>
               );
             })}
@@ -1474,7 +1473,7 @@ function OrdersManufPage({ toast }) {
       {loading ? <Spinner/> : view==="kanban" ? (
         // ── KANBAN ────────────────────────────────────────────────────────────
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(240px, 1fr))", gap:14 }}>
-          {filter.map(status=>{
+          {KANBAN_ORDER.filter(status=>filter.includes(status)).map(status=>{
             const cfg=STATUS_CONFIG[status]; const col=searched.filter(o=>o.status===status);
             return (
               <div key={status} style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, overflow:"hidden" }}>
