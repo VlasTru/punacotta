@@ -532,7 +532,7 @@ async function route(method, segments, body, headers, event) {
       return [200, await Promise.all(rows.map(r => fetchOrder(r.oid)))]
     }
     if (method === 'POST') {
-      const { mid, pickup, items, delivery_address, customer_uid, walkin_name } = body
+      const { mid, pickup, items, delivery_address, customer_uid, walkin_name, delivery_comments } = body
       if (!Array.isArray(items) || !items.length) return [400, { error: 'Order must have at least one item' }]
 
       // Manufacturer placing on behalf of customer
@@ -555,10 +555,11 @@ async function route(method, segments, body, headers, event) {
       const ownerUid = isManualOrder ? (customer_uid || null) : user.uid
 
       const res = await dbr(
-        `INSERT INTO "order" (owner_uid, mid, pickup, delivery_address, walkin_name)
-         VALUES ($1,$2,$3,$4,$5) RETURNING oid`,
+        `INSERT INTO "order" (owner_uid, mid, pickup, delivery_address, walkin_name, delivery_comments)
+         VALUES ($1,$2,$3,$4,$5,$6) RETURNING oid`,
         [ownerUid, mid, !!pickup, delivery_address||null,
-         isManualOrder && !customer_uid ? (walkin_name||'Walk-in') : null]
+         isManualOrder && !customer_uid ? (walkin_name||'Walk-in') : null,
+         delivery_comments||null]
       )
       const oid = res.rows[0].oid
 

@@ -277,32 +277,34 @@ function Nav({ user, page, setPage, logout }) {
   const navigate = key => { setPage(key); setDropOpen(false); };
 
   return (
-    <nav style={{ background:G.white, borderBottom:`1px solid ${G.border}`, padding:"0 32px", display:"flex", alignItems:"center", height:60, position:"sticky", top:0, zIndex:100, boxShadow:"0 1px 12px rgba(44,24,16,0.06)" }}>
-      <button onClick={()=>navigate(isM?"orders-manuf":"restaurants")} style={{ fontFamily:G.font, fontSize:22, fontWeight:700, color:G.caramel, background:"none", border:"none", cursor:"pointer", marginRight:32, fontStyle:"italic" }}>Pun&Cotta</button>
-      <div style={{ display:"flex", gap:4, flex:1 }}>
+    <nav style={{ background:G.white, borderBottom:`1px solid ${G.border}`, padding:"0 32px", display:"flex", alignItems:"center", height:60, position:"sticky", top:0, zIndex:300, boxShadow:"0 1px 12px rgba(44,24,16,0.06)" }}>
+      <button onClick={()=>navigate(isM?"orders-manuf":"restaurants")} style={{ fontFamily:G.font, fontSize:22, fontWeight:700, color:G.caramel, background:"none", border:"none", cursor:"pointer", marginRight:32, fontStyle:"italic", flexShrink:0 }}>Pun&Cotta</button>
+      <div style={{ display:"flex", gap:4, flex:1, minWidth:0 }}>
         {links.map(l=>(
-          <button key={l.key} onClick={()=>navigate(l.key)} style={{ background:page===l.key?G.sand:"none", border:"none", padding:"6px 14px", borderRadius:8, fontFamily:G.mono, fontSize:14, fontWeight:page===l.key?600:400, color:page===l.key?G.caramel:G.muted, cursor:"pointer", transition:"all 0.15s" }}>{l.label}</button>
+          <button key={l.key} onClick={()=>navigate(l.key)} style={{ background:page===l.key?G.sand:"none", border:"none", padding:"6px 14px", borderRadius:8, fontFamily:G.mono, fontSize:14, fontWeight:page===l.key?600:400, color:page===l.key?G.caramel:G.muted, cursor:"pointer", transition:"all 0.15s", whiteSpace:"nowrap" }}>{l.label}</button>
         ))}
       </div>
-      <div style={{ position:"relative" }}>
-        <button onClick={()=>setDropOpen(p=>!p)} style={{ display:"flex", alignItems:"center", gap:6, background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:13, color:G.muted, padding:"6px 10px", borderRadius:8 }}>
-          {user?.first_name} {user?.last_name}
-          <span style={{ fontSize:10, opacity:0.6 }}>▾</span>
+      <div style={{ position:"relative", flexShrink:0, marginLeft:12 }}>
+        <button onClick={()=>setDropOpen(p=>!p)} style={{ display:"flex", alignItems:"center", gap:7, background:G.sand, border:`1px solid ${G.border}`, borderRadius:8, cursor:"pointer", fontFamily:G.mono, fontSize:13, color:G.dark, padding:"7px 12px", whiteSpace:"nowrap", fontWeight:500 }}>
+          👤 {user?.first_name} {user?.last_name}
+          <span style={{ fontSize:9, color:G.muted }}>▾</span>
         </button>
         {dropOpen&&(
           <>
-            <div onClick={()=>setDropOpen(false)} style={{ position:"fixed", inset:0, zIndex:149 }} />
-            <div style={{ position:"absolute", right:0, top:"calc(100% + 6px)", background:G.white, border:`1px solid ${G.border}`, borderRadius:10, boxShadow:"0 8px 24px rgba(44,24,16,0.12)", minWidth:160, zIndex:150, overflow:"hidden", animation:"fadeIn 0.15s ease" }}>
+            <div onClick={()=>setDropOpen(false)} style={{ position:"fixed", inset:0, zIndex:298 }} />
+            <div style={{ position:"absolute", right:0, top:"calc(100% + 6px)", background:G.white, border:`1px solid ${G.border}`, borderRadius:10, boxShadow:"0 8px 28px rgba(44,24,16,0.15)", minWidth:176, zIndex:299, overflow:"hidden", animation:"fadeIn 0.15s ease" }}>
               {isM&&(
-                <button onClick={()=>navigate("schedule")} style={{ width:"100%", textAlign:"left", padding:"10px 16px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.dark }}
-                  onMouseEnter={e=>e.currentTarget.style.background=G.sand} onMouseLeave={e=>e.currentTarget.style.background="none"}>
-                  🕐 Schedule
-                </button>
+                <>
+                  <button onClick={()=>navigate("schedule")} style={{ width:"100%", textAlign:"left", padding:"11px 16px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.dark, display:"block" }}
+                    onMouseEnter={e=>e.currentTarget.style.background=G.sand} onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                    🕐 Schedule
+                  </button>
+                  <div style={{ height:1, background:G.border }} />
+                </>
               )}
-              <div style={{ height:1, background:G.border }} />
-              <button onClick={()=>{logout();setDropOpen(false);}} style={{ width:"100%", textAlign:"left", padding:"10px 16px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.red }}
+              <button onClick={()=>{logout();setDropOpen(false);}} style={{ width:"100%", textAlign:"left", padding:"11px 16px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.red, display:"block" }}
                 onMouseEnter={e=>e.currentTarget.style.background=G.sand} onMouseLeave={e=>e.currentTarget.style.background="none"}>
-                Log out
+                ↩ Log out
               </button>
             </div>
           </>
@@ -1000,13 +1002,14 @@ function MenusPage({ toast, storeSchedule, setStoreSchedule }) {
 // ─── ORDERS (MANUFACTURER) ────────────────────────────────────────────────────
 function todayStr() {
   const d = new Date();
-  return `${String(d.getDate()).padStart(2,"0")}-${String(d.getMonth()+1).padStart(2,"0")}-${d.getFullYear()}`;
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 }
-function parseLocalDate(str) {
-  // DD-MM-YYYY → Date
-  const [dd,mm,yyyy] = str.split("-").map(Number);
-  if (!dd||!mm||!yyyy) return null;
-  return new Date(yyyy, mm-1, dd);
+function parseLocalDate(isoStr) {
+  // YYYY-MM-DD → Date (local midnight)
+  if (!isoStr) return null;
+  const [y,m,d] = isoStr.split("-").map(Number);
+  if (!y||!m||!d) return null;
+  return new Date(y, m-1, d);
 }
 function fuzzyMatch(hay, needle) {
   // 1-char fuzzy: for each position in hay, check if needle fits with ≤1 substitution/deletion
@@ -1027,58 +1030,61 @@ function fuzzyMatch(hay, needle) {
 
 // ─── NEW ORDER MODAL ──────────────────────────────────────────────────────────
 function NewOrderModal({ onClose, onCreated, toast }) {
-  const [menus, setMenus]         = useState([]);
-  const [mid, setMid]             = useState("");
+  const [menus, setMenus]             = useState([]);
+  const [mid, setMid]                 = useState("");
   const [selectedMenu, setSelectedMenu] = useState(null);
-  const [qty, setQty]             = useState({});
-  const [pickup, setPickup]       = useState(true);
-  const [delivery, setDelivery]   = useState("");
-  const [customerQ, setCustomerQ] = useState("");
-  const [results, setResults]     = useState([]);
-  const [customer, setCustomer]   = useState(null); // {uid, first_name, last_name} or null for walk-in
-  const [saving, setSaving]       = useState(false);
-  const searchRef                 = useRef(null);
+  const [qty, setQty]                 = useState({});
+  const [pickup, setPickup]           = useState(true);
+  const [customer, setCustomer]       = useState(null);
+  const [customerQ, setCustomerQ]     = useState("");
+  const [results, setResults]         = useState([]);
+  const [addrMode, setAddrMode]       = useState("customer"); // "customer" | "other"
+  const [step, setStep]               = useState(1); // 1 = main, 2 = other address
+  const [otherStreet, setOtherStreet] = useState("");
+  const [otherCity, setOtherCity]     = useState("");
+  const [otherZip, setOtherZip]       = useState("");
+  const [otherPhone, setOtherPhone]   = useState("");
+  const [deliveryComments, setDeliveryComments] = useState("");
+  const [saving, setSaving]           = useState(false);
 
-  // Load menus on open
   useEffect(()=>{
     api.getMenus().then(m=>{ setMenus(m); if(m.length===1){setMid(String(m[0].mid));setSelectedMenu(m[0]);} }).catch(()=>{});
   },[]);
 
-  // Customer search with debounce
   useEffect(()=>{
     if (customerQ.length < 2) { setResults([]); return; }
-    const t = setTimeout(async()=>{
-      try { const r=await api.searchCustomers(customerQ); setResults(r); } catch{}
-    }, 300);
+    const t = setTimeout(async()=>{ try{ const r=await api.searchCustomers(customerQ); setResults(r); }catch{} }, 300);
     return ()=>clearTimeout(t);
   },[customerQ]);
 
-  const selectMenu = id => {
-    const m = menus.find(x=>String(x.mid)===id);
-    setMid(id); setSelectedMenu(m||null); setQty({});
-  };
+  const selectMenu = id => { const m=menus.find(x=>String(x.mid)===id); setMid(id); setSelectedMenu(m||null); setQty({}); };
+  const changeQty = (rid, delta) => setQty(p=>({...p,[rid]:Math.max(0,Math.min(20,(p[rid]||0)+delta))}));
 
-  const changeQty = (rid, delta) =>
-    setQty(p=>({ ...p, [rid]: Math.max(0, Math.min(20, (p[rid]||0)+delta)) }));
+  const items = (selectedMenu?.recipes||[]).filter(r=>(qty[r.rid]||0)>0).map(r=>({rid:r.rid,name:r.name,qty:qty[r.rid],price:r.price}));
+  const deliveryFee = !pickup && selectedMenu ? selectedMenu.delivery_fee : 0;
+  const total = items.reduce((s,it)=>s+it.qty*it.price,0) + deliveryFee;
 
-  const items = (selectedMenu?.recipes||[])
-    .filter(r=>(qty[r.rid]||0)>0)
-    .map(r=>({ rid:r.rid, name:r.name, qty:qty[r.rid], price:r.price }));
+  // Address to submit
+  const customerAddr = customer ? [customer.street_address, customer.city, customer.zip, customer.phone].filter(Boolean).join(", ") : "";
+  const otherAddr    = [otherStreet, otherCity, otherZip, otherPhone].filter(Boolean).join(", ");
+  const deliveryAddress = !pickup ? (addrMode==="customer" ? customerAddr : otherAddr) : null;
 
-  const total = items.reduce((s,it)=>s+it.qty*it.price, 0)
-    + (!pickup && selectedMenu ? selectedMenu.delivery_fee : 0);
+  const canPlaceMain = items.length > 0 && mid && (
+    pickup ||
+    (!pickup && addrMode==="customer" && customerAddr) ||
+    (!pickup && addrMode==="other")
+  );
 
-  const submit = async () => {
-    if (!mid) { toast("Select a menu","error"); return; }
-    if (!items.length) { toast("Add at least one item","error"); return; }
+  const submit = async (addressOverride) => {
+    if (!mid || !items.length) return;
     setSaving(true);
     try {
+      const addr = addressOverride ?? deliveryAddress;
       const payload = {
-        mid: Number(mid),
-        pickup,
-        items,
-        delivery_address: !pickup ? delivery : null,
+        mid: Number(mid), pickup, items,
+        delivery_address: addr || null,
         ...(customer?.uid ? { customer_uid: customer.uid } : { walkin_name: customerQ||"Walk-in" }),
+        delivery_comments: deliveryComments || undefined,
       };
       const order = await api.placeOrder(payload);
       toast(`Order #${order.oid} created`);
@@ -1088,29 +1094,76 @@ function NewOrderModal({ onClose, onCreated, toast }) {
     finally { setSaving(false); }
   };
 
-  // Group recipes by category for display
   const grouped = {};
-  (selectedMenu?.recipes||[]).forEach(r=>{
-    if(!grouped[r.category])grouped[r.category]=[];
-    grouped[r.category].push(r);
-  });
+  (selectedMenu?.recipes||[]).forEach(r=>{ if(!grouped[r.category])grouped[r.category]=[]; grouped[r.category].push(r); });
 
+  // ── STEP 2: Other address ──────────────────────────────────────────────────
+  if (step === 2) {
+    const addr = [otherStreet, otherCity, otherZip, otherPhone].filter(Boolean).join(", ");
+    return (
+      <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+        <div style={{ background:G.white, borderRadius:16, width:"100%", maxWidth:480, display:"flex", flexDirection:"column", boxShadow:"0 20px 60px rgba(44,24,16,0.2)", animation:"fadeIn 0.2s ease" }}>
+          <div style={{ padding:"20px 24px", borderBottom:`1px solid ${G.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <h3 style={{ fontFamily:G.font, fontSize:20 }}>Delivery address</h3>
+            <button onClick={()=>setStep(1)} style={{ background:"none", border:"none", fontSize:13, cursor:"pointer", color:G.muted, fontFamily:G.mono }}>← Back</button>
+          </div>
+          <div style={{ padding:24, display:"flex", flexDirection:"column", gap:14 }}>
+            <Input label="Street" value={otherStreet} onChange={setOtherStreet} placeholder="Street address" />
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+              <Input label="City" value={otherCity} onChange={setOtherCity} />
+              <Input label="ZIP" value={otherZip} onChange={setOtherZip} />
+            </div>
+            <Input label="Phone" value={otherPhone} onChange={setOtherPhone} placeholder="+374 91 …" />
+            <div>
+              <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:6 }}>Delivery comments</label>
+              <textarea value={deliveryComments} onChange={e=>setDeliveryComments(e.target.value.slice(0,100))}
+                placeholder="Instructions, floor, buzzer code…" rows={3} maxLength={100}
+                style={{ width:"100%", padding:"10px 14px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:14, fontFamily:G.mono, outline:"none", resize:"vertical" }}
+                onFocus={e=>e.target.style.borderColor=G.caramel} onBlur={e=>e.target.style.borderColor=G.border}
+              />
+              <span style={{ fontSize:11, color:G.muted }}>{deliveryComments.length}/100</span>
+            </div>
+          </div>
+          <div style={{ padding:"16px 24px", borderTop:`1px solid ${G.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <span style={{ fontWeight:700, fontSize:16, color:G.caramel }}>{total > 0 ? `${total} AMD` : "—"}</span>
+            <Btn onClick={()=>submit(addr)} loading={saving} disabled={!otherStreet}>Place order</Btn>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── STEP 1: Main ──────────────────────────────────────────────────────────
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
       <div style={{ background:G.white, borderRadius:16, width:"100%", maxWidth:680, maxHeight:"92vh", display:"flex", flexDirection:"column", boxShadow:"0 20px 60px rgba(44,24,16,0.2)", animation:"fadeIn 0.2s ease" }}>
-
-        {/* Header */}
         <div style={{ padding:"20px 24px", borderBottom:`1px solid ${G.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
           <h3 style={{ fontFamily:G.font, fontSize:20 }}>New order</h3>
           <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, cursor:"pointer", color:G.muted, lineHeight:1 }}>×</button>
         </div>
 
-        {/* Body — scrollable */}
         <div style={{ flex:1, overflowY:"auto", padding:24, display:"flex", flexDirection:"column", gap:20 }}>
 
-          {/* Customer */}
+          {/* 1. Fulfillment — at top */}
           <div>
-            <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:6 }}>Customer</label>
+            <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:8 }}>Fulfillment</label>
+            <div style={{ display:"flex", gap:20 }}>
+              {[{val:true,label:"Pickup (free)"},{val:false,label:`Delivery (+${selectedMenu?.delivery_fee||0} AMD)`}].map(opt=>(
+                <label key={String(opt.val)} style={{ display:"flex", alignItems:"center", gap:7, cursor:"pointer", fontSize:14 }}>
+                  <input type="radio" name="mo_pickup" checked={pickup===opt.val}
+                    onChange={()=>{ setPickup(opt.val); setAddrMode("customer"); }}
+                    style={{accentColor:G.caramel}} />
+                  {opt.label}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* 2. Customer */}
+          <div>
+            <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:6 }}>
+              Customer {!pickup && addrMode==="customer" && <span style={{color:G.caramel}}>*</span>}
+            </label>
             {customer ? (
               <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px", background:G.sand, borderRadius:8 }}>
                 <span style={{ flex:1, fontSize:14 }}>👤 {customer.first_name} {customer.last_name}</span>
@@ -1118,15 +1171,15 @@ function NewOrderModal({ onClose, onCreated, toast }) {
               </div>
             ) : (
               <div style={{ position:"relative" }}>
-                <input ref={searchRef} value={customerQ} onChange={e=>setCustomerQ(e.target.value)}
-                  placeholder="Search by name, email, phone — or type a walk-in name"
+                <input value={customerQ} onChange={e=>setCustomerQ(e.target.value)}
+                  placeholder={pickup ? "Name, email or phone (optional)" : "Search existing customer"}
                   style={{ width:"100%", padding:"10px 14px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:14, fontFamily:G.mono, outline:"none" }}
                   onFocus={e=>e.target.style.borderColor=G.caramel} onBlur={e=>e.target.style.borderColor=G.border}
                 />
-                {results.length>0 && (
+                {results.length>0&&(
                   <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, background:G.white, border:`1px solid ${G.border}`, borderRadius:10, boxShadow:"0 8px 24px rgba(44,24,16,0.12)", zIndex:10, overflow:"hidden" }}>
                     {results.map(r=>(
-                      <button key={r.uid} onClick={()=>{ setCustomer(r); setCustomerQ(`${r.first_name} ${r.last_name}`); setResults([]); }}
+                      <button key={r.uid} onClick={()=>{setCustomer(r);setCustomerQ(`${r.first_name} ${r.last_name}`);setResults([]);}}
                         style={{ width:"100%", textAlign:"left", padding:"10px 14px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, display:"flex", gap:10 }}
                         onMouseEnter={e=>e.currentTarget.style.background=G.sand}
                         onMouseLeave={e=>e.currentTarget.style.background="none"}>
@@ -1134,24 +1187,48 @@ function NewOrderModal({ onClose, onCreated, toast }) {
                         <span style={{color:G.muted,fontSize:12}}>{r.email}</span>
                       </button>
                     ))}
-                    <div style={{ padding:"8px 14px", fontSize:12, color:G.muted, borderTop:`1px solid ${G.border}` }}>
-                      Not listed? The typed name will be used as a walk-in.
-                    </div>
+                    <div style={{ padding:"8px 14px", fontSize:12, color:G.muted, borderTop:`1px solid ${G.border}` }}>Not listed? Will be saved as walk-in.</div>
                   </div>
                 )}
-                {customerQ.length>0&&results.length===0&&customerQ.length>=2&&(
-                  <p style={{ fontSize:12, color:G.muted, marginTop:4 }}>No matching accounts — will be saved as walk-in "{customerQ||"Walk-in"}"</p>
+                {customerQ.length>=2&&results.length===0&&!customer&&(
+                  <p style={{ fontSize:12, color:G.muted, marginTop:4 }}>No matches — will be saved as walk-in "{customerQ}"</p>
                 )}
               </div>
             )}
           </div>
 
-          {/* Menu selector */}
+          {/* 3. Delivery address (only when delivery selected) */}
+          {!pickup && (
+            <div>
+              <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:8 }}>Delivery address <span style={{color:G.caramel}}>*</span></label>
+              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                {/* Customer address radio */}
+                <label style={{ display:"flex", alignItems:"flex-start", gap:8, cursor:"pointer" }}>
+                  <input type="radio" name="addrMode" checked={addrMode==="customer"} onChange={()=>setAddrMode("customer")} style={{accentColor:G.caramel,marginTop:2}} />
+                  <div>
+                    <span style={{ fontSize:14, fontWeight:500 }}>Customer's address</span>
+                    {customer && customerAddr ? (
+                      <p style={{ fontSize:13, color:G.muted, marginTop:2 }}>{customerAddr}</p>
+                    ) : (
+                      <p style={{ fontSize:12, color:G.muted, fontStyle:"italic", marginTop:2 }}>Select a registered customer to autofill</p>
+                    )}
+                  </div>
+                </label>
+                {/* Other address radio */}
+                <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}>
+                  <input type="radio" name="addrMode" checked={addrMode==="other"} onChange={()=>setAddrMode("other")} style={{accentColor:G.caramel}} />
+                  <span style={{ fontSize:14, fontWeight:500 }}>Other address</span>
+                </label>
+              </div>
+            </div>
+          )}
+
+          {/* 4. Menu */}
           <Select label="Menu" value={mid} onChange={selectMenu}
             options={menus.map(m=>({value:String(m.mid),label:m.name+(m.available?"":" (draft)")}))}
             placeholder="Select a menu" required />
 
-          {/* Recipe picker */}
+          {/* 5. Recipe picker */}
           {selectedMenu && (
             <div>
               <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:10 }}>Items</label>
@@ -1171,25 +1248,6 @@ function NewOrderModal({ onClose, onCreated, toast }) {
               ))}
             </div>
           )}
-
-          {/* Fulfillment */}
-          {selectedMenu && (
-            <div>
-              <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:8 }}>Fulfillment</label>
-              <div style={{ display:"flex", gap:10 }}>
-                {[{val:true,label:"Pickup (free)"},{val:false,label:`Delivery (+${selectedMenu.delivery_fee} AMD)`}].map(opt=>(
-                  <label key={String(opt.val)} style={{ display:"flex", alignItems:"center", gap:7, cursor:"pointer", fontSize:14 }}>
-                    <input type="radio" name="mo_pickup" checked={pickup===opt.val} onChange={()=>setPickup(opt.val)} style={{accentColor:G.caramel}} />
-                    {opt.label}
-                  </label>
-                ))}
-              </div>
-              {!pickup && (
-                <Input label="Delivery address" value={delivery} onChange={setDelivery}
-                  placeholder="Street, city, ZIP" style={{marginTop:10}} />
-              )}
-            </div>
-          )}
         </div>
 
         {/* Footer */}
@@ -1197,7 +1255,11 @@ function NewOrderModal({ onClose, onCreated, toast }) {
           <span style={{ fontWeight:700, fontSize:16, color:G.caramel }}>{total > 0 ? `${total} AMD` : "—"}</span>
           <div style={{ display:"flex", gap:10 }}>
             <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
-            <Btn onClick={submit} loading={saving} disabled={!items.length||!mid}>Place order</Btn>
+            {!pickup && addrMode==="other" ? (
+              <Btn onClick={()=>setStep(2)} disabled={!items.length||!mid}>Next →</Btn>
+            ) : (
+              <Btn onClick={()=>submit()} loading={saving} disabled={!canPlaceMain}>Place order</Btn>
+            )}
           </div>
         </div>
       </div>
@@ -1228,7 +1290,8 @@ function OrdersManufPage({ toast }) {
   },[]);
   useEffect(()=>{ load(); },[]);
 
-  const statuses = Object.keys(STATUS_CONFIG);
+  const KANBAN_ORDER = ["New","Accepted","Preparing","Done","Dispatched","Declined","Delivered"];
+  const statuses = KANBAN_ORDER;
   const advance  = async oid => { try{ const u=await api.advanceOrder(oid); setOrders(p=>p.map(o=>o.oid===oid?u:o)); toast(`Order #${oid} updated`); } catch(e){ toast(e.message,"error"); } };
   const decline  = async ()  => { try{ const u=await api.declineOrder(pending); setOrders(p=>p.map(o=>o.oid===pending?u:o)); toast(`Order #${pending} declined`); setDialog(null); } catch(e){ toast(e.message,"error"); } };
   const toggleSort   = k => { if(sortKey===k) setSortDir(d=>d==="asc"?"desc":"asc"); else { setSortKey(k); setSortDir("desc"); } };
@@ -1297,10 +1360,22 @@ function OrdersManufPage({ toast }) {
   const paged = sorted.slice(page*pageSize, (page+1)*pageSize);
 
   // ── TOOLBAR ─────────────────────────────────────────────────────────────────
-  const DateInput = ({value, onChange}) => (
-    <input value={value} onChange={e=>onChange(e.target.value)} placeholder="DD-MM-YYYY"
-      style={{ padding:"6px 10px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, width:110, outline:"none" }}
-      onFocus={e=>e.target.style.borderColor=G.caramel} onBlur={e=>e.target.style.borderColor=G.border} />
+  // Dates stored as YYYY-MM-DD (native date input format), displayed as DD-MM-YYYY
+  function isoToDisplay(iso) {
+    if (!iso) return "";
+    const [y,m,d] = iso.split("-");
+    return `${d}-${m}-${y}`;
+  }
+
+  const DatePicker = ({value, onChange, min, max}) => (
+    <div style={{ position:"relative", display:"inline-flex", alignItems:"center" }}>
+      <input type="date" value={value} min={min} max={max}
+        onChange={e=>onChange(e.target.value)}
+        style={{ padding:"6px 10px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none", colorScheme:"light", cursor:"pointer" }}
+        onFocus={e=>e.target.style.borderColor=G.caramel}
+        onBlur={e=>e.target.style.borderColor=G.border}
+      />
+    </div>
   );
 
   // Search input with × clear
@@ -1379,9 +1454,9 @@ function OrdersManufPage({ toast }) {
       <Btn size="sm" onClick={()=>setShowNewOrder(true)}>+ New order</Btn>
       <SearchBox />
       <span style={{ fontSize:12, color:G.muted }}>From</span>
-      <DateInput value={dateFrom} onChange={v=>{setDateFrom(v);setPage(0);}} />
+      <DatePicker value={dateFrom} max={dateTo} onChange={v=>{setDateFrom(v);setPage(0);}} />
       <span style={{ fontSize:12, color:G.muted }}>To</span>
-      <DateInput value={dateTo}   onChange={v=>{setDateTo(v);setPage(0);}} />
+      <DatePicker value={dateTo} min={dateFrom} onChange={v=>{setDateTo(v);setPage(0);}} />
       <ViewToggle />
       <StatusDropdown />
     </div>

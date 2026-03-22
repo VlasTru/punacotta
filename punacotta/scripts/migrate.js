@@ -66,8 +66,9 @@ CREATE TABLE IF NOT EXISTS recipe (
   deleted     BOOLEAN      NOT NULL DEFAULT false
 );
 
--- Add walkin_name to order table (safe to re-run)
-ALTER TABLE "order" ADD COLUMN IF NOT EXISTS walkin_name VARCHAR(100);
+-- Add walkin_name and delivery_comments to order table (safe to re-run)
+ALTER TABLE "order" ADD COLUMN IF NOT EXISTS walkin_name        VARCHAR(100);
+ALTER TABLE "order" ADD COLUMN IF NOT EXISTS delivery_comments  VARCHAR(100);
 
 -- Add schedule column to user table (safe to re-run)
 ALTER TABLE "user" ADD COLUMN IF NOT EXISTS schedule JSONB;
