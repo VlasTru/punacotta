@@ -70,6 +70,15 @@ CREATE TABLE IF NOT EXISTS recipe (
 ALTER TABLE "order" ADD COLUMN IF NOT EXISTS walkin_name        VARCHAR(100);
 ALTER TABLE "order" ADD COLUMN IF NOT EXISTS delivery_comments  VARCHAR(100);
 
+-- Address book for saved customer addresses (safe to re-run)
+CREATE TABLE IF NOT EXISTS address_book (
+  abid       SERIAL PRIMARY KEY,
+  uid        INTEGER NOT NULL REFERENCES "user"(uid),
+  label      VARCHAR(100),
+  display    VARCHAR(300),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Add schedule column to user table (safe to re-run)
 ALTER TABLE "user" ADD COLUMN IF NOT EXISTS schedule JSONB;
 
@@ -137,7 +146,7 @@ ON CONFLICT (name) DO NOTHING;
 
 INSERT INTO product_category (name) VALUES
   ('vegetables'),('fruit'),('dressing'),('dairy'),
-  ('poultry'),('fish'),('nuts'),('liquids'),('meat')
+  ('poultry'),('fish'),('nuts'),('liquids'),('meat'),('grains/cereals')
 ON CONFLICT (name) DO NOTHING;
 
 INSERT INTO recipe_category (name) VALUES

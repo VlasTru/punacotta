@@ -38,6 +38,7 @@ export const api = {
   reset:           (token, password) => req('POST', '/auth/reset',    { token, password }),
   verify:          (token)           => req('POST', '/auth/verify',   { token }),
   me:              ()                => req('GET',  '/auth/me'),
+  getSavedAddresses: ()             => req('GET',  '/addresses'),
 
   // Products
   getProducts:       ()     => req('GET',    '/products'),

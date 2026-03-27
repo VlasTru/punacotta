@@ -225,8 +225,95 @@ function RecipeForm({ initial, lookups, onSave, onCancel, saving }) {
   });
   const [imageBlob, setImageBlob] = useState(null);
   const [removeImage, setRemoveImage] = useState(false);
+  const [slide, setSlide] = useState("general"); // "general" | "contents"
+  const [contents, setContents] = useState(initial?.contents || []); // [{pid, name_with_unit, qty}]
+  const [allProducts, setAllProducts] = useState([]);
+  const [productSearch, setProductSearch] = useState("");
   const set = (k,v) => setForm(p=>({...p,[k]:v}));
 
+  // Load products for Contents selector
+  useEffect(()=>{
+    if (slide==="contents" && allProducts.length===0) {
+      // Use lookups if available, otherwise fetch
+      fetch("/.netlify/functions/api/products", {
+        headers:{ Authorization:`Bearer ${localStorage.getItem("token")}` }
+      }).then(r=>r.json()).then(rows=>{
+        // Fetch units too to build "Name, unit" labels
+        fetch("/.netlify/functions/api/products/lookups", {
+          headers:{ Authorization:`Bearer ${localStorage.getItem("token")}` }
+        }).then(r=>r.json()).then(lu=>{
+          const unitMap = Object.fromEntries((lu.units||[]).map(u=>[u.unid, u.name]));
+          setAllProducts((rows||[]).map(p=>({
+            pid: p.pid,
+            label: [p.name, unitMap[p.unid]].filter(Boolean).join(", ")
+          })));
+        }).catch(()=>{});
+      }).catch(()=>{});
+    }
+  },[slide]);
+
+  const addContent = () => setContents(p=>[...p,{pid:"",label:"",qty:1}]);
+  const removeContent = i => setContents(p=>p.filter((_,j)=>j!==i));
+  const setContentPid = (i, pid) => {
+    const prod = allProducts.find(p=>String(p.pid)===String(pid));
+    setContents(p=>p.map((c,j)=>j===i?{...c,pid,label:prod?.label||""}:c));
+  };
+  const setContentQty = (i, delta) =>
+    setContents(p=>p.map((c,j)=>j===i?{...c,qty:Math.max(0,Math.min(1000,(c.qty||0)+delta))}:c));
+  const setContentQtyDirect = (i, val) =>
+    setContents(p=>p.map((c,j)=>j===i?{...c,qty:Math.max(0,Math.min(1000,Number(val)||0))}:c));
+
+  const filteredProducts = productSearch.trim().length > 0
+    ? allProducts.filter(p=>p.label.toLowerCase().includes(productSearch.toLowerCase()))
+    : allProducts;
+
+  // ── CONTENTS SLIDE ─────────────────────────────────────────────────────────
+  if (slide==="contents") return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4 }}>
+        <h4 style={{ fontFamily:G.font, fontSize:15, color:G.dark }}>Contents</h4>
+        <button onClick={()=>setSlide("general")} style={{ background:"none", border:"none", color:G.caramel, cursor:"pointer", fontFamily:G.mono, fontSize:13, fontWeight:600 }}>← General</button>
+      </div>
+
+      {contents.length===0 && (
+        <p style={{ fontSize:13, color:G.muted }}>No products added yet.</p>
+      )}
+
+      {contents.map((c,i)=>(
+        <div key={i} style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 12px", background:G.sand, borderRadius:8 }}>
+          {/* Product selector */}
+          <div style={{ flex:2, position:"relative" }}>
+            <select value={c.pid} onChange={e=>setContentPid(i,e.target.value)}
+              style={{ width:"100%", padding:"7px 10px", borderRadius:8, border:`1px solid ${G.border}`, background:G.white, fontSize:13, fontFamily:G.mono, outline:"none" }}>
+              <option value="">Select product…</option>
+              {allProducts.map(p=><option key={p.pid} value={p.pid}>{p.label}</option>)}
+            </select>
+          </div>
+          {/* Qty */}
+          <div style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>
+            <button onClick={()=>setContentQty(i,-1)} style={{ width:24,height:24,borderRadius:5,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",fontWeight:700,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center" }}>−</button>
+            <input type="number" value={c.qty} min={0} max={1000}
+              onChange={e=>setContentQtyDirect(i,e.target.value)}
+              style={{ width:56,textAlign:"center",padding:"4px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none" }} />
+            <button onClick={()=>setContentQty(i,1)} style={{ width:24,height:24,borderRadius:5,border:"none",background:G.caramel,cursor:"pointer",fontWeight:700,fontSize:14,color:G.white,display:"flex",alignItems:"center",justifyContent:"center" }}>+</button>
+          </div>
+          {/* Remove */}
+          <button onClick={()=>removeContent(i)} style={{ background:"none",border:"none",color:G.red,cursor:"pointer",fontSize:13,fontFamily:G.mono,flexShrink:0 }}>Remove</button>
+        </div>
+      ))}
+
+      <button onClick={addContent} style={{ background:"none",border:`1px dashed ${G.border}`,color:G.caramel,cursor:"pointer",fontSize:13,fontFamily:G.mono,padding:"8px 14px",borderRadius:8,alignSelf:"flex-start",fontWeight:600 }}>
+        + Add product
+      </button>
+
+      <div style={{ display:"flex", gap:10, marginTop:4 }}>
+        <Btn size="sm" onClick={()=>onSave(form, imageBlob, removeImage, contents)} loading={saving}>Save</Btn>
+        <Btn variant="ghost" size="sm" onClick={onCancel}>Cancel</Btn>
+      </div>
+    </div>
+  );
+
+  // ── GENERAL SLIDE ──────────────────────────────────────────────────────────
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
@@ -259,8 +346,9 @@ function RecipeForm({ initial, lookups, onSave, onCancel, saving }) {
       </div>
 
       <div style={{ display:"flex", gap:10 }}>
-        <Btn size="sm" onClick={()=>onSave(form, imageBlob, removeImage)} loading={saving}>Save</Btn>
+        <Btn size="sm" onClick={()=>onSave(form, imageBlob, removeImage, contents)} loading={saving}>Save</Btn>
         <Btn variant="ghost" size="sm" onClick={onCancel}>Cancel</Btn>
+        <Btn variant="secondary" size="sm" onClick={()=>setSlide("contents")} style={{ marginLeft:"auto" }}>Contents →</Btn>
       </div>
     </div>
   );
@@ -271,7 +359,7 @@ function Nav({ user, page, setPage, logout }) {
   const isM = user?.is_manufacturer;
   const [dropOpen, setDropOpen] = useState(false);
   const links = isM
-    ? [{key:"orders-manuf",label:"Orders"},{key:"products",label:"Products"},{key:"recipes",label:"Recipes"},{key:"menus",label:"Menus"}]
+    ? [{key:"orders-manuf",label:"Orders"},{key:"products",label:"Products"},{key:"items",label:"Items"},{key:"menus",label:"Menus"},{key:"procurement",label:"Procurement"}]
     : [{key:"restaurants",label:"Restaurants"},{key:"orders-cust",label:"My Orders"}];
 
   const navigate = key => { setPage(key); setDropOpen(false); };
@@ -521,7 +609,7 @@ function RecipesPage({ toast }) {
   const toggleSort=k=>{if(sortKey===k)setSortDir(d=>d==="asc"?"desc":"asc");else{setSortKey(k);setSortDir("asc");}};
   const toggleSel=id=>setSelected(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
 
-  const handleSave = async(form, imageBlob, removeImage, existingRid) => {
+  const handleSave = async(form, imageBlob, removeImage, contents, existingRid) => {
     if (!form.name?.trim()) return;
     setSaving(true);
     try {
@@ -539,7 +627,7 @@ function RecipesPage({ toast }) {
         image_url = null; image_thumb_url = null;
       }
 
-      const payload = { name:form.name, description:form.description||null, unid:form.unid||null, caid:form.caid||null, price:Number(form.price)||0, currency:form.currency||"AMD", available:form.available!==false, deliverable:form.deliverable!==false, image_url, image_thumb_url };
+      const payload = { name:form.name, description:form.description||null, unid:form.unid||null, caid:form.caid||null, price:Number(form.price)||0, currency:form.currency||"AMD", available:form.available!==false, deliverable:form.deliverable!==false, image_url, image_thumb_url, contents:(contents||[]).filter(c=>c.pid) };
 
       if (existingRid) {
         const updated = await api.updateRecipe(existingRid, payload);
@@ -582,11 +670,11 @@ function RecipesPage({ toast }) {
   ];
 
   return (
-    <Page title="Recipes" actions={<>{selected.length>0&&<Btn variant="danger" size="sm" onClick={()=>setDialog("del")}>Delete ({selected.length})</Btn>}<Btn size="sm" onClick={()=>setShowNew(s=>!s)}>+ New recipe</Btn></>}>
+    <Page title="Items" actions={<>{selected.length>0&&<Btn variant="danger" size="sm" onClick={()=>setDialog("del")}>Delete ({selected.length})</Btn>}<Btn size="sm" onClick={()=>setShowNew(s=>!s)}>+ New item</Btn></>}>
       {showNew&&(
         <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
-          <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>New Recipe</h3>
-          <RecipeForm initial={BLANK} lookups={lookups} saving={saving} onSave={(f,b,r)=>handleSave(f,b,r,null)} onCancel={()=>setShowNew(false)} />
+          <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>New Item</h3>
+          <RecipeForm initial={BLANK} lookups={lookups} saving={saving} onSave={(f,b,r,c)=>handleSave(f,b,r,c,null)} onCancel={()=>setShowNew(false)} />
         </div>
       )}
       {loading?<Spinner/>:<DataTable columns={cols} rows={sorted.map(r=>({...r,_id:r.rid}))} selected={selected} onSelect={toggleSel} onSelectAll={setSelected} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
@@ -595,8 +683,8 @@ function RecipesPage({ toast }) {
       {editRecipe&&(
         <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
           <div style={{ background:G.white, borderRadius:16, padding:32, maxWidth:640, width:"100%", maxHeight:"90vh", overflowY:"auto", animation:"fadeIn 0.2s ease", boxShadow:"0 20px 60px rgba(44,24,16,0.2)" }}>
-            <h3 style={{ fontFamily:G.font, fontSize:20, marginBottom:20 }}>Edit Recipe</h3>
-            <RecipeForm initial={editRecipe} lookups={lookups} saving={saving} onSave={(f,b,r)=>handleSave(f,b,r,editRecipe.rid)} onCancel={()=>setEditRecipe(null)} />
+            <h3 style={{ fontFamily:G.font, fontSize:20, marginBottom:20 }}>Edit Item</h3>
+            <RecipeForm initial={editRecipe} lookups={lookups} saving={saving} onSave={(f,b,r,c)=>handleSave(f,b,r,c,editRecipe.rid)} onCancel={()=>setEditRecipe(null)} />
           </div>
         </div>
       )}
@@ -1613,8 +1701,25 @@ function RestaurantsPage({ setPage, setActiveMenu }) {
 // ─── ORDER PAGE ───────────────────────────────────────────────────────────────
 function OrderPage({ menu, user, setPage, toast }) {
   const [qty, setQty] = useState({}); const [delivery, setDelivery] = useState(null);
-  const [address, setAddress] = useState({street:user?.street_address||"",city:user?.city||"",zip:user?.zip||""});
-  const [submitting, setSubmitting] = useState(false); const [lightbox, setLightbox] = useState(null);
+  const [savedAddresses, setSavedAddresses] = useState([]);
+  const [selectedAddr, setSelectedAddr] = useState(0); // index into savedAddresses, or -1 = "other"
+  const [otherStreet, setOtherStreet] = useState("");
+  const [otherCity, setOtherCity]     = useState("");
+  const [otherZip, setOtherZip]       = useState("");
+  const [submitting, setSubmitting]   = useState(false);
+  const [lightbox, setLightbox]       = useState(null);
+
+  useEffect(()=>{
+    api.getSavedAddresses().then(addrs=>{
+      setSavedAddresses(addrs||[]);
+      setSelectedAddr(addrs?.length>0 ? 0 : -1);
+    }).catch(()=>{
+      // Fall back to user profile address
+      const profileAddr = [user?.street_address, user?.city, user?.zip].filter(Boolean).join(", ");
+      if (profileAddr) { setSavedAddresses([{label:"Default", display:profileAddr}]); setSelectedAddr(0); }
+      else setSelectedAddr(-1);
+    });
+  },[]);
 
   if (!menu) { setPage("restaurants"); return null; }
 
@@ -1631,11 +1736,20 @@ function OrderPage({ menu, user, setPage, toast }) {
 
   useEffect(()=>{if(hasUndeliverable&&delivery==="delivery")setDelivery("pickup");},[hasUndeliverable]);
 
+  // When user edits "other" fields, auto-select the "other" radio
+  const onOtherFieldChange = (setter) => (val) => { setter(val); setSelectedAddr(-1); };
+
+  const resolvedAddress = () => {
+    if (selectedAddr>=0 && savedAddresses[selectedAddr]) return savedAddresses[selectedAddr].display;
+    return [otherStreet, otherCity, otherZip].filter(Boolean).join(", ");
+  };
+
   const submit=async()=>{
     if(!delivery){toast("Please select pickup or delivery","error");return;}
+    if(delivery==="delivery" && !resolvedAddress()){toast("Please enter a delivery address","error");return;}
     setSubmitting(true);
     try{
-      const order=await api.placeOrder({mid:menu.mid,pickup:delivery==="pickup",items:cartItems,delivery_address:delivery==="delivery"?`${address.street}, ${address.city} ${address.zip}`:null});
+      const order=await api.placeOrder({mid:menu.mid,pickup:delivery==="pickup",items:cartItems,delivery_address:delivery==="delivery"?resolvedAddress():null});
       toast(`Order #${order.oid} placed!`); setPage("orders-cust");
     }catch(e){toast(e.message,"error");}finally{setSubmitting(false);}
   };
@@ -1720,11 +1834,29 @@ function OrderPage({ menu, user, setPage, toast }) {
 
           {delivery==="delivery"&&!hasUndeliverable&&(
             <div style={{ marginBottom:14, display:"flex", flexDirection:"column", gap:8 }}>
-              <Input label="Street" value={address.street} onChange={v=>setAddress(p=>({...p,street:v}))} />
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-                <Input label="City" value={address.city} onChange={v=>setAddress(p=>({...p,city:v}))} />
-                <Input label="ZIP"  value={address.zip}  onChange={v=>setAddress(p=>({...p,zip:v}))} />
-              </div>
+              {savedAddresses.map((addr,i)=>(
+                <label key={i} style={{ display:"flex", alignItems:"flex-start", gap:8, cursor:"pointer", padding:"10px 12px", borderRadius:8, border:`1px solid ${selectedAddr===i?G.caramel:G.border}`, background:selectedAddr===i?"#fef9f4":G.white }}>
+                  <input type="radio" name="addr" checked={selectedAddr===i} onChange={()=>setSelectedAddr(i)} style={{accentColor:G.caramel,marginTop:2,flexShrink:0}} />
+                  <div>
+                    {addr.label&&<p style={{fontSize:12,fontWeight:700,color:G.muted,marginBottom:2}}>{addr.label}</p>}
+                    <p style={{fontSize:13,color:G.dark,lineHeight:1.5}}>{addr.display}</p>
+                  </div>
+                </label>
+              ))}
+              {/* Other address option */}
+              <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}>
+                <input type="radio" name="addr" checked={selectedAddr===-1} onChange={()=>setSelectedAddr(-1)} style={{accentColor:G.caramel,flexShrink:0}} />
+                <span style={{fontSize:13,fontWeight:500}}>Other address</span>
+              </label>
+              {selectedAddr===-1&&(
+                <div style={{ paddingLeft:20, display:"flex", flexDirection:"column", gap:8 }}>
+                  <Input label="Street" value={otherStreet} onChange={onOtherFieldChange(setOtherStreet)} />
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                    <Input label="City" value={otherCity} onChange={onOtherFieldChange(setOtherCity)} />
+                    <Input label="ZIP"  value={otherZip}  onChange={onOtherFieldChange(setOtherZip)} />
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1943,6 +2075,18 @@ function SchedulePage({ toast, storeSchedule, setStoreSchedule }) {
   );
 }
 
+// ─── PROCUREMENT PAGE (placeholder) ──────────────────────────────────────────
+function ProcurementPage() {
+  return (
+    <Page title="Procurement">
+      <div style={{ textAlign:"center", padding:80, color:G.muted }}>
+        <p style={{ fontFamily:G.font, fontSize:24, marginBottom:8 }}>Procurement</p>
+        <p style={{ fontSize:14 }}>Coming soon.</p>
+      </div>
+    </Page>
+  );
+}
+
 // ─── APP ROOT ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [user, setUser] = useState(()=>{
@@ -1969,8 +2113,10 @@ export default function App() {
         <>
           <Nav user={user} page={page} setPage={setPage} logout={logout}/>
           {page==="products"     &&<ProductsPage toast={toast}/>}
+          {page==="items"        &&<RecipesPage  toast={toast}/>}
           {page==="recipes"      &&<RecipesPage  toast={toast}/>}
           {page==="menus"        &&<MenusPage    toast={toast} storeSchedule={storeSchedule} setStoreSchedule={setStoreSchedule}/>}
+          {page==="procurement"  &&<ProcurementPage/>}
           {page==="orders-manuf" &&<OrdersManufPage toast={toast}/>}
           {page==="restaurants"  &&<RestaurantsPage setPage={setPage} setActiveMenu={setActiveMenu}/>}
           {page==="order"        &&<OrderPage menu={activeMenu} user={user} setPage={setPage} toast={toast}/>}

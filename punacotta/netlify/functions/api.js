@@ -463,6 +463,51 @@ async function route(method, segments, body, headers, event) {
     }
   }
 
+  // ── ADDRESSES (customer saved delivery addresses) ─────────────────────────
+  if (r0 === 'addresses') {
+    if (!user) return [401, { error: 'Unauthorized' }]
+    if (method === 'GET') {
+      // Return 2 most recent distinct delivery addresses from orders, plus profile address
+      const recent = await dbq(`
+        SELECT DISTINCT delivery_address
+        FROM "order"
+        WHERE owner_uid = $1
+          AND delivery_address IS NOT NULL
+          AND delivery_address != ''
+        ORDER BY MAX(created_at) DESC
+        LIMIT 2`,
+        [user.uid]
+      ).catch(async () => {
+        // fallback without window function if needed
+        return dbq(`
+          SELECT delivery_address
+          FROM "order"
+          WHERE owner_uid = $1
+            AND delivery_address IS NOT NULL
+            AND delivery_address != ''
+          GROUP BY delivery_address
+          ORDER BY MAX(created_at) DESC
+          LIMIT 2`, [user.uid])
+      })
+
+      const addresses = []
+      // Most recent is index 0 — mark first as Default
+      for (let i = 0; i < recent.length; i++) {
+        addresses.push({
+          display: recent[i].delivery_address,
+          label: i === 0 ? 'Default' : ''
+        })
+      }
+      // If no saved addresses, fall back to profile
+      if (addresses.length === 0) {
+        const [u] = await dbq('SELECT street_address, city, zip FROM "user" WHERE uid=$1', [user.uid])
+        const profileAddr = [u?.street_address, u?.city, u?.zip].filter(Boolean).join(', ')
+        if (profileAddr) addresses.push({ display: profileAddr, label: 'Default' })
+      }
+      return [200, addresses]
+    }
+  }
+
   // ── CUSTOMERS (search) ────────────────────────────────────────────────────
   if (r0 === 'customers') {
     if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
