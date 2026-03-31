@@ -43,8 +43,23 @@ export const api = {
   // Products
   getProducts:       ()     => req('GET',    '/products'),
   getProductLookups: ()     => req('GET',    '/products/lookups'),
+  getProductUsage:   (ids)  => req('GET',    `/products/usage/${ids.join(',')}`),
   createProduct:     (data) => req('POST',   '/products', data),
-  deleteProducts:    (ids)  => req('DELETE', '/products', { ids }),
+  deleteProducts:    (ids, cascade_recipes) => req('DELETE', '/products', { ids, cascade_recipes }),
+
+  // Suppliers
+  getSuppliers:      ()          => req('GET',    '/suppliers'),
+  getSupplier:       (sid)       => req('GET',    `/suppliers/${sid}`),
+  createSupplier:    (data)      => req('POST',   '/suppliers', data),
+  updateSupplier:    (sid, data) => req('PATCH',  `/suppliers/${sid}`, data),
+  deleteSupplier:    (sid)       => req('DELETE', `/suppliers/${sid}`),
+  getSupplierProducts:   (sid)       => req('GET',    `/suppliers/${sid}/products`),
+  linkSupplierProduct:   (sid, data) => req('POST',   `/suppliers/${sid}/products`, data),
+  unlinkSupplierProduct: (sid, psid) => req('DELETE', `/suppliers/${sid}/products/${psid}`),
+
+  // Procurement
+  getProcurement:    ()         => req('GET',   '/procurement'),
+  patchProductExpiry:(pid,data) => req('PATCH', `/procurement/${pid}`, data),
 
   // Recipes
   getRecipes:          ()          => req('GET',    '/recipes'),

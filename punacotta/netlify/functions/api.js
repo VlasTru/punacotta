@@ -90,6 +90,25 @@ const RECIPE_SEL = `
   LEFT JOIN units u ON u.unid=r.unid
   LEFT JOIN recipe_category c ON c.caid=r.caid`
 
+async function attachContents(rows) {
+  if (!rows.length) return rows
+  const rids = rows.map(r=>r.rid)
+  const contents = await dbq(`
+    SELECT rp.rid, rp.pid, rp.qty,
+           p.name AS product_name, u.name AS units
+    FROM recipe_product rp
+    JOIN product p ON p.pid=rp.pid
+    LEFT JOIN units u ON u.unid=p.unid
+    WHERE rp.rid=ANY($1::int[])
+    ORDER BY p.name`, [rids])
+  return rows.map(r=>({
+    ...r,
+    contents: contents
+      .filter(c=>c.rid===r.rid)
+      .map(c=>({ pid:c.pid, label:`${c.product_name}${c.units?', '+c.units:''}`, qty:Number(c.qty) }))
+  }))
+}
+
 // ─── MENU HELPER ──────────────────────────────────────────────────────────────
 async function fetchMenu(mid) {
   const [menu] = await dbq('SELECT * FROM menu WHERE mid = $1', [mid])
@@ -285,15 +304,62 @@ async function route(method, segments, body, headers, event) {
         return [201, row]
       }
       if (method === 'DELETE') {
-        const { ids } = body
+        const { ids, cascade_recipes } = body
         if (!Array.isArray(ids) || !ids.length) return [400, { error: 'ids required' }]
+        // If cascade requested, soft-delete affected recipes first
+        if (cascade_recipes) {
+          const affected = await dbq(
+            `SELECT DISTINCT rp.rid FROM recipe_product rp WHERE rp.pid=ANY($1::int[])`,
+            [ids]
+          )
+          if (affected.length) {
+            const rids = affected.map(r=>r.rid)
+            for (const rid of rids) {
+              const [rec] = await dbq('SELECT cloudinary_id FROM recipe WHERE rid=$1', [rid])
+              if (rec?.cloudinary_id) await cloudinaryDelete(rec.cloudinary_id)
+            }
+            await dbr('UPDATE recipe SET deleted=true WHERE rid=ANY($1::int[])', [rids])
+          }
+        }
         await dbr('UPDATE product SET deleted=true WHERE pid=ANY($1::int[])', [ids])
         return [200, { deleted: ids }]
       }
     }
+    // GET /products/usage?ids=1,2,3  — returns recipes that use these products
+    if (r1 === 'usage' && method === 'GET') {
+      const ids = (segments[2]||'').split(',').map(Number).filter(Boolean)
+      if (!ids.length) return [200, {}]
+      const rows = await dbq(`
+        SELECT rp.pid, r.rid, r.name AS recipe_name
+        FROM recipe_product rp
+        JOIN recipe r ON r.rid=rp.rid
+        WHERE rp.pid=ANY($1::int[]) AND r.deleted=false
+        ORDER BY r.name`, [ids])
+      // Group by pid
+      const map = {}
+      for (const row of rows) {
+        if (!map[row.pid]) map[row.pid] = []
+        if (!map[row.pid].find(x=>x.rid===row.rid))
+          map[row.pid].push({ rid:row.rid, name:row.recipe_name })
+      }
+      return [200, map]
+    }
   }
 
   // ── RECIPES ───────────────────────────────────────────────────────────────
+  // Helper: replace all recipe_product rows for a recipe
+  async function saveContents(rid, contents) {
+    await dbr('DELETE FROM recipe_product WHERE rid=$1', [rid])
+    for (const c of (contents||[])) {
+      if (!c.pid) continue
+      await dbr(
+        `INSERT INTO recipe_product (rid,pid,qty) VALUES ($1,$2,$3)
+         ON CONFLICT (rid,pid) DO UPDATE SET qty=$3`,
+        [rid, c.pid, parseFloat(c.qty)||1]
+      )
+    }
+  }
+
   if (r0 === 'recipes') {
     if (r1 === 'available' && method === 'GET') {
       return [200, await dbq(RECIPE_SEL + ' WHERE r.deleted=false AND r.available=true ORDER BY r.name')]
@@ -310,15 +376,16 @@ async function route(method, segments, body, headers, event) {
     if (r1 && method === 'PUT') {
       if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
       const { name, description, unid, caid, price, currency, available,
-              deliverable, image_url, image_thumb_url, cloudinary_id } = body
+              deliverable, image_url, image_thumb_url, cloudinary_id, contents } = body
       if (!name?.trim()) return [400, { error: 'Name required' }]
       await dbr(`UPDATE recipe SET name=$1,description=$2,unid=$3,caid=$4,price=$5,currency=$6,
                  available=$7,deliverable=$8,image_url=$9,image_thumb_url=$10,cloudinary_id=$11 WHERE rid=$12`,
         [name.trim(), description||null, unid||null, caid||null,
          Number(price)||0, currency||'AMD', available!==false, deliverable!==false,
          image_url||null, image_thumb_url||null, cloudinary_id||null, r1])
-      const [row] = await dbq(RECIPE_SEL + ' WHERE r.rid=$1', [r1])
-      return [200, row]
+      if (Array.isArray(contents)) await saveContents(r1, contents)
+      const rows = await dbq(RECIPE_SEL + ' WHERE r.rid=$1', [r1])
+      return [200, (await attachContents(rows))[0]]
     }
     // PATCH /recipes/:rid — partial update
     if (r1 && method === 'PATCH') {
@@ -331,11 +398,13 @@ async function route(method, segments, body, headers, event) {
       return [200, row]
     }
     if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
-    if (method === 'GET')
-      return [200, await dbq(RECIPE_SEL + ' WHERE r.deleted=false ORDER BY r.name')]
+    if (method === 'GET') {
+      const rows = await dbq(RECIPE_SEL + ' WHERE r.deleted=false ORDER BY r.name')
+      return [200, await attachContents(rows)]
+    }
     if (method === 'POST') {
       const { name, description, unid, caid, price, currency, available,
-              deliverable, image_url, image_thumb_url, cloudinary_id } = body
+              deliverable, image_url, image_thumb_url, cloudinary_id, contents } = body
       if (!name?.trim()) return [400, { error: 'Name required' }]
       const res = await dbr(
         `INSERT INTO recipe (name,description,unid,caid,price,currency,available,deliverable,
@@ -344,8 +413,10 @@ async function route(method, segments, body, headers, event) {
         [name.trim(), description||null, unid||null, caid||null,
          Number(price)||0, currency||'AMD', available!==false, deliverable!==false,
          image_url||null, image_thumb_url||null, cloudinary_id||null])
-      const [row] = await dbq(RECIPE_SEL + ' WHERE r.rid=$1', [res.rows[0].rid])
-      return [201, row]
+      const rid = res.rows[0].rid
+      if (Array.isArray(contents)) await saveContents(rid, contents)
+      const rows = await dbq(RECIPE_SEL + ' WHERE r.rid=$1', [rid])
+      return [201, (await attachContents(rows))[0]]
     }
     if (method === 'DELETE') {
       const { ids } = body
@@ -353,6 +424,7 @@ async function route(method, segments, body, headers, event) {
       for (const rid of ids) {
         const [r] = await dbq('SELECT cloudinary_id FROM recipe WHERE rid=$1', [rid])
         if (r?.cloudinary_id) await cloudinaryDelete(r.cloudinary_id)
+        await dbr('DELETE FROM recipe_product WHERE rid=$1', [rid])
       }
       await dbr('UPDATE recipe SET deleted=true WHERE rid=ANY($1::int[])', [ids])
       return [200, { deleted: ids }]
@@ -629,6 +701,102 @@ async function route(method, segments, body, headers, event) {
       }
 
       return [201, full]
+    }
+  }
+
+  // ── SUPPLIERS ─────────────────────────────────────────────────────────────
+  if (r0 === 'suppliers') {
+    if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+
+    // GET /suppliers/:sid/products — products linked to this supplier
+    if (r1 && r2 === 'products' && method === 'GET') {
+      const rows = await dbq(`
+        SELECT ps.psid, ps.pid, ps.price, ps.currency,
+               p.name AS product_name, u.name AS units
+        FROM product_supplier ps
+        JOIN product p ON p.pid=ps.pid
+        LEFT JOIN units u ON u.unid=p.unid
+        WHERE ps.sid=$1 AND p.deleted=false
+        ORDER BY p.name`, [r1])
+      return [200, rows]
+    }
+    // POST /suppliers/:sid/products — link product to supplier
+    if (r1 && r2 === 'products' && method === 'POST') {
+      const { pid, price, currency } = body
+      await dbr(`INSERT INTO product_supplier (pid,sid,price,currency) VALUES ($1,$2,$3,$4)
+                 ON CONFLICT (pid,sid) DO UPDATE SET price=$3,currency=$4`,
+        [pid, r1, price||null, currency||'AMD'])
+      return [200, { ok:true }]
+    }
+    // DELETE /suppliers/:sid/products/:psid
+    if (r1 && r2 === 'products' && segments[3] && method === 'DELETE') {
+      await dbr('DELETE FROM product_supplier WHERE psid=$1 AND sid=$2', [segments[3], r1])
+      return [200, { ok:true }]
+    }
+
+    if (r1 && method === 'GET') {
+      const [s] = await dbq('SELECT * FROM supplier WHERE sid=$1 AND owner_uid=$2', [r1, user.uid])
+      if (!s) return [404, { error:'Not found' }]
+      return [200, s]
+    }
+    if (r1 && method === 'PATCH') {
+      const { name,contact_fname,contact_lname,contact_title,email,phone,street_address,city,zip,schedule } = body
+      await dbr(`UPDATE supplier SET name=$1,contact_fname=$2,contact_lname=$3,contact_title=$4,
+                 email=$5,phone=$6,street_address=$7,city=$8,zip=$9,schedule=$10 WHERE sid=$11 AND owner_uid=$12`,
+        [name,contact_fname||null,contact_lname||null,contact_title||null,
+         email||null,phone||null,street_address||null,city||null,zip||null,
+         schedule?JSON.stringify(schedule):null,r1,user.uid])
+      const [s] = await dbq('SELECT * FROM supplier WHERE sid=$1', [r1])
+      return [200, s]
+    }
+    if (r1 && method === 'DELETE') {
+      await dbr('DELETE FROM product_supplier WHERE sid=$1', [r1])
+      await dbr('DELETE FROM supplier WHERE sid=$1 AND owner_uid=$2', [r1, user.uid])
+      return [200, { ok:true }]
+    }
+    if (method === 'GET') {
+      const rows = await dbq('SELECT * FROM supplier WHERE owner_uid=$1 ORDER BY name', [user.uid])
+      return [200, rows]
+    }
+    if (method === 'POST') {
+      const { name,contact_fname,contact_lname,contact_title,email,phone,street_address,city,zip,schedule } = body
+      if (!name?.trim()) return [400, { error:'Name required' }]
+      const res = await dbr(`INSERT INTO supplier
+        (owner_uid,name,contact_fname,contact_lname,contact_title,email,phone,street_address,city,zip,schedule)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING sid`,
+        [user.uid,name.trim(),contact_fname||null,contact_lname||null,contact_title||null,
+         email||null,phone||null,street_address||null,city||null,zip||null,
+         schedule?JSON.stringify(schedule):null])
+      const [s] = await dbq('SELECT * FROM supplier WHERE sid=$1', [res.rows[0].sid])
+      return [201, s]
+    }
+  }
+
+  // ── PROCUREMENT (product-supplier links + expiry) ─────────────────────────
+  if (r0 === 'procurement') {
+    if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+    // GET /procurement — all products with their suppliers and expiry
+    if (method === 'GET') {
+      const products = await dbq(`
+        SELECT p.pid, p.name, p.expiry_hours,
+               u.name AS units, c.name AS category
+        FROM product p
+        LEFT JOIN units u ON u.unid=p.unid
+        LEFT JOIN product_category c ON c.caid=p.caid
+        WHERE p.deleted=false ORDER BY p.name`)
+      const links = await dbq(`
+        SELECT ps.psid, ps.pid, ps.price, ps.currency,
+               s.sid, s.name AS supplier_name
+        FROM product_supplier ps
+        JOIN supplier s ON s.sid=ps.sid
+        WHERE s.owner_uid=$1`, [user.uid])
+      return [200, { products, links }]
+    }
+    // PATCH /procurement/:pid — update expiry_hours
+    if (r1 && method === 'PATCH') {
+      const { expiry_hours } = body
+      await dbr('UPDATE product SET expiry_hours=$1 WHERE pid=$2', [expiry_hours||null, r1])
+      return [200, { ok:true }]
     }
   }
 

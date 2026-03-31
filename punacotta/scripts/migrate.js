@@ -79,6 +79,45 @@ CREATE TABLE IF NOT EXISTS address_book (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Recipe-product contents (items have ingredients)
+CREATE TABLE IF NOT EXISTS recipe_product (
+  rpid    SERIAL PRIMARY KEY,
+  rid     INTEGER NOT NULL REFERENCES recipe(rid),
+  pid     INTEGER NOT NULL REFERENCES product(pid),
+  qty     NUMERIC(10,3) NOT NULL DEFAULT 1,
+  UNIQUE(rid, pid)
+);
+
+-- Suppliers
+CREATE TABLE IF NOT EXISTS supplier (
+  sid              SERIAL PRIMARY KEY,
+  owner_uid        INTEGER NOT NULL REFERENCES "user"(uid),
+  name             VARCHAR(100) NOT NULL,
+  contact_fname    VARCHAR(50),
+  contact_lname    VARCHAR(50),
+  contact_title    VARCHAR(50),
+  email            VARCHAR(100),
+  phone            VARCHAR(25),
+  street_address   VARCHAR(100),
+  city             VARCHAR(50),
+  zip              VARCHAR(10),
+  schedule         JSONB,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Product ↔ Supplier association (with price per unit)
+CREATE TABLE IF NOT EXISTS product_supplier (
+  psid         SERIAL PRIMARY KEY,
+  pid          INTEGER NOT NULL REFERENCES product(pid),
+  sid          INTEGER NOT NULL REFERENCES supplier(sid),
+  price        NUMERIC(10,2),
+  currency     VARCHAR(3) DEFAULT 'AMD',
+  UNIQUE(pid, sid)
+);
+
+-- Product expiry (per product, in hours)
+ALTER TABLE product ADD COLUMN IF NOT EXISTS expiry_hours INTEGER;
+
 -- Add schedule column to user table (safe to re-run)
 ALTER TABLE "user" ADD COLUMN IF NOT EXISTS schedule JSONB;
 

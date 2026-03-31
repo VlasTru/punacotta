@@ -226,7 +226,9 @@ function RecipeForm({ initial, lookups, onSave, onCancel, saving }) {
   const [imageBlob, setImageBlob] = useState(null);
   const [removeImage, setRemoveImage] = useState(false);
   const [slide, setSlide] = useState("general"); // "general" | "contents"
-  const [contents, setContents] = useState(initial?.contents || []); // [{pid, name_with_unit, qty}]
+  const [contents, setContents] = useState(
+    (initial?.contents||[]).map(c=>({ pid:String(c.pid), label:c.label||"", qty:c.qty??1 }))
+  );
   const [allProducts, setAllProducts] = useState([]);
   const [productSearch, setProductSearch] = useState("");
   const set = (k,v) => setForm(p=>({...p,[k]:v}));
@@ -259,9 +261,9 @@ function RecipeForm({ initial, lookups, onSave, onCancel, saving }) {
     setContents(p=>p.map((c,j)=>j===i?{...c,pid,label:prod?.label||""}:c));
   };
   const setContentQty = (i, delta) =>
-    setContents(p=>p.map((c,j)=>j===i?{...c,qty:Math.max(0,Math.min(1000,(c.qty||0)+delta))}:c));
+    setContents(p=>p.map((c,j)=>j===i?{...c,qty:Math.max(0,Math.min(1000,Math.round((parseFloat(c.qty)||0)+delta)*1000)/1000)}:c));
   const setContentQtyDirect = (i, val) =>
-    setContents(p=>p.map((c,j)=>j===i?{...c,qty:Math.max(0,Math.min(1000,Number(val)||0))}:c));
+    setContents(p=>p.map((c,j)=>j===i?{...c,qty:val}:c));
 
   const filteredProducts = productSearch.trim().length > 0
     ? allProducts.filter(p=>p.label.toLowerCase().includes(productSearch.toLowerCase()))
@@ -292,9 +294,10 @@ function RecipeForm({ initial, lookups, onSave, onCancel, saving }) {
           {/* Qty */}
           <div style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>
             <button onClick={()=>setContentQty(i,-1)} style={{ width:24,height:24,borderRadius:5,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",fontWeight:700,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center" }}>−</button>
-            <input type="number" value={c.qty} min={0} max={1000}
+            <input type="number" value={c.qty} min={0} max={1000} step="any"
               onChange={e=>setContentQtyDirect(i,e.target.value)}
-              style={{ width:56,textAlign:"center",padding:"4px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none" }} />
+              onBlur={e=>setContents(p=>p.map((x,j)=>j===i?{...x,qty:Math.max(0,Math.min(1000,parseFloat(e.target.value)||0))}:x))}
+              style={{ width:64,textAlign:"center",padding:"4px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none" }} />
             <button onClick={()=>setContentQty(i,1)} style={{ width:24,height:24,borderRadius:5,border:"none",background:G.caramel,cursor:"pointer",fontWeight:700,fontSize:14,color:G.white,display:"flex",alignItems:"center",justifyContent:"center" }}>+</button>
           </div>
           {/* Remove */}
@@ -359,7 +362,7 @@ function Nav({ user, page, setPage, logout }) {
   const isM = user?.is_manufacturer;
   const [dropOpen, setDropOpen] = useState(false);
   const links = isM
-    ? [{key:"orders-manuf",label:"Orders"},{key:"products",label:"Products"},{key:"items",label:"Items"},{key:"menus",label:"Menus"},{key:"procurement",label:"Procurement"}]
+    ? [{key:"orders-manuf",label:"Orders"},{key:"products",label:"Products"},{key:"items",label:"Items"},{key:"menus",label:"Menus"},{key:"procurement",label:"Procurement"},{key:"suppliers",label:"Suppliers"}]
     : [{key:"restaurants",label:"Restaurants"},{key:"orders-cust",label:"My Orders"}];
 
   const navigate = key => { setPage(key); setDropOpen(false); };
@@ -561,16 +564,44 @@ function ProductsPage({ toast }) {
   const [products, setProducts] = useState([]); const [lookups, setLookups] = useState({units:[],categories:[]}); const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState([]); const [sortKey, setSortKey] = useState("name"); const [sortDir, setSortDir] = useState("asc");
   const [showForm, setShowForm] = useState(false); const [dialog, setDialog] = useState(null); const [form, setForm] = useState({name:"",unid:"",caid:""}); const [saving, setSaving] = useState(false);
+  const [usageMap, setUsageMap] = useState({}); // pid -> [{rid,name}]
+
   const load = useCallback(async()=>{ setLoading(true); try{ const[p,l]=await Promise.all([api.getProducts(),api.getProductLookups()]); setProducts(p); setLookups(l); } catch(e){toast(e.message,"error");} finally{setLoading(false);} },[]);
   useEffect(()=>{load();},[]);
   const sorted=[...products].sort((a,b)=>{ const v=String(a[sortKey]||"")<String(b[sortKey]||"")?-1:String(a[sortKey]||"")>String(b[sortKey]||"")?1:0; return sortDir==="asc"?v:-v; });
   const toggleSort=k=>{if(sortKey===k)setSortDir(d=>d==="asc"?"desc":"asc");else{setSortKey(k);setSortDir("asc");}};
   const toggleSel=id=>setSelected(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
   const save=async()=>{ if(!form.name.trim())return; setSaving(true); try{ const p=await api.createProduct({name:form.name,unid:form.unid||null,caid:form.caid||null}); setProducts(prev=>[...prev,p]); toast(`"${p.name}" saved`); setForm({name:"",unid:"",caid:""}); setShowForm(false); } catch(e){toast(e.message,"error");} finally{setSaving(false);} };
-  const doDelete=async()=>{ const names=selected.map(id=>products.find(p=>p.pid===id)?.name).filter(Boolean).join(", "); try{ await api.deleteProducts(selected); setProducts(prev=>prev.filter(p=>!selected.includes(p.pid))); toast(`${names} deleted`); setSelected([]); setDialog(null); } catch(e){toast(e.message,"error");} };
+
+  const openDeleteDialog = async () => {
+    try {
+      const usage = await api.getProductUsage(selected);
+      setUsageMap(usage || {});
+    } catch { setUsageMap({}); }
+    setDialog("del");
+  };
+
+  const doDelete = async (cascade) => {
+    const names = selected.map(id=>products.find(p=>p.pid===id)?.name).filter(Boolean).join(", ");
+    try {
+      await api.deleteProducts(selected, cascade);
+      setProducts(prev=>prev.filter(p=>!selected.includes(p.pid)));
+      toast(`${names} deleted`); setSelected([]); setDialog(null); setUsageMap({});
+    } catch(e){toast(e.message,"error");}
+  };
+
+  // Build affected items text for dialog
+  const affectedItems = [];
+  for (const pid of selected) {
+    const recipes = usageMap[pid] || [];
+    recipes.forEach(r=>{ if(!affectedItems.find(x=>x.rid===r.rid)) affectedItems.push(r); });
+  }
+  affectedItems.sort((a,b)=>a.name.localeCompare(b.name));
+  const selectedNames = selected.map(id=>products.find(p=>p.pid===id)?.name).filter(Boolean);
+
   const cols=[ {key:"pid",label:"ID",sortable:true,render:r=><span style={{color:G.muted,fontSize:13}}>#{r._id}</span>}, {key:"name",label:"Name",sortable:true}, {key:"category",label:"Category",sortable:true,render:r=>r.category?<Badge>{r.category}</Badge>:<span style={{color:G.muted}}>—</span>}, {key:"units",label:"Units",sortable:false,render:r=>r.units||<span style={{color:G.muted}}>—</span>} ];
   return (
-    <Page title="Products" actions={<>{selected.length>0&&<Btn variant="danger" size="sm" onClick={()=>setDialog("del")}>Delete ({selected.length})</Btn>}<Btn size="sm" onClick={()=>setShowForm(s=>!s)}>+ New product</Btn></>}>
+    <Page title="Products" actions={<>{selected.length>0&&<Btn variant="danger" size="sm" onClick={openDeleteDialog}>Delete ({selected.length})</Btn>}<Btn size="sm" onClick={()=>setShowForm(s=>!s)}>+ New product</Btn></>}>
       {showForm&&(
         <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
           <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>New Product</h3>
@@ -586,9 +617,31 @@ function ProductsPage({ toast }) {
         </div>
       )}
       {loading?<Spinner/>:<DataTable columns={cols} rows={sorted.map(p=>({...p,_id:p.pid}))} selected={selected} onSelect={toggleSel} onSelectAll={setSelected} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
-      <Dialog open={dialog==="del"} title="Delete products?" onConfirm={doDelete} onCancel={()=>setDialog(null)}>
-        Are you sure you wish to delete <b>{selected.map(id=>products.find(p=>p.pid===id)?.name).filter(Boolean).join(", ")}</b>?
-      </Dialog>
+
+      {/* Delete dialog — smart version */}
+      {dialog==="del"&&(
+        <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <div style={{ background:G.white, borderRadius:16, padding:32, maxWidth:480, width:"90%", animation:"fadeIn 0.2s ease", boxShadow:"0 20px 60px rgba(44,24,16,0.2)" }}>
+            <h3 style={{ fontFamily:G.font, fontSize:20, marginBottom:16 }}>Delete product{selected.length>1?"s":""}?</h3>
+            {affectedItems.length===0 ? (
+              <p style={{ color:G.muted, lineHeight:1.6, marginBottom:24, fontSize:15 }}>
+                Are you sure you wish to delete <b>{selectedNames.join(", ")}</b>? This action may not be undone.
+              </p>
+            ) : (
+              <p style={{ color:G.muted, lineHeight:1.6, marginBottom:24, fontSize:15 }}>
+                <b>{selectedNames.join(", ")}</b> {selected.length===1?"is":"are"} included in the following items:{" "}
+                <b>{affectedItems.map(r=>r.name).join(", ")}</b>.{" "}
+                Unless these items are deleted, the product may not be deleted either.
+                Do you wish to remove the above items along with the product? This action may not be undone.
+              </p>
+            )}
+            <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+              <Btn variant="ghost" onClick={()=>{setDialog(null);setUsageMap({});}}>Cancel</Btn>
+              <Btn variant="danger" onClick={()=>doDelete(affectedItems.length>0)}>Yes</Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </Page>
   );
 }
@@ -1897,7 +1950,7 @@ function OrdersCustPage({ toast }) {
                 <div style={{ marginBottom:12 }}>
                   {(o.items||[]).map((it,i)=>(
                     <div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:13, color:G.muted, marginBottom:2 }}>
-                      <span>{it.name}</span><span>{it.qty}</span><span>{it.qty*it.price} AMD</span>
+                      <span>{it.name} x {it.qty}</span><span>{it.qty*it.price} AMD</span>
                     </div>
                   ))}
                 </div>
@@ -2075,14 +2128,331 @@ function SchedulePage({ toast, storeSchedule, setStoreSchedule }) {
   );
 }
 
-// ─── PROCUREMENT PAGE (placeholder) ──────────────────────────────────────────
-function ProcurementPage() {
+// ─── PROCUREMENT PAGE ─────────────────────────────────────────────────────────
+function ProcurementPage({ toast }) {
+  const [data, setData] = useState({ products:[], links:[] });
+  const [suppliers, setSuppliers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editPid, setEditPid] = useState(null);
+  const [editExpiry, setEditExpiry] = useState("");
+  const [linkPid, setLinkPid] = useState(null); // product being linked to a supplier
+  const [linkSid, setLinkSid] = useState("");
+  const [linkPrice, setLinkPrice] = useState("");
+  const [linkCurrency, setLinkCurrency] = useState("AMD");
+
+  const load = useCallback(async()=>{
+    setLoading(true);
+    try {
+      const [d, s] = await Promise.all([api.getProcurement(), api.getSuppliers()]);
+      setData(d); setSuppliers(s);
+    } catch(e){ toast(e.message,"error"); }
+    finally{ setLoading(false); }
+  },[]);
+  useEffect(()=>{ load(); },[]);
+
+  const saveExpiry = async (pid) => {
+    try {
+      await api.patchProductExpiry(pid, { expiry_hours: editExpiry ? Number(editExpiry) : null });
+      setData(d=>({...d, products:d.products.map(p=>p.pid===pid?{...p,expiry_hours:editExpiry?Number(editExpiry):null}:p)}));
+      setEditPid(null); toast("Expiry saved");
+    } catch(e){ toast(e.message,"error"); }
+  };
+
+  const linkSupplier = async () => {
+    if (!linkSid) { toast("Select a supplier","error"); return; }
+    try {
+      await api.linkSupplierProduct(linkSid, { pid:linkPid, price:linkPrice?Number(linkPrice):null, currency:linkCurrency });
+      await load(); setLinkPid(null); setLinkSid(""); setLinkPrice(""); toast("Supplier linked");
+    } catch(e){ toast(e.message,"error"); }
+  };
+
+  const unlinkSupplier = async (sid, psid) => {
+    try { await api.unlinkSupplierProduct(sid, psid); await load(); toast("Supplier unlinked"); }
+    catch(e){ toast(e.message,"error"); }
+  };
+
+  if (loading) return <Page title="Procurement"><Spinner/></Page>;
+
   return (
     <Page title="Procurement">
-      <div style={{ textAlign:"center", padding:80, color:G.muted }}>
-        <p style={{ fontFamily:G.font, fontSize:24, marginBottom:8 }}>Procurement</p>
-        <p style={{ fontSize:14 }}>Coming soon.</p>
+      <div style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, overflow:"hidden" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse" }}>
+          <thead>
+            <tr style={{ background:G.sand, borderBottom:`1px solid ${G.border}` }}>
+              {["Product","Category","Units","Expiry (hours)","Suppliers"].map(h=>(
+                <th key={h} style={{ padding:"11px 16px", textAlign:"left", fontSize:12, fontWeight:700, letterSpacing:"0.05em", textTransform:"uppercase", color:G.muted }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {data.products.map((p,i)=>{
+              const prodLinks = data.links.filter(l=>l.pid===p.pid);
+              return (
+                <tr key={p.pid} style={{ borderBottom:i<data.products.length-1?`1px solid ${G.border}`:"none", verticalAlign:"top" }}>
+                  <td style={{ padding:"12px 16px", fontSize:14, fontWeight:600 }}>{p.name}</td>
+                  <td style={{ padding:"12px 16px", fontSize:13 }}>{p.category?<Badge>{p.category}</Badge>:<span style={{color:G.muted}}>—</span>}</td>
+                  <td style={{ padding:"12px 16px", fontSize:13, color:G.muted }}>{p.units||"—"}</td>
+                  <td style={{ padding:"12px 16px" }}>
+                    {editPid===p.pid ? (
+                      <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                        <input type="number" value={editExpiry} onChange={e=>setEditExpiry(e.target.value)} placeholder="hours"
+                          style={{ width:70, padding:"5px 8px", borderRadius:6, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none" }} />
+                        <Btn size="sm" onClick={()=>saveExpiry(p.pid)}>Save</Btn>
+                        <Btn size="sm" variant="ghost" onClick={()=>setEditPid(null)}>×</Btn>
+                      </div>
+                    ):(
+                      <button onClick={()=>{setEditPid(p.pid);setEditExpiry(p.expiry_hours||"");}}
+                        style={{ background:"none", border:"none", cursor:"pointer", fontSize:13, color:p.expiry_hours?G.dark:G.caramel, fontFamily:G.mono }}>
+                        {p.expiry_hours ? `${p.expiry_hours}h` : "+ Set expiry"}
+                      </button>
+                    )}
+                  </td>
+                  <td style={{ padding:"12px 16px" }}>
+                    <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+                      {prodLinks.map(l=>(
+                        <div key={l.psid} style={{ display:"flex", alignItems:"center", gap:8, fontSize:13 }}>
+                          <span style={{ flex:1 }}>{l.supplier_name}</span>
+                          {l.price&&<span style={{ color:G.caramel, fontWeight:600 }}>{l.price} {l.currency}</span>}
+                          <button onClick={()=>unlinkSupplier(l.sid, l.psid)} style={{ background:"none", border:"none", color:G.muted, cursor:"pointer", fontSize:12, fontFamily:G.mono }}>×</button>
+                        </div>
+                      ))}
+                      {linkPid===p.pid ? (
+                        <div style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap", marginTop:4 }}>
+                          <select value={linkSid} onChange={e=>setLinkSid(e.target.value)}
+                            style={{ padding:"5px 8px", borderRadius:6, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none" }}>
+                            <option value="">Supplier…</option>
+                            {suppliers.map(s=><option key={s.sid} value={s.sid}>{s.name}</option>)}
+                          </select>
+                          <input type="number" value={linkPrice} onChange={e=>setLinkPrice(e.target.value)} placeholder="Price"
+                            style={{ width:70, padding:"5px 8px", borderRadius:6, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none" }} />
+                          <select value={linkCurrency} onChange={e=>setLinkCurrency(e.target.value)}
+                            style={{ padding:"5px 8px", borderRadius:6, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none" }}>
+                            {["AMD","USD","EUR","RUR"].map(c=><option key={c} value={c}>{c}</option>)}
+                          </select>
+                          <Btn size="sm" onClick={linkSupplier}>Link</Btn>
+                          <Btn size="sm" variant="ghost" onClick={()=>setLinkPid(null)}>×</Btn>
+                        </div>
+                      ):(
+                        <button onClick={()=>{setLinkPid(p.pid);setLinkSid("");setLinkPrice("");}}
+                          style={{ background:"none", border:"none", cursor:"pointer", fontSize:12, color:G.caramel, fontFamily:G.mono, fontWeight:600, textAlign:"left" }}>
+                          + Add supplier
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+            {data.products.length===0&&(
+              <tr><td colSpan={5} style={{ padding:40, textAlign:"center", color:G.muted }}>No products yet.</td></tr>
+            )}
+          </tbody>
+        </table>
       </div>
+    </Page>
+  );
+}
+
+// ─── SUPPLIERS PAGE ───────────────────────────────────────────────────────────
+const CUTOFF_HOURS = Array.from({length:23},(_,i)=>`${String(i+1).padStart(2,"0")}:00`);
+const DELIVERY_DAYS = Array.from({length:31},(_,i)=>i);
+
+function SupplierForm({ initial, onSave, onCancel, saving }) {
+  const BLANK_SUP = { name:"", contact_fname:"", contact_lname:"", contact_title:"",
+                      email:"", phone:"", street_address:"", city:"", zip:"", schedule:null };
+  const [form, setForm] = useState({...BLANK_SUP,...(initial||{})});
+  const [slide, setSlide] = useState("general");
+  const [terms, setTerms] = useState(initial?.schedule?.delivery||[]);
+  const [timezone, setTimezone] = useState(initial?.schedule?.timezone||"UTC");
+  const [newTerm, setNewTerm] = useState({name:"",cutoff:"12:00",days_before:0});
+  const [showNewTerm, setShowNewTerm] = useState(false);
+  const set = (k,v) => setForm(p=>({...p,[k]:v}));
+
+  const addTerm = () => {
+    if (!newTerm.name.trim()) return;
+    const days_after = newTerm.days_before + 1;
+    setTerms(p=>[...p,{...newTerm, days_before:Number(newTerm.days_before), days_after}]);
+    setNewTerm({name:"",cutoff:"12:00",days_before:0}); setShowNewTerm(false);
+  };
+  const removeTerm = i => setTerms(p=>p.filter((_,j)=>j!==i));
+
+  const sortedTerms = [...terms].sort((a,b)=>a.days_before-b.days_before);
+
+  const buildPayload = () => ({
+    ...form,
+    schedule: { timezone, delivery: terms }
+  });
+
+  if (slide==="schedule") return (
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <h4 style={{ fontFamily:G.font, fontSize:15 }}>Schedule</h4>
+        <button onClick={()=>setSlide("general")} style={{ background:"none", border:"none", color:G.caramel, cursor:"pointer", fontFamily:G.mono, fontSize:13, fontWeight:600 }}>← General</button>
+      </div>
+      <Select label="Timezone" value={timezone} onChange={setTimezone} options={TIMEZONES} />
+
+      {/* Delivery terms table */}
+      <div>
+        <p style={{ fontSize:13, fontWeight:600, marginBottom:8, color:G.dark }}>Delivery terms</p>
+        <div style={{ background:G.white, borderRadius:10, border:`1px solid ${G.border}`, overflow:"hidden", marginBottom:10 }}>
+          <table style={{ width:"100%", borderCollapse:"collapse" }}>
+            <thead>
+              <tr style={{ background:G.sand }}>
+                <th style={{ padding:"9px 12px", textAlign:"left", fontSize:11, fontWeight:700, textTransform:"uppercase", color:G.muted, letterSpacing:"0.05em" }}>Term</th>
+                <th style={{ padding:"9px 12px", textAlign:"left", fontSize:11, fontWeight:700, textTransform:"uppercase", color:G.muted }}>Cut-off</th>
+                <th style={{ padding:"9px 12px", textAlign:"center", fontSize:11, fontWeight:700, textTransform:"uppercase", color:G.muted }}>Before (days)</th>
+                <th style={{ padding:"9px 12px", textAlign:"center", fontSize:11, fontWeight:700, textTransform:"uppercase", color:G.muted }}>After (days)</th>
+                <th style={{ width:32 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedTerms.map((t,i)=>(
+                <tr key={i} style={{ borderTop:`1px solid ${G.border}` }}>
+                  <td style={{ padding:"9px 12px", fontSize:14 }}>{t.name}</td>
+                  <td style={{ padding:"9px 12px", fontSize:14, color:G.muted }}>{t.cutoff}</td>
+                  <td style={{ padding:"9px 12px", fontSize:14, textAlign:"center" }}>{t.days_before}</td>
+                  <td style={{ padding:"9px 12px", fontSize:14, textAlign:"center", color:G.muted }}>{t.days_after ?? t.days_before+1}</td>
+                  <td style={{ padding:"9px 12px" }}>
+                    <button onClick={()=>removeTerm(terms.indexOf(t))} style={{ background:"none", border:"none", color:G.red, cursor:"pointer", fontSize:14 }}>×</button>
+                  </td>
+                </tr>
+              ))}
+              {sortedTerms.length===0&&<tr><td colSpan={5} style={{ padding:20, textAlign:"center", color:G.muted, fontSize:13 }}>No terms yet.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+
+        {showNewTerm ? (
+          <div style={{ display:"flex", gap:8, alignItems:"flex-end", flexWrap:"wrap", padding:"12px", background:G.sand, borderRadius:8 }}>
+            <Input label="Term name" value={newTerm.name} onChange={v=>setNewTerm(p=>({...p,name:v}))} style={{width:140}} />
+            <div>
+              <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:5 }}>Cut-off</label>
+              <select value={newTerm.cutoff} onChange={e=>setNewTerm(p=>({...p,cutoff:e.target.value}))}
+                style={{ padding:"9px 10px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none" }}>
+                {CUTOFF_HOURS.map(h=><option key={h} value={h}>{h}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:5 }}>Before (days)</label>
+              <select value={newTerm.days_before} onChange={e=>setNewTerm(p=>({...p,days_before:Number(e.target.value)}))}
+                style={{ padding:"9px 10px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none" }}>
+                {DELIVERY_DAYS.map(d=><option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+            <Btn size="sm" onClick={addTerm}>Add</Btn>
+            <Btn size="sm" variant="ghost" onClick={()=>setShowNewTerm(false)}>Cancel</Btn>
+          </div>
+        ) : (
+          <button onClick={()=>setShowNewTerm(true)} style={{ background:"none", border:`1px dashed ${G.border}`, color:G.caramel, cursor:"pointer", fontSize:13, fontFamily:G.mono, padding:"7px 14px", borderRadius:8, fontWeight:600 }}>
+            + New term
+          </button>
+        )}
+      </div>
+
+      <div style={{ display:"flex", gap:10, marginTop:4 }}>
+        <Btn size="sm" onClick={()=>onSave(buildPayload())} loading={saving}>Save</Btn>
+        <Btn variant="ghost" size="sm" onClick={onCancel}>Cancel</Btn>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+        <Input label="Name" value={form.name} onChange={v=>set("name",v)} required />
+        <Input label="Contact title" value={form.contact_title||""} onChange={v=>set("contact_title",v)} placeholder="e.g. Sales Manager" />
+        <Input label="Contact first name" value={form.contact_fname||""} onChange={v=>set("contact_fname",v)} />
+        <Input label="Contact last name" value={form.contact_lname||""} onChange={v=>set("contact_lname",v)} />
+        <Input label="Email" type="email" value={form.email||""} onChange={v=>set("email",v)} required />
+        <Input label="Phone" value={form.phone||""} onChange={v=>set("phone",v)} required />
+        <Input label="Street address" value={form.street_address||""} onChange={v=>set("street_address",v)} required />
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+          <Input label="City" value={form.city||""} onChange={v=>set("city",v)} />
+          <Input label="ZIP" value={form.zip||""} onChange={v=>set("zip",v)} />
+        </div>
+      </div>
+      <div style={{ display:"flex", gap:10 }}>
+        <Btn size="sm" onClick={()=>onSave(buildPayload())} loading={saving}>Save</Btn>
+        <Btn variant="ghost" size="sm" onClick={onCancel}>Cancel</Btn>
+        <Btn variant="secondary" size="sm" onClick={()=>setSlide("schedule")} style={{ marginLeft:"auto" }}>Schedule →</Btn>
+      </div>
+    </div>
+  );
+}
+
+function SuppliersPage({ toast }) {
+  const [suppliers, setSuppliers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showNew, setShowNew] = useState(false);
+  const [editSupplier, setEditSupplier] = useState(null);
+  const [selected, setSelected] = useState([]);
+  const [dialog, setDialog] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [sortKey, setSortKey] = useState("name");
+  const [sortDir, setSortDir] = useState("asc");
+
+  const load = useCallback(async()=>{ setLoading(true); try{ setSuppliers(await api.getSuppliers()); } catch(e){ toast(e.message,"error"); } finally{ setLoading(false); } },[]);
+  useEffect(()=>{ load(); },[]);
+
+  const sorted = [...suppliers].sort((a,b)=>{ const v=String(a[sortKey]||"")<String(b[sortKey]||"")?-1:1; return sortDir==="asc"?v:-v; });
+  const toggleSort = k => { if(sortKey===k) setSortDir(d=>d==="asc"?"desc":"asc"); else{setSortKey(k);setSortDir("asc");} };
+  const toggleSel = id => setSelected(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
+
+  const doSave = async (data) => {
+    setSaving(true);
+    try {
+      if (editSupplier) {
+        const u = await api.updateSupplier(editSupplier.sid, data);
+        setSuppliers(p=>p.map(s=>s.sid===editSupplier.sid?u:s));
+        toast(`"${u.name}" saved`); setEditSupplier(null);
+      } else {
+        const s = await api.createSupplier(data);
+        setSuppliers(p=>[...p,s]); toast(`"${s.name}" saved`); setShowNew(false);
+      }
+    } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
+  };
+
+  const doDelete = async () => {
+    try {
+      for (const sid of selected) await api.deleteSupplier(sid);
+      setSuppliers(p=>p.filter(s=>!selected.includes(s.sid)));
+      toast("Deleted"); setSelected([]); setDialog(null);
+    } catch(e){ toast(e.message,"error"); }
+  };
+
+  const cols = [
+    { key:"sid",   label:"ID",    sortable:true,  render:r=><span style={{color:G.muted,fontSize:13}}>#{r._id}</span> },
+    { key:"name",  label:"Name",  sortable:true,  render:r=>(
+      <button className="recipe-link" onClick={()=>setEditSupplier(r)} style={{ background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.dark, padding:0, textAlign:"left" }}>{r.name}</button>
+    )},
+    { key:"email", label:"Email", sortable:true,  render:r=>r.email||<span style={{color:G.muted}}>—</span> },
+    { key:"phone", label:"Phone", sortable:false, render:r=>r.phone||<span style={{color:G.muted}}>—</span> },
+  ];
+
+  return (
+    <Page title="Suppliers" actions={
+      <>{selected.length>0&&<Btn variant="danger" size="sm" onClick={()=>setDialog("del")}>Delete ({selected.length})</Btn>}
+      <Btn size="sm" onClick={()=>setShowNew(s=>!s)}>+ New supplier</Btn></>
+    }>
+      {showNew&&(
+        <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
+          <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>New Supplier</h3>
+          <SupplierForm onSave={doSave} onCancel={()=>setShowNew(false)} saving={saving} />
+        </div>
+      )}
+      {loading?<Spinner/>:<DataTable columns={cols} rows={sorted.map(s=>({...s,_id:s.sid}))} selected={selected} onSelect={toggleSel} onSelectAll={setSelected} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+
+      {editSupplier&&(
+        <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+          <div style={{ background:G.white, borderRadius:16, padding:32, maxWidth:640, width:"100%", maxHeight:"90vh", overflowY:"auto", animation:"fadeIn 0.2s ease", boxShadow:"0 20px 60px rgba(44,24,16,0.2)" }}>
+            <h3 style={{ fontFamily:G.font, fontSize:20, marginBottom:20 }}>Edit Supplier</h3>
+            <SupplierForm initial={editSupplier} onSave={doSave} onCancel={()=>setEditSupplier(null)} saving={saving} />
+          </div>
+        </div>
+      )}
+      <Dialog open={dialog==="del"} title="Delete suppliers?" onConfirm={doDelete} onCancel={()=>setDialog(null)}>
+        Are you sure you wish to delete the selected supplier{selected.length>1?"s":""}? This action may not be undone.
+      </Dialog>
     </Page>
   );
 }
@@ -2116,7 +2486,8 @@ export default function App() {
           {page==="items"        &&<RecipesPage  toast={toast}/>}
           {page==="recipes"      &&<RecipesPage  toast={toast}/>}
           {page==="menus"        &&<MenusPage    toast={toast} storeSchedule={storeSchedule} setStoreSchedule={setStoreSchedule}/>}
-          {page==="procurement"  &&<ProcurementPage/>}
+          {page==="procurement"  &&<ProcurementPage toast={toast}/>}
+          {page==="suppliers"    &&<SuppliersPage toast={toast}/>}
           {page==="orders-manuf" &&<OrdersManufPage toast={toast}/>}
           {page==="restaurants"  &&<RestaurantsPage setPage={setPage} setActiveMenu={setActiveMenu}/>}
           {page==="order"        &&<OrderPage menu={activeMenu} user={user} setPage={setPage} toast={toast}/>}
