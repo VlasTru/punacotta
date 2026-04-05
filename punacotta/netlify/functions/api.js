@@ -128,7 +128,7 @@ async function fetchOrder(oid) {
   const [order] = await dbq('SELECT * FROM "order" WHERE oid = $1', [oid])
   if (!order) return null
   const items = await dbq(`
-    SELECT oi.oiid, oi.qty, oi.price, r.name, r.rid
+    SELECT oi.oiid, oi.qty, oi.price, r.name, r.rid, r.deliverable
     FROM order_item oi JOIN recipe r ON r.rid = oi.rid
     WHERE oi.oid = $1`, [oid])
   let customer = null
@@ -140,7 +140,8 @@ async function fetchOrder(oid) {
   if (!customer && order.walkin_name) {
     customer = { first_name: order.walkin_name, last_name: '', email: null, uid: null }
   }
-  return { ...order, items, customer }
+  const allNonDeliverable = items.length > 0 && items.every(i => i.deliverable === false)
+  return { ...order, items, customer, allNonDeliverable }
 }
 
 // ─── MULTIPART PARSER ─────────────────────────────────────────────────────────
@@ -287,18 +288,18 @@ async function route(method, segments, body, headers, event) {
     }
     if (!r1 || r1 === '') {
       if (method === 'GET') return [200, await dbq(`
-        SELECT p.pid, p.name, u.name AS units, u.unid, c.name AS category, c.caid
+        SELECT p.pid, p.name, p.sku, p.expiry_hours, u.name AS units, u.unid, c.name AS category, c.caid
         FROM product p
         LEFT JOIN units u ON u.unid=p.unid
         LEFT JOIN product_category c ON c.caid=p.caid
         WHERE p.deleted=false ORDER BY p.name`)]
       if (method === 'POST') {
-        const { name, unid, caid } = body
+        const { name, sku, unid, caid } = body
         if (!name?.trim()) return [400, { error: 'Name required' }]
-        const r = await dbr('INSERT INTO product (name,unid,caid) VALUES ($1,$2,$3) RETURNING pid',
-          [name.trim(), unid||null, caid||null])
+        const r = await dbr('INSERT INTO product (name,sku,unid,caid) VALUES ($1,$2,$3,$4) RETURNING pid',
+          [name.trim(), sku?.trim()||null, unid||null, caid||null])
         const [row] = await dbq(`
-          SELECT p.pid, p.name, u.name AS units, u.unid, c.name AS category, c.caid
+          SELECT p.pid, p.name, p.sku, p.expiry_hours, u.name AS units, u.unid, c.name AS category, c.caid
           FROM product p LEFT JOIN units u ON u.unid=p.unid
           LEFT JOIN product_category c ON c.caid=p.caid WHERE p.pid=$1`, [r.rows[0].pid])
         return [201, row]
@@ -306,12 +307,9 @@ async function route(method, segments, body, headers, event) {
       if (method === 'DELETE') {
         const { ids, cascade_recipes } = body
         if (!Array.isArray(ids) || !ids.length) return [400, { error: 'ids required' }]
-        // If cascade requested, soft-delete affected recipes first
         if (cascade_recipes) {
           const affected = await dbq(
-            `SELECT DISTINCT rp.rid FROM recipe_product rp WHERE rp.pid=ANY($1::int[])`,
-            [ids]
-          )
+            `SELECT DISTINCT rp.rid FROM recipe_product rp WHERE rp.pid=ANY($1::int[])`, [ids])
           if (affected.length) {
             const rids = affected.map(r=>r.rid)
             for (const rid of rids) {
@@ -324,6 +322,20 @@ async function route(method, segments, body, headers, event) {
         await dbr('UPDATE product SET deleted=true WHERE pid=ANY($1::int[])', [ids])
         return [200, { deleted: ids }]
       }
+    }
+    // PATCH /products/:pid — edit name/sku/units/category
+    if (r1 && r1 !== 'lookups' && r1 !== 'usage' && method === 'PATCH') {
+      const { name, sku, unid, caid } = body
+      if (name !== undefined && !name?.trim()) return [400, { error: 'Name required' }]
+      if (name  !== undefined) await dbr('UPDATE product SET name=$1 WHERE pid=$2',  [name.trim(), r1])
+      if (sku   !== undefined) await dbr('UPDATE product SET sku=$1 WHERE pid=$2',   [sku?.trim()||null, r1])
+      if (unid  !== undefined) await dbr('UPDATE product SET unid=$1 WHERE pid=$2',  [unid||null, r1])
+      if (caid  !== undefined) await dbr('UPDATE product SET caid=$1 WHERE pid=$2',  [caid||null, r1])
+      const [row] = await dbq(`
+        SELECT p.pid, p.name, p.sku, p.expiry_hours, u.name AS units, u.unid, c.name AS category, c.caid
+        FROM product p LEFT JOIN units u ON u.unid=p.unid
+        LEFT JOIN product_category c ON c.caid=p.caid WHERE p.pid=$1`, [r1])
+      return [200, row]
     }
     // GET /products/usage?ids=1,2,3  — returns recipes that use these products
     if (r1 === 'usage' && method === 'GET') {
@@ -613,7 +625,15 @@ async function route(method, segments, body, headers, event) {
         if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
         const [o] = await dbq('SELECT * FROM "order" WHERE oid=$1', [r1])
         if (!o) return [404, { error: 'Not found' }]
-        const next = TRANSITIONS[o.status]
+        // Check if all items are non-deliverable — if so, Done is terminal
+        const items = await dbq(`
+          SELECT r.deliverable FROM order_item oi
+          JOIN recipe r ON r.rid=oi.rid WHERE oi.oid=$1`, [r1])
+        const allNonDeliverable = items.length > 0 && items.every(i => i.deliverable === false)
+        const transitions = allNonDeliverable
+          ? { New:'Accepted', Accepted:'Preparing', Preparing:'Done' }
+          : { New:'Accepted', Accepted:'Preparing', Preparing:'Done', Done:'Dispatched', Dispatched:'Delivered' }
+        const next = transitions[o.status]
         if (!next) return [400, { error: 'Cannot advance from this status' }]
         await dbr('UPDATE "order" SET status=$1 WHERE oid=$2', [next, r1])
         return [200, await fetchOrder(r1)]

@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, createContext, useContext } from "react";
+import React from "react";
 import ReactCrop from "react-image-crop";
 import "react-image-crop/dist/ReactCrop.css";
 import { api } from "./api.js";
@@ -11,6 +12,102 @@ const G = {
   dark: "#2c1810", muted: "#8b7355", border: "#e8dcc8",
   white: "#ffffff", red: "#d63031", green: "#00b894",
 };
+
+// ─── LOCALIZATION ─────────────────────────────────────────────────────────────
+function getLang() {
+  try { return document.cookie.split(';').map(c=>c.trim()).find(c=>c.startsWith('lang='))?.split('=')[1] || 'en'; } catch { return 'en'; }
+}
+function setLangCookie(l) {
+  try { document.cookie = `lang=${l};path=/;max-age=${60*60*24*365}`; } catch {}
+}
+function useLang() {
+  const [lang, setLangState] = useState(getLang);
+  const setLang = l => { setLangCookie(l); setLangState(l); };
+  return [lang, setLang];
+}
+// Global mutable lang ref so non-hook contexts can read it
+let _currentLang = getLang();
+function t(en, ru) { return _currentLang === 'ru' ? (ru || en) : en; }
+
+const RU = {
+  // Nav
+  "Orders":"Заказы","Products":"Продукты","Items":"Блюда","Menus":"Меню",
+  "Procurement":"Снабжение","Suppliers":"Поставщики",
+  // Buttons
+  "+ New order":"+ Заказ","+ New product":"+ Продукт","+ New item":"+ Блюдо",
+  "+ New menu":"+ Меню","+ New supplier":"+ Поставщик",
+  // Statuses
+  "NEW":"НОВЫЕ","ACCEPTED":"ПРИНЯТЫЕ","PREPARING":"ГОТОВЯТСЯ","DONE":"ВЫПОЛНЕНЫ",
+  "DISPATCHED":"ПЕРЕДАНЫ","DECLINED":"ОТКЛОНЕНЫ","DELIVERED":"ДОСТАВЛЕНЫ",
+  // Fields / labels
+  "Search":"Найти","Empty":"Пока пусто","From":"С","To":"по",
+  "Deselect all":"Снять выделение","Select all":"Выбрать все",
+  "Status":"Статус","ID":"Код","Name":"Название","Category":"Категория",
+  "Units":"Единицы","Description":"Описание","Image":"Картинка",
+  "Price":"Цена","Currency":"Валюта","Avail.":"В меню","Deliv.":"Достав.",
+  "Available (can be added to a menu)":"Есть (можно предлагать в меню)",
+  "Deliverable (uncheck for pickup-only items)":"Доставляется (снимите галочку, если блюдо доступно только в заведении)",
+  "Schedule":"График","Time zone":"Часовой пояс",
+  "Save":"Сохранить","Cancel":"Отмена","Yes":"Да","No":"Нет",
+  "Delete":"Удалить","Edit":"Редактировать",
+  "Expiry (hours)":"Срок хранения (часов)","Street address":"Улица, район, дом",
+  "City":"Город","ZIP":"Почтовый индекс","Email":"Email","Phone":"Телефон",
+  "Contact first name":"Имя представителя","Contact last name":"Фамилия представителя",
+  "Contact title":"Должность представителя",
+  "Delivery terms":"Условия доставки","Term":"Условие",
+  "CUT-OFF":"Последнее время","BEFORE (DAYS)":"До (дней)","AFTER (DAYS)":"После (дней)",
+  "General":"Общие параметры","Contents":"Состав",
+  "Mon":"Пн","Tue":"Вт","Wed":"Ср","Thu":"Чт","Fri":"Пт","Sat":"Сб","Sun":"Вс",
+  "Weekly Schedule":"График меню на неделю",
+  "grams":"граммы","kilograms":"килограммы","litres":"литры","pcs":"шт.",
+  "bags":"мешки / пакеты","cartons":"коробки / ящики","packages":"упаковки","sachets":"пакетики",
+  "cold drinks":"холодные напитки","hot drinks":"горячие напитки","alcohol":"алкоголь",
+  "main courses":"основные блюда","side dishes":"гарниры","desserts":"десерты",
+  "soups":"супы","appetizers":"закуски",
+  "Delivery fee":"Стоимость доставки","Log in":"Зайти",
+  "Forgot password?":"Пароль подзабылся?","Create account":"Зарегистрироваться",
+  "Welcome back":"И снова здравствуйте","password":"пароль",
+  "Reset password":"Сбросить пароль",
+  "Send recovery link":"Отправить ссылку","Back to login":"Обратно к авторизации",
+  "I am a…":"Я…","Manufacturer":"Ресторан / Производитель","Customer":"Покупатель",
+  "Already have an account? Log in →":"У вас уже есть учётная запись? Войдите с ней",
+  "Min 6 characters":"Не меньше 6 знаков","Required":"Обязательное поле",
+  "Create your account":"Создайте себе учётную запись",
+  "This action may not be undone.":"Действие необратимо.",
+  "No products added yet.":"Пока в составе ничего нет.",
+  "is included in the following items:":"входит в состав следующих блюд:",
+  "Unless these items are deleted, the product may not be deleted either. Do you wish to remove the above items along with the product?":
+    "Если не удалить эти блюда, то и продукт тоже удалить нельзя. Хотите удалить продукт и все блюда, куда он входит?",
+  "Delete product?":"Удалить продукт?","Failed to fetch":"Не грузится",
+  "← General":"← Общие","Schedule →":"График →","Contents →":"Состав →",
+  "SKU":"Артикул","+ Add product":"+ Добавить продукт","Remove":"Убрать",
+  "No items yet.":"Пока нет.",
+  "Latest order no later than":"Последний заказ может быть принят не позже",
+  "before closing":"до закрытия",
+  "🕐 Schedule":"🕐 График","↩ Log out":"↩ Выход",
+  "Pickup (free)":"Самовывоз (бесплатно)","Your order":"Ваш заказ",
+  "Add items from the menu.":"Добавьте блюда из меню.",
+  "Place order":"Оформить заказ","Fulfillment":"Тип получения",
+  "Restaurants":"Рестораны","My Orders":"Мои заказы",
+  "No orders yet":"Заказов пока нет","I got my order ✓":"Получил(а) заказ ✓",
+  "Cancel order?":"Отменить заказ?",
+  "Are you sure you want to cancel order":"Вы уверены, что хотите отменить заказ",
+  "No restaurants open right now":"Сейчас нет открытых ресторанов",
+  "Check back soon!":"Загляните позже!",
+  "Save schedule":"Сохранить график",
+  "Latest order no later than":"Последний заказ может быть принят не позже",
+  "Add period":"+ Период","Closed":"Закрыто",
+};
+
+function T({ children }) {
+  // Reactive translation — re-renders when lang changes via LangContext
+  const lang = useLangContext();
+  return <>{lang === 'ru' ? (RU[children] || children) : children}</>;
+}
+
+// Simple context so T() re-renders on lang change
+const LangContext = createContext('en');
+function useLangContext() { return useContext(LangContext); }
 
 const CURRENCIES = ["AMD","RUR","USD","EUR"];
 
@@ -358,24 +455,28 @@ function RecipeForm({ initial, lookups, onSave, onCancel, saving }) {
 }
 
 // ─── NAV ──────────────────────────────────────────────────────────────────────
-function Nav({ user, page, setPage, logout }) {
+function Nav({ user, page, setPage, logout, lang, setLang }) {
   const isM = user?.is_manufacturer;
   const [dropOpen, setDropOpen] = useState(false);
+  const tl = k => lang==='ru' ? (RU[k]||k) : k;
   const links = isM
-    ? [{key:"orders-manuf",label:"Orders"},{key:"products",label:"Products"},{key:"items",label:"Items"},{key:"menus",label:"Menus"},{key:"procurement",label:"Procurement"},{key:"suppliers",label:"Suppliers"}]
-    : [{key:"restaurants",label:"Restaurants"},{key:"orders-cust",label:"My Orders"}];
-
+    ? [{key:"orders-manuf",label:tl("Orders")},{key:"products",label:tl("Products")},{key:"items",label:tl("Items")},{key:"menus",label:tl("Menus")},{key:"procurement",label:tl("Procurement")},{key:"suppliers",label:tl("Suppliers")}]
+    : [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")}];
   const navigate = key => { setPage(key); setDropOpen(false); };
-
   return (
-    <nav style={{ background:G.white, borderBottom:`1px solid ${G.border}`, padding:"0 32px", display:"flex", alignItems:"center", height:60, position:"sticky", top:0, zIndex:300, boxShadow:"0 1px 12px rgba(44,24,16,0.06)" }}>
-      <button onClick={()=>navigate(isM?"orders-manuf":"restaurants")} style={{ fontFamily:G.font, fontSize:22, fontWeight:700, color:G.caramel, background:"none", border:"none", cursor:"pointer", marginRight:32, fontStyle:"italic", flexShrink:0 }}>Pun&Cotta</button>
-      <div style={{ display:"flex", gap:4, flex:1, minWidth:0 }}>
+    <nav style={{ background:G.white, borderBottom:`1px solid ${G.border}`, padding:"0 20px", display:"flex", alignItems:"center", height:60, position:"sticky", top:0, zIndex:300, boxShadow:"0 1px 12px rgba(44,24,16,0.06)" }}>
+      <button onClick={()=>navigate(isM?"orders-manuf":"restaurants")} style={{ fontFamily:G.font, fontSize:20, fontWeight:700, color:G.caramel, background:"none", border:"none", cursor:"pointer", marginRight:20, fontStyle:"italic", flexShrink:0 }}>Pun&Cotta</button>
+      <div style={{ display:"flex", gap:2, flex:1, minWidth:0, overflow:"hidden" }}>
         {links.map(l=>(
-          <button key={l.key} onClick={()=>navigate(l.key)} style={{ background:page===l.key?G.sand:"none", border:"none", padding:"6px 14px", borderRadius:8, fontFamily:G.mono, fontSize:14, fontWeight:page===l.key?600:400, color:page===l.key?G.caramel:G.muted, cursor:"pointer", transition:"all 0.15s", whiteSpace:"nowrap" }}>{l.label}</button>
+          <button key={l.key} onClick={()=>navigate(l.key)} style={{ background:page===l.key?G.sand:"none", border:"none", padding:"6px 10px", borderRadius:8, fontFamily:G.mono, fontSize:13, fontWeight:page===l.key?600:400, color:page===l.key?G.caramel:G.muted, cursor:"pointer", transition:"all 0.15s", whiteSpace:"nowrap" }}>{l.label}</button>
         ))}
       </div>
-      <div style={{ position:"relative", flexShrink:0, marginLeft:12 }}>
+      {/* Language toggle */}
+      <button onClick={()=>{ const nl=lang==='en'?'ru':'en'; _currentLang=nl; setLang(nl); }}
+        style={{ display:"flex", alignItems:"center", gap:3, background:"none", border:`1px solid ${G.border}`, borderRadius:8, cursor:"pointer", fontFamily:G.mono, fontSize:12, color:G.muted, padding:"5px 9px", whiteSpace:"nowrap", marginRight:8, flexShrink:0 }}>
+        🌐{lang==='en'?'RU':'EN'}
+      </button>
+      <div style={{ position:"relative", flexShrink:0 }}>
         <button onClick={()=>setDropOpen(p=>!p)} style={{ display:"flex", alignItems:"center", gap:7, background:G.sand, border:`1px solid ${G.border}`, borderRadius:8, cursor:"pointer", fontFamily:G.mono, fontSize:13, color:G.dark, padding:"7px 12px", whiteSpace:"nowrap", fontWeight:500 }}>
           👤 {user?.first_name} {user?.last_name}
           <span style={{ fontSize:9, color:G.muted }}>▾</span>
@@ -384,18 +485,16 @@ function Nav({ user, page, setPage, logout }) {
           <>
             <div onClick={()=>setDropOpen(false)} style={{ position:"fixed", inset:0, zIndex:298 }} />
             <div style={{ position:"absolute", right:0, top:"calc(100% + 6px)", background:G.white, border:`1px solid ${G.border}`, borderRadius:10, boxShadow:"0 8px 28px rgba(44,24,16,0.15)", minWidth:176, zIndex:299, overflow:"hidden", animation:"fadeIn 0.15s ease" }}>
-              {isM&&(
-                <>
-                  <button onClick={()=>navigate("schedule")} style={{ width:"100%", textAlign:"left", padding:"11px 16px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.dark, display:"block" }}
-                    onMouseEnter={e=>e.currentTarget.style.background=G.sand} onMouseLeave={e=>e.currentTarget.style.background="none"}>
-                    🕐 Schedule
-                  </button>
-                  <div style={{ height:1, background:G.border }} />
-                </>
-              )}
+              {isM&&(<>
+                <button onClick={()=>navigate("schedule")} style={{ width:"100%", textAlign:"left", padding:"11px 16px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.dark, display:"block" }}
+                  onMouseEnter={e=>e.currentTarget.style.background=G.sand} onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                  {tl("🕐 Schedule")}
+                </button>
+                <div style={{ height:1, background:G.border }} />
+              </>)}
               <button onClick={()=>{logout();setDropOpen(false);}} style={{ width:"100%", textAlign:"left", padding:"11px 16px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.red, display:"block" }}
                 onMouseEnter={e=>e.currentTarget.style.background=G.sand} onMouseLeave={e=>e.currentTarget.style.background="none"}>
-                ↩ Log out
+                {tl("↩ Log out")}
               </button>
             </div>
           </>
@@ -458,7 +557,7 @@ function LoginPage({ onLogin, setPage }) {
   );
 }
 
-function SignupPage({ setPage, toast }) {
+function SignupPage({ setPage, toast, lang, setLang }) {
   const [form, setForm] = useState({ first_name:"", last_name:"", email:"", phone:"", street_address:"", city:"", zip:"", password:"", is_manufacturer:false, business_name:"" });
   const [errors, setErrors] = useState({}); const [loading, setLoading] = useState(false);
   const set = (k,v) => setForm(p=>({...p,[k]:v}));
@@ -475,7 +574,10 @@ function SignupPage({ setPage, toast }) {
   };
   return (
     <AuthLayout>
-      <h2 style={{ fontFamily:G.font, fontSize:22, marginBottom:24 }}>Create your account</h2>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:24 }}>
+        <h2 style={{ fontFamily:G.font, fontSize:22 }}>{lang==='ru'?(RU["Create your account"]||"Create your account"):"Create your account"}</h2>
+        <button onClick={()=>{ const nl=lang==='en'?'ru':'en'; _currentLang=nl; setLang(nl); }} style={{ background:"none", border:`1px solid ${G.border}`, borderRadius:8, cursor:"pointer", fontFamily:G.mono, fontSize:12, color:G.muted, padding:"4px 8px" }}>🌐{lang==='en'?'RU':'EN'}</button>
+      </div>
       <div style={{ display:"flex", flexDirection:"column", gap:13 }}>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:13 }}>
           <Input label="First name" value={form.first_name} onChange={v=>set("first_name",v)} required error={errors.first_name} />
@@ -561,23 +663,46 @@ function DataTable({ columns, rows, selected, onSelect, onSelectAll, sortKey, so
 
 // ─── PRODUCTS PAGE ────────────────────────────────────────────────────────────
 function ProductsPage({ toast }) {
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
   const [products, setProducts] = useState([]); const [lookups, setLookups] = useState({units:[],categories:[]}); const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState([]); const [sortKey, setSortKey] = useState("name"); const [sortDir, setSortDir] = useState("asc");
-  const [showForm, setShowForm] = useState(false); const [dialog, setDialog] = useState(null); const [form, setForm] = useState({name:"",unid:"",caid:""}); const [saving, setSaving] = useState(false);
-  const [usageMap, setUsageMap] = useState({}); // pid -> [{rid,name}]
+  const [showForm, setShowForm] = useState(false); const [dialog, setDialog] = useState(null); const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({name:"",sku:"",unid:"",caid:""});
+  const [editProduct, setEditProduct] = useState(null);
+  const [editForm, setEditForm] = useState({});
+  const [usageMap, setUsageMap] = useState({});
 
   const load = useCallback(async()=>{ setLoading(true); try{ const[p,l]=await Promise.all([api.getProducts(),api.getProductLookups()]); setProducts(p); setLookups(l); } catch(e){toast(e.message,"error");} finally{setLoading(false);} },[]);
   useEffect(()=>{load();},[]);
   const sorted=[...products].sort((a,b)=>{ const v=String(a[sortKey]||"")<String(b[sortKey]||"")?-1:String(a[sortKey]||"")>String(b[sortKey]||"")?1:0; return sortDir==="asc"?v:-v; });
   const toggleSort=k=>{if(sortKey===k)setSortDir(d=>d==="asc"?"desc":"asc");else{setSortKey(k);setSortDir("asc");}};
   const toggleSel=id=>setSelected(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
-  const save=async()=>{ if(!form.name.trim())return; setSaving(true); try{ const p=await api.createProduct({name:form.name,unid:form.unid||null,caid:form.caid||null}); setProducts(prev=>[...prev,p]); toast(`"${p.name}" saved`); setForm({name:"",unid:"",caid:""}); setShowForm(false); } catch(e){toast(e.message,"error");} finally{setSaving(false);} };
+
+  const save = async () => {
+    if (!form.name.trim()) return;
+    setSaving(true);
+    try {
+      const p = await api.createProduct({name:form.name, sku:form.sku||null, unid:form.unid||null, caid:form.caid||null});
+      setProducts(prev=>[...prev,p]); toast(`"${p.name}" ${tl("saved")}`);
+      setForm({name:"",sku:"",unid:"",caid:""}); setShowForm(false);
+    } catch(e){toast(e.message,"error");} finally{setSaving(false);}
+  };
+
+  const saveEdit = async () => {
+    if (!editForm.name?.trim()) return;
+    setSaving(true);
+    try {
+      const p = await api.updateProduct(editProduct.pid, {name:editForm.name, sku:editForm.sku||null, unid:editForm.unid||null, caid:editForm.caid||null});
+      setProducts(prev=>prev.map(x=>x.pid===p.pid?p:x));
+      toast(`"${p.name}" ${tl("saved")}`); setEditProduct(null);
+    } catch(e){toast(e.message,"error");} finally{setSaving(false);}
+  };
+
+  const openEdit = p => { setEditProduct(p); setEditForm({name:p.name, sku:p.sku||"", unid:String(p.unid||""), caid:String(p.caid||"")}); };
 
   const openDeleteDialog = async () => {
-    try {
-      const usage = await api.getProductUsage(selected);
-      setUsageMap(usage || {});
-    } catch { setUsageMap({}); }
+    try { setUsageMap(await api.getProductUsage(selected) || {}); } catch { setUsageMap({}); }
     setDialog("del");
   };
 
@@ -586,58 +711,79 @@ function ProductsPage({ toast }) {
     try {
       await api.deleteProducts(selected, cascade);
       setProducts(prev=>prev.filter(p=>!selected.includes(p.pid)));
-      toast(`${names} deleted`); setSelected([]); setDialog(null); setUsageMap({});
+      toast(`${names} ${tl("saved")}`); setSelected([]); setDialog(null); setUsageMap({});
     } catch(e){toast(e.message,"error");}
   };
 
-  // Build affected items text for dialog
   const affectedItems = [];
-  for (const pid of selected) {
-    const recipes = usageMap[pid] || [];
-    recipes.forEach(r=>{ if(!affectedItems.find(x=>x.rid===r.rid)) affectedItems.push(r); });
-  }
+  for (const pid of selected) { (usageMap[pid]||[]).forEach(r=>{ if(!affectedItems.find(x=>x.rid===r.rid)) affectedItems.push(r); }); }
   affectedItems.sort((a,b)=>a.name.localeCompare(b.name));
   const selectedNames = selected.map(id=>products.find(p=>p.pid===id)?.name).filter(Boolean);
 
-  const cols=[ {key:"pid",label:"ID",sortable:true,render:r=><span style={{color:G.muted,fontSize:13}}>#{r._id}</span>}, {key:"name",label:"Name",sortable:true}, {key:"category",label:"Category",sortable:true,render:r=>r.category?<Badge>{r.category}</Badge>:<span style={{color:G.muted}}>—</span>}, {key:"units",label:"Units",sortable:false,render:r=>r.units||<span style={{color:G.muted}}>—</span>} ];
+  const cols = [
+    {key:"pid",   label:tl("ID"),       sortable:true,  render:r=><span style={{color:G.muted,fontSize:13}}>#{r._id}</span>},
+    {key:"name",  label:tl("Name"),     sortable:true,  render:r=>(
+      <button onClick={()=>openEdit(r)} style={{background:"none",border:"none",cursor:"pointer",fontFamily:G.mono,fontSize:14,color:G.dark,padding:0,textAlign:"left",textDecoration:"underline dotted",textUnderlineOffset:3}}>{r.name}</button>
+    )},
+    {key:"sku",   label:tl("SKU"),      sortable:true,  render:r=>r.sku||<span style={{color:G.muted}}>—</span>},
+    {key:"category",label:tl("Category"),sortable:true, render:r=>r.category?<Badge>{r.category}</Badge>:<span style={{color:G.muted}}>—</span>},
+    {key:"units", label:tl("Units"),    sortable:false, render:r=>r.units||<span style={{color:G.muted}}>—</span>},
+  ];
+
   return (
-    <Page title="Products" actions={<>{selected.length>0&&<Btn variant="danger" size="sm" onClick={openDeleteDialog}>Delete ({selected.length})</Btn>}<Btn size="sm" onClick={()=>setShowForm(s=>!s)}>+ New product</Btn></>}>
+    <Page title={tl("Products")} actions={<>{selected.length>0&&<Btn variant="danger" size="sm" onClick={openDeleteDialog}>{tl("Delete")} ({selected.length})</Btn>}<Btn size="sm" onClick={()=>setShowForm(s=>!s)}>{tl("+ New product")}</Btn></>}>
       {showForm&&(
         <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
           <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>New Product</h3>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14, marginBottom:14 }}>
-            <Input label="Name" value={form.name} onChange={v=>setForm(p=>({...p,name:v}))} required />
-            <Select label="Units" value={form.unid} onChange={v=>setForm(p=>({...p,unid:v}))} options={lookups.units.map(u=>({value:String(u.unid),label:u.name}))} placeholder="Select units" />
-            <Select label="Category" value={form.caid} onChange={v=>setForm(p=>({...p,caid:v}))} options={lookups.categories.map(c=>({value:String(c.caid),label:c.name}))} placeholder="Select category" />
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:14, marginBottom:14 }}>
+            <Input label={tl("Name")} value={form.name} onChange={v=>setForm(p=>({...p,name:v}))} required />
+            <Input label={tl("SKU")} value={form.sku} onChange={v=>setForm(p=>({...p,sku:v}))} placeholder="Optional" />
+            <Select label={tl("Units")} value={form.unid} onChange={v=>setForm(p=>({...p,unid:v}))} options={lookups.units.map(u=>({value:String(u.unid),label:u.name}))} placeholder="Select units" />
+            <Select label={tl("Category")} value={form.caid} onChange={v=>setForm(p=>({...p,caid:v}))} options={lookups.categories.map(c=>({value:String(c.caid),label:c.name}))} placeholder="Select category" />
           </div>
           <div style={{ display:"flex", gap:10 }}>
-            <Btn size="sm" onClick={save} loading={saving}>Save</Btn>
-            <Btn variant="ghost" size="sm" onClick={()=>setShowForm(false)}>Cancel</Btn>
+            <Btn size="sm" onClick={save} loading={saving}>{tl("Save")}</Btn>
+            <Btn variant="ghost" size="sm" onClick={()=>setShowForm(false)}>{tl("Cancel")}</Btn>
           </div>
         </div>
       )}
       {loading?<Spinner/>:<DataTable columns={cols} rows={sorted.map(p=>({...p,_id:p.pid}))} selected={selected} onSelect={toggleSel} onSelectAll={setSelected} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
-
-      {/* Delete dialog — smart version */}
+      {editProduct&&(
+        <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <div style={{ background:G.white, borderRadius:16, padding:32, maxWidth:480, width:"90%", animation:"fadeIn 0.2s ease", boxShadow:"0 20px 60px rgba(44,24,16,0.2)" }}>
+            <h3 style={{ fontFamily:G.font, fontSize:20, marginBottom:20 }}>Edit Product</h3>
+            <div style={{ display:"flex", flexDirection:"column", gap:14, marginBottom:20 }}>
+              <Input label={tl("Name")} value={editForm.name||""} onChange={v=>setEditForm(p=>({...p,name:v}))} required />
+              <Input label={tl("SKU")} value={editForm.sku||""} onChange={v=>setEditForm(p=>({...p,sku:v}))} placeholder="Optional" />
+              <Select label={tl("Units")} value={editForm.unid||""} onChange={v=>setEditForm(p=>({...p,unid:v}))} options={lookups.units.map(u=>({value:String(u.unid),label:u.name}))} placeholder="Select units" />
+              <Select label={tl("Category")} value={editForm.caid||""} onChange={v=>setEditForm(p=>({...p,caid:v}))} options={lookups.categories.map(c=>({value:String(c.caid),label:c.name}))} placeholder="Select category" />
+            </div>
+            <div style={{ display:"flex", gap:10 }}>
+              <Btn size="sm" onClick={saveEdit} loading={saving}>{tl("Save")}</Btn>
+              <Btn variant="ghost" size="sm" onClick={()=>setEditProduct(null)}>{tl("Cancel")}</Btn>
+            </div>
+          </div>
+        </div>
+      )}
       {dialog==="del"&&(
         <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center" }}>
           <div style={{ background:G.white, borderRadius:16, padding:32, maxWidth:480, width:"90%", animation:"fadeIn 0.2s ease", boxShadow:"0 20px 60px rgba(44,24,16,0.2)" }}>
-            <h3 style={{ fontFamily:G.font, fontSize:20, marginBottom:16 }}>Delete product{selected.length>1?"s":""}?</h3>
+            <h3 style={{ fontFamily:G.font, fontSize:20, marginBottom:16 }}>{tl("Delete product?")}</h3>
             {affectedItems.length===0 ? (
               <p style={{ color:G.muted, lineHeight:1.6, marginBottom:24, fontSize:15 }}>
-                Are you sure you wish to delete <b>{selectedNames.join(", ")}</b>? This action may not be undone.
+                Are you sure you wish to delete <b>{selectedNames.join(", ")}</b>? {tl("This action may not be undone.")}
               </p>
             ) : (
               <p style={{ color:G.muted, lineHeight:1.6, marginBottom:24, fontSize:15 }}>
-                <b>{selectedNames.join(", ")}</b> {selected.length===1?"is":"are"} included in the following items:{" "}
+                <b>{selectedNames.join(", ")}</b> {tl("is included in the following items:")}{" "}
                 <b>{affectedItems.map(r=>r.name).join(", ")}</b>.{" "}
-                Unless these items are deleted, the product may not be deleted either.
-                Do you wish to remove the above items along with the product? This action may not be undone.
+                {tl("Unless these items are deleted, the product may not be deleted either. Do you wish to remove the above items along with the product?")}{" "}
+                {tl("This action may not be undone.")}
               </p>
             )}
             <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
-              <Btn variant="ghost" onClick={()=>{setDialog(null);setUsageMap({});}}>Cancel</Btn>
-              <Btn variant="danger" onClick={()=>doDelete(affectedItems.length>0)}>Yes</Btn>
+              <Btn variant="ghost" onClick={()=>{setDialog(null);setUsageMap({});}}>{tl("Cancel")}</Btn>
+              <Btn variant="danger" onClick={()=>doDelete(affectedItems.length>0)}>{tl("Yes")}</Btn>
             </div>
           </div>
         </div>
@@ -695,22 +841,19 @@ function RecipesPage({ toast }) {
 
   const doDelete=async()=>{ const names=selected.map(id=>recipes.find(r=>r.rid===id)?.name).filter(Boolean).join(", "); try{ await api.deleteRecipes(selected); setRecipes(prev=>prev.filter(r=>!selected.includes(r.rid))); toast(`${names} deleted`); setSelected([]); setDialog(null); } catch(e){toast(e.message,"error");} };
 
-  const Thumb = ({r}) => {
-    const src = r.image_thumb_url||r.image_url;
+  const ImgCell = ({r}) => {
+    const src = r.image_url||r.image_thumb_url;
     if (!src) return <span style={{color:G.muted,fontSize:12}}>—</span>;
     return (
-      <div className="recipe-thumb" style={{ position:"relative", width:40, height:40, cursor:"pointer", borderRadius:6, overflow:"hidden" }} onClick={()=>setLightbox({src:r.image_url||r.image_thumb_url,description:r.description})}>
-        <img src={src} alt="" style={{ width:40, height:40, objectFit:"cover" }} />
-        <div className="zoom-icon" style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.35)", display:"flex", alignItems:"center", justifyContent:"center", opacity:0, transition:"opacity 0.2s" }}>
-          <span style={{fontSize:14}}>🔍</span>
-        </div>
-      </div>
+      <button onClick={()=>setLightbox({src:r.image_url||r.image_thumb_url, description:r.description})}
+        style={{ background:"none", border:"none", cursor:"pointer", fontSize:20, padding:0, lineHeight:1 }}
+        title="View image">🖼</button>
     );
   };
 
   const cols = [
     {key:"rid",label:"ID",sortable:true,render:r=><span style={{color:G.muted,fontSize:13}}>#{r._id}</span>},
-    {key:"img",label:"Image",sortable:false,render:r=><Thumb r={r}/>},
+    {key:"img",label:"🖼",sortable:false,render:r=><ImgCell r={r}/>},
     {key:"name",label:"Name",sortable:true,render:r=>(
       <button className="recipe-link" onClick={()=>setEditRecipe(r)} style={{ background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.dark, padding:0, textAlign:"left" }}>{r.name}</button>
     )},
@@ -1635,7 +1778,7 @@ function OrdersManufPage({ toast }) {
                         <span style={{ fontWeight:700, color:G.caramel }}>{(o.items||[]).reduce((s,it)=>s+it.qty*it.price,0)} AMD</span>
                         <span style={{ fontSize:11, color:G.muted }}>{o.pickup?"Pickup":"Delivery"}</span>
                       </div>
-                      {cfg.next&&(
+                      {(cfg.next && !(o.status==="Done" && o.allNonDeliverable))&&(
                         <div style={{ display:"flex", gap:6, marginTop:8 }}>
                           <Btn size="sm" onClick={()=>advance(o.oid)} style={{flex:1,fontSize:11,padding:"5px 0"}}>{cfg.next}</Btn>
                           {cfg.canDecline&&<Btn variant="danger" size="sm" onClick={()=>{setPending(o.oid);setDialog("decline");}} style={{fontSize:11,padding:"5px 10px"}}>✕</Btn>}
@@ -2465,23 +2608,26 @@ export default function App() {
   const [page, setPage] = useState(()=>user?(user.is_manufacturer?"orders-manuf":"restaurants"):"login");
   const [activeMenu, setActiveMenu] = useState(null);
   const [storeSchedule, setStoreSchedule] = useState(DEFAULT_STORE);
+  const [lang, setLang] = useLang();
+  // Keep module-level _currentLang in sync
+  _currentLang = lang;
   const {toasts,toast,remove} = useToast();
   const logout=()=>{localStorage.removeItem("token");setUser(null);setPage("login");};
   const onLogin=u=>{setUser(u);setPage(u.is_manufacturer?"orders-manuf":"restaurants");};
   return (
-    <>
+    <LangContext.Provider value={lang}>
       <style>{css}</style>
       <Toast toasts={toasts} remove={remove} />
       {!user?(
         <>
-          {page==="login"  &&<LoginPage  onLogin={onLogin} setPage={setPage}/>}
-          {page==="signup" &&<SignupPage setPage={setPage} toast={toast}/>}
+          {page==="login"  &&<LoginPage  onLogin={onLogin} setPage={setPage} lang={lang} setLang={setLang}/>}
+          {page==="signup" &&<SignupPage setPage={setPage} toast={toast} lang={lang} setLang={setLang}/>}
           {page==="forgot" &&<ForgotPage setPage={setPage} toast={toast}/>}
-          {!["login","signup","forgot"].includes(page)&&<LoginPage onLogin={onLogin} setPage={setPage}/>}
+          {!["login","signup","forgot"].includes(page)&&<LoginPage onLogin={onLogin} setPage={setPage} lang={lang} setLang={setLang}/>}
         </>
       ):(
         <>
-          <Nav user={user} page={page} setPage={setPage} logout={logout}/>
+          <Nav user={user} page={page} setPage={setPage} logout={logout} lang={lang} setLang={setLang}/>
           {page==="products"     &&<ProductsPage toast={toast}/>}
           {page==="items"        &&<RecipesPage  toast={toast}/>}
           {page==="recipes"      &&<RecipesPage  toast={toast}/>}
@@ -2495,6 +2641,6 @@ export default function App() {
           {page==="schedule"     &&<SchedulePage toast={toast} storeSchedule={storeSchedule} setStoreSchedule={setStoreSchedule}/>}
         </>
       )}
-    </>
+    </LangContext.Provider>
   );
 }

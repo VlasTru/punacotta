@@ -115,8 +115,9 @@ CREATE TABLE IF NOT EXISTS product_supplier (
   UNIQUE(pid, sid)
 );
 
--- Product expiry (per product, in hours)
+-- Product expiry and SKU
 ALTER TABLE product ADD COLUMN IF NOT EXISTS expiry_hours INTEGER;
+ALTER TABLE product ADD COLUMN IF NOT EXISTS sku VARCHAR(50);
 
 -- Add schedule column to user table (safe to re-run)
 ALTER TABLE "user" ADD COLUMN IF NOT EXISTS schedule JSONB;
@@ -189,10 +190,13 @@ INSERT INTO product_category (name) VALUES
 ON CONFLICT (name) DO NOTHING;
 
 INSERT INTO recipe_category (name) VALUES
-  ('cold drinks'),('hot drinks'),('alcohol'),('starters'),
+  ('cold drinks'),('hot drinks'),('alcohol'),
   ('main courses'),('side dishes'),('desserts'),('soups'),
-  ('snacks'),('appetizers')
+  ('appetizers')
 ON CONFLICT (name) DO NOTHING;
+
+-- Remove deprecated categories (safe to re-run)
+DELETE FROM recipe_category WHERE name IN ('snacks','starters');
 `
 
 await client.connect()

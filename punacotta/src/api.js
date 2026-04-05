@@ -45,6 +45,7 @@ export const api = {
   getProductLookups: ()     => req('GET',    '/products/lookups'),
   getProductUsage:   (ids)  => req('GET',    `/products/usage/${ids.join(',')}`),
   createProduct:     (data) => req('POST',   '/products', data),
+  updateProduct:     (pid, data) => req('PATCH', `/products/${pid}`, data),
   deleteProducts:    (ids, cascade_recipes) => req('DELETE', '/products', { ids, cascade_recipes }),
 
   // Suppliers
