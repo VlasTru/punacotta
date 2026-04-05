@@ -314,7 +314,6 @@ function ImageUploader({ existingUrl, existingThumb, onImageReady, onRemove }) {
       <ReactCrop crop={crop} onChange={c=>setCrop(c)} onComplete={c=>setCompletedCrop(c)} aspect={1}>
         <img ref={imgRef} src={src} style={{ maxWidth:"100%", maxHeight:280 }} alt="crop" onLoad={onImgLoad} />
       </ReactCrop>
-      </ReactCrop>
       <div style={{ display:"flex", gap:8, marginTop:10, alignItems:"center" }}>
         <Btn variant="secondary" size="sm" onClick={()=>{setSrc(null);setCrop(undefined);setCompletedCrop(null);onImageReady(null);}}>Clear</Btn>
         <span style={{ fontSize:12, color:G.muted }}>Crop will be applied on save</span>
