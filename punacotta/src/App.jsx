@@ -1579,7 +1579,7 @@ function NewOrderModal({
                   <p style={{ fontSize:11, fontWeight:700, color:G.muted, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:6 }}>{cat}</p>
                   {recs.map(r=>(
                     <div key={r.rid} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:`1px solid ${G.border}` }}>
-                      <span style={{ flex:1, fontSize:14 }}>{r.name}</span>
+                      <span style={{ flex:1, fontSize:14 }}>{r.name}{r.deliverable===false&&<span style={{ fontSize:12, color:G.muted, marginLeft:6 }}>(pick-up only)</span>}</span>
                       <span style={{ fontSize:13, color:G.caramel, fontWeight:600, minWidth:70, textAlign:"right" }}>{r.price} {r.currency}</span>
                       <button onClick={()=>changeQty(r.rid,-1)} style={{ width:26, height:26, borderRadius:6, border:`1px solid ${G.border}`, background:G.white, cursor:"pointer", fontSize:15, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>−</button>
                       <span style={{ minWidth:18, textAlign:"center", fontWeight:700, fontSize:14 }}>{qty[r.rid]||0}</span>
@@ -2043,7 +2043,7 @@ function OrderPage({
                     <div style={{ flex:1, minWidth:0 }}>
                       <p style={{ fontWeight:600, fontSize:14, display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
                         <span style={{ cursor:(r.image_url||r.image_thumb_url)?"pointer":"default" }} onClick={()=>(r.image_url||r.image_thumb_url)&&setLightbox({src:r.image_url||r.image_thumb_url,description:r.description})}>{r.name}</span>
-                        {r.deliverable===false&&<span style={{ fontSize:12, fontWeight:400, color:G.muted, fontStyle:"normal" }}>(pick-up only)</span>}
+                        
                       </p>
                       <p style={{ fontSize:13, color:G.caramel, fontWeight:600 }}>{r.price} {r.currency}</p>
                     </div>
@@ -2069,7 +2069,7 @@ function OrderPage({
             <div style={{ marginBottom:16 }}>
               {cartItems.map((it,i)=>(
                 <div key={i} style={{ display:"flex", alignItems:"center", gap:6, fontSize:13, marginBottom:8 }}>
-                  <span style={{ flex:1 }}>{it.name}{it.deliverable===false&&<span style={{ fontSize:12, color:G.muted, marginLeft:6 }}>(pick-up only)</span>}</span>
+                  <span style={{ flex:1 }}>{it.name}</span>
                   <div style={{ display:"flex", alignItems:"center", gap:3 }}>
                     <button onClick={()=>changeQty(it.rid,-1)} style={{ width:20, height:20, borderRadius:4, border:`1px solid ${G.border}`, background:G.white, cursor:"pointer", fontSize:12, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>−</button>
                     <span style={{ minWidth:16, textAlign:"center", fontWeight:700 }}>{it.qty}</span>
