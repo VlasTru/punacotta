@@ -271,42 +271,49 @@ function ImageUploader({ existingUrl, existingThumb, onImageReady, onRemove }) {
     if (!["image/jpeg","image/jpg","image/png"].includes(file.type)) { alert("Only JPG, JPEG and PNG allowed."); return; }
     if (file.size > 3*1024*1024) { alert("File exceeds 3MB limit."); return; }
     const reader = new FileReader();
-    reader.onload = e => setSrc(e.target.result);
+    reader.onload = e => { setSrc(e.target.result); setCrop(undefined); setCompletedCrop(null); };
     reader.readAsDataURL(file);
   };
 
   const onDrop = e => { e.preventDefault(); setDragging(false); loadFile(e.dataTransfer.files[0]); };
 
+  // When image loads, auto-apply a centered square marquee
+  const onImgLoad = (e) => {
+    const img = e.currentTarget;
+    const { width, height } = img;
+    const size = Math.min(width, height);        // square side = lesser dimension
+    const x = (width  - size) / 2;              // centre horizontally
+    const y = (height - size) / 2;              // centre vertically
+    const initialCrop = { unit:"px", x, y, width:size, height:size };
+    setCrop(initialCrop);
+    setCompletedCrop(initialCrop);
+  };
+
   const buildBlob = useCallback(() => {
-    if (!imgRef.current) { onImageReady(null); return; }
-    // If no crop drawn, use full image
+    if (!imgRef.current || !completedCrop || completedCrop.width === 0) return;
     const img = imgRef.current;
-    const canvas = document.createElement("canvas");
-    const sx = img.naturalWidth / img.width;
+    const sx = img.naturalWidth  / img.width;
     const sy = img.naturalHeight / img.height;
-    if (!completedCrop || completedCrop.width === 0) {
-      // Full image — no crop
-      canvas.width  = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      canvas.getContext("2d").drawImage(img, 0, 0);
-    } else {
-      canvas.width  = completedCrop.width  * sx;
-      canvas.height = completedCrop.height * sy;
-      canvas.getContext("2d").drawImage(img, completedCrop.x*sx, completedCrop.y*sy, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
-    }
+    const canvas = document.createElement("canvas");
+    canvas.width  = completedCrop.width  * sx;
+    canvas.height = completedCrop.height * sy;
+    canvas.getContext("2d").drawImage(
+      img,
+      completedCrop.x * sx, completedCrop.y * sy,
+      canvas.width, canvas.height,
+      0, 0, canvas.width, canvas.height
+    );
     canvas.toBlob(blob => onImageReady(blob), "image/jpeg", 0.92);
   }, [completedCrop]);
 
   useEffect(() => { buildBlob(); }, [completedCrop]);
 
-  // Also fire when src changes and image loads (covers no-crop case)
-  const onImgLoad = () => { buildBlob(); };
-
   if (src) return (
     <div>
-      <p style={{ fontSize:13, color:G.muted, marginBottom:8 }}>Drag to crop (optional), or save as-is:</p>
-      <ReactCrop crop={crop} onChange={c=>setCrop(c)} onComplete={c=>setCompletedCrop(c)}>
+      <p style={{ fontSize:13, color:G.muted, marginBottom:8 }}>Square crop auto-applied — drag to adjust:</p>
+      <ReactCrop crop={crop} onChange={c=>setCrop(c)} onComplete={c=>setCompletedCrop(c)} aspect={1}>
         <img ref={imgRef} src={src} style={{ maxWidth:"100%", maxHeight:280 }} alt="crop" onLoad={onImgLoad} />
+      </ReactCrop>
       </ReactCrop>
       <div style={{ display:"flex", gap:8, marginTop:10, alignItems:"center" }}>
         <Btn variant="secondary" size="sm" onClick={()=>{setSrc(null);setCrop(undefined);setCompletedCrop(null);onImageReady(null);}}>Clear</Btn>
