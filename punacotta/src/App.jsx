@@ -278,24 +278,35 @@ function ImageUploader({ existingUrl, existingThumb, onImageReady, onRemove }) {
   const onDrop = e => { e.preventDefault(); setDragging(false); loadFile(e.dataTransfer.files[0]); };
 
   const buildBlob = useCallback(() => {
-    if (!imgRef.current || !completedCrop || completedCrop.width===0) { onImageReady(null); return; }
-    const canvas = document.createElement("canvas");
+    if (!imgRef.current) { onImageReady(null); return; }
+    // If no crop drawn, use full image
     const img = imgRef.current;
+    const canvas = document.createElement("canvas");
     const sx = img.naturalWidth / img.width;
     const sy = img.naturalHeight / img.height;
-    canvas.width  = completedCrop.width  * sx;
-    canvas.height = completedCrop.height * sy;
-    canvas.getContext("2d").drawImage(img, completedCrop.x*sx, completedCrop.y*sy, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
+    if (!completedCrop || completedCrop.width === 0) {
+      // Full image — no crop
+      canvas.width  = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext("2d").drawImage(img, 0, 0);
+    } else {
+      canvas.width  = completedCrop.width  * sx;
+      canvas.height = completedCrop.height * sy;
+      canvas.getContext("2d").drawImage(img, completedCrop.x*sx, completedCrop.y*sy, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
+    }
     canvas.toBlob(blob => onImageReady(blob), "image/jpeg", 0.92);
   }, [completedCrop]);
 
   useEffect(() => { buildBlob(); }, [completedCrop]);
 
+  // Also fire when src changes and image loads (covers no-crop case)
+  const onImgLoad = () => { buildBlob(); };
+
   if (src) return (
     <div>
-      <p style={{ fontSize:13, color:G.muted, marginBottom:8 }}>Select the area to crop:</p>
+      <p style={{ fontSize:13, color:G.muted, marginBottom:8 }}>Drag to crop (optional), or save as-is:</p>
       <ReactCrop crop={crop} onChange={c=>setCrop(c)} onComplete={c=>setCompletedCrop(c)}>
-        <img ref={imgRef} src={src} style={{ maxWidth:"100%", maxHeight:280 }} alt="crop" />
+        <img ref={imgRef} src={src} style={{ maxWidth:"100%", maxHeight:280 }} alt="crop" onLoad={onImgLoad} />
       </ReactCrop>
       <div style={{ display:"flex", gap:8, marginTop:10, alignItems:"center" }}>
         <Btn variant="secondary" size="sm" onClick={()=>{setSrc(null);setCrop(undefined);setCompletedCrop(null);onImageReady(null);}}>Clear</Btn>
