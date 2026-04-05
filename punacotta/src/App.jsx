@@ -328,9 +328,9 @@ function ImageUploader({ existingUrl, existingThumb, onImageReady, onRemove }) {
 
 // ─── RECIPE FORM (shared New + Edit) ─────────────────────────────────────────
 function RecipeForm({
+ initial, lookups, onSave, onCancel, saving }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
- initial, lookups, onSave, onCancel, saving }) {
   const [form, setForm] = useState({
     name:"", description:"", unid:"", caid:"", price:"", currency:"AMD",
     available:true, deliverable:true, image_url:null, image_thumb_url:null,
@@ -552,9 +552,9 @@ function AuthLayout({ children }) {
 }
 
 function LoginPage({
+ onLogin, setPage }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
- onLogin, setPage }) {
   const [email, setEmail] = useState(""); const [pw, setPw] = useState(""); const [err, setErr] = useState(""); const [loading, setLoading] = useState(false);
   const submit = async() => { setErr(""); setLoading(true); try { const {token,user}=await api.login(email,pw); localStorage.setItem("token",token); onLogin(user); } catch(e){setErr(e.message);} finally{setLoading(false);} };
   return (
@@ -577,9 +577,9 @@ function LoginPage({
 }
 
 function SignupPage({
+ setPage, toast, lang, setLang }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
- setPage, toast, lang, setLang }) {
   const [form, setForm] = useState({ first_name:"", last_name:"", email:"", phone:"", street_address:"", city:"", zip:"", password:"", is_manufacturer:false, business_name:"" });
   const [errors, setErrors] = useState({}); const [loading, setLoading] = useState(false);
   const set = (k,v) => setForm(p=>({...p,[k]:v}));
@@ -630,9 +630,9 @@ function SignupPage({
 }
 
 function ForgotPage({
+ setPage, toast }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
- setPage, toast }) {
   const [email, setEmail] = useState(""); const [loading, setLoading] = useState(false);
   const submit = async() => { setLoading(true); try { await api.forgot(email); toast("Recovery link sent!"); setPage("login"); } catch(e){toast(e.message,"error");} finally{setLoading(false);} };
   return (
@@ -819,9 +819,9 @@ function ProductsPage({ toast }) {
 
 // ─── RECIPES PAGE ─────────────────────────────────────────────────────────────
 function RecipesPage({
+ toast }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
- toast }) {
   const [recipes, setRecipes] = useState([]); const [lookups, setLookups] = useState({units:[],categories:[]}); const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState([]); const [sortKey, setSortKey] = useState("name"); const [sortDir, setSortDir] = useState("asc");
   const [showNew, setShowNew] = useState(false); const [editRecipe, setEditRecipe] = useState(null);
@@ -1051,9 +1051,9 @@ function MenuCalendar({ menus, storeSchedule=DEFAULT_STORE }) {
 
 // ─── MENUS PAGE ───────────────────────────────────────────────────────────────
 function MenusPage({
+ toast, storeSchedule, setStoreSchedule }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
- toast, storeSchedule, setStoreSchedule }) {
   const [menus, setMenus] = useState([]); const [loading, setLoading] = useState(true); const [viewMid, setViewMid] = useState(null);
   const [showNew, setShowNew] = useState(false); const [showSidebar, setShowSidebar] = useState(false); const [availRecipes, setAvailRecipes] = useState([]);
   const [sidebarCat, setSidebarCat] = useState(""); const [form, setForm] = useState({name:"",available:true,delivery_fee:"",recipe_ids:[]});
@@ -1345,9 +1345,9 @@ function fuzzyMatch(hay, needle) {
 
 // ─── NEW ORDER MODAL ──────────────────────────────────────────────────────────
 function NewOrderModal({
+ onClose, onCreated, toast }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
- onClose, onCreated, toast }) {
   const [menus, setMenus]             = useState([]);
   const [mid, setMid]                 = useState("");
   const [selectedMenu, setSelectedMenu] = useState(null);
@@ -1586,9 +1586,9 @@ function NewOrderModal({
 }
 
 function OrdersManufPage({
+ toast }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
- toast }) {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dialog, setDialog] = useState(null);
@@ -1902,9 +1902,9 @@ function OrdersManufPage({
 
 // ─── RESTAURANTS ──────────────────────────────────────────────────────────────
 function RestaurantsPage({
+ setPage, setActiveMenu }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
- setPage, setActiveMenu }) {
   const [menus, setMenus] = useState([]); const [loading, setLoading] = useState(true);
   useEffect(()=>{api.getMenus().then(m=>{setMenus(m.filter(x=>x.available&&(x.recipes||[]).length>0));setLoading(false);}).catch(()=>setLoading(false));},[]);
   return (
@@ -1936,9 +1936,9 @@ function RestaurantsPage({
 
 // ─── ORDER PAGE ───────────────────────────────────────────────────────────────
 function OrderPage({
+ menu, user, setPage, toast }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
- menu, user, setPage, toast }) {
   const [qty, setQty] = useState({}); const [delivery, setDelivery] = useState(null);
   const [savedAddresses, setSavedAddresses] = useState([]);
   const [selectedAddr, setSelectedAddr] = useState(0); // index into savedAddresses, or -1 = "other"
@@ -2114,9 +2114,9 @@ function OrderPage({
 
 // ─── ORDERS (CUSTOMER) ────────────────────────────────────────────────────────
 function OrdersCustPage({
+ toast }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
- toast }) {
   const [orders, setOrders] = useState([]); const [loading, setLoading] = useState(true); const [dialog, setDialog] = useState(null); const [pending, setPending] = useState(null);
   const load=useCallback(async()=>{setLoading(true);try{setOrders(await api.getOrders());}catch(e){toast(e.message,"error");}finally{setLoading(false);}},[]); useEffect(()=>{load();},[]);
   const cancel=async()=>{try{const u=await api.cancelOrder(pending);setOrders(p=>p.map(o=>o.oid===pending?u:o));toast(`Order #${pending} cancelled`);setDialog(null);}catch(e){toast(e.message,"error");}};
@@ -2196,9 +2196,9 @@ function maxLatestOrder(periods) {
 }
 
 function SchedulePage({
+ toast, storeSchedule, setStoreSchedule }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
- toast, storeSchedule, setStoreSchedule }) {
   const [schedule, setSchedule] = useState(storeSchedule);
   const [timezone, setTimezone] = useState(
     Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
@@ -2322,9 +2322,9 @@ function SchedulePage({
 
 // ─── PROCUREMENT PAGE ─────────────────────────────────────────────────────────
 function ProcurementPage({
+ toast }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
- toast }) {
   const [data, setData] = useState({ products:[], links:[] });
   const [suppliers, setSuppliers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2453,9 +2453,9 @@ const CUTOFF_HOURS = Array.from({length:23},(_,i)=>`${String(i+1).padStart(2,"0"
 const DELIVERY_DAYS = Array.from({length:31},(_,i)=>i);
 
 function SupplierForm({
+ initial, onSave, onCancel, saving }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
- initial, onSave, onCancel, saving }) {
   const BLANK_SUP = { name:"", contact_fname:"", contact_lname:"", contact_title:"",
                       email:"", phone:"", street_address:"", city:"", zip:"", schedule:null };
   const [form, setForm] = useState({...BLANK_SUP,...(initial||{})});
@@ -2579,9 +2579,9 @@ function SupplierForm({
 }
 
 function SuppliersPage({
+ toast }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
- toast }) {
   const [suppliers, setSuppliers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showNew, setShowNew] = useState(false);
