@@ -551,8 +551,7 @@ function AuthLayout({ children }) {
   );
 }
 
-function LoginPage({
- onLogin, setPage }) {
+function LoginPage({ onLogin, setPage, setLang }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
   const [email, setEmail] = useState(""); const [pw, setPw] = useState(""); const [err, setErr] = useState(""); const [loading, setLoading] = useState(false);
@@ -576,8 +575,7 @@ function LoginPage({
   );
 }
 
-function SignupPage({
- setPage, toast, lang, setLang }) {
+function SignupPage({ setPage, toast, setLang }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
   const [form, setForm] = useState({ first_name:"", last_name:"", email:"", phone:"", street_address:"", city:"", zip:"", password:"", is_manufacturer:false, business_name:"" });
@@ -1542,7 +1540,7 @@ function NewOrderModal({
           )}
 
           {/* 4. Menu */}
-          <Select label=tl("Menu") value={mid} onChange={selectMenu}
+          <Select label={tl("Menu"))} value={mid} onChange={selectMenu}
             options={menus.map(m=>({value:String(m.mid),label:m.name+(m.available?"":" (draft)")}))}
             placeholder="Select a menu" required />
 
@@ -2678,10 +2676,10 @@ export default function App() {
       <Toast toasts={toasts} remove={remove} />
       {!user?(
         <>
-          {page==="login"  &&<LoginPage  onLogin={onLogin} setPage={setPage} lang={lang} setLang={setLang}/>}
-          {page==="signup" &&<SignupPage setPage={setPage} toast={toast} lang={lang} setLang={setLang}/>}
+          {page==="login"  &&<LoginPage  onLogin={onLogin} setPage={setPage} setLang={setLang}/>}
+          {page==="signup" &&<SignupPage setPage={setPage} toast={toast} setLang={setLang}/>}
           {page==="forgot" &&<ForgotPage setPage={setPage} toast={toast}/>}
-          {!["login","signup","forgot"].includes(page)&&<LoginPage onLogin={onLogin} setPage={setPage} lang={lang} setLang={setLang}/>}
+          {!["login","signup","forgot"].includes(page)&&<LoginPage onLogin={onLogin} setPage={setPage} setLang={setLang}/>}
         </>
       ):(
         <>
