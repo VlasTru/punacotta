@@ -337,7 +337,7 @@ function RecipeForm({
   const tl = k => lang==='ru'?(RU[k]||k):k;
   const [form, setForm] = useState({
     name:"", description:"", unid:"", caid:"", price:"", currency:"AMD",
-    available:true, deliverable:true, image_url:null, image_thumb_url:null,
+    available:true, deliverable:true, image_url:null, image_thumb_url:null, cloudinary_id:null,
     ...initial
   });
   const [imageBlob, setImageBlob] = useState(null);
@@ -844,19 +844,22 @@ function RecipesPage({
     try {
       let image_url = form.image_url || null;
       let image_thumb_url = form.image_thumb_url || null;
+      let cloudinary_id = form.cloudinary_id || null;
 
       if (imageBlob) {
         const fd = new FormData();
         fd.append("image", imageBlob, "recipe.jpg");
         if (existingRid) fd.append("rid", String(existingRid));
         const res = await api.uploadImage(fd);
-        image_url = res.url; image_thumb_url = res.thumb_url;
+        image_url = res.url;
+        image_thumb_url = res.thumb_url;
+        cloudinary_id = res.cloudinary_id;
       } else if (removeImage && existingRid) {
         await api.removeImage(existingRid);
-        image_url = null; image_thumb_url = null;
+        image_url = null; image_thumb_url = null; cloudinary_id = null;
       }
 
-      const payload = { name:form.name, description:form.description||null, unid:form.unid||null, caid:form.caid||null, price:Number(form.price)||0, currency:form.currency||"AMD", available:form.available!==false, deliverable:form.deliverable!==false, image_url, image_thumb_url, contents:(contents||[]).filter(c=>c.pid) };
+      const payload = { name:form.name, description:form.description||null, unid:form.unid||null, caid:form.caid||null, price:Number(form.price)||0, currency:form.currency||"AMD", available:form.available!==false, deliverable:form.deliverable!==false, image_url, image_thumb_url, cloudinary_id, contents:(contents||[]).filter(c=>c.pid) };
 
       if (existingRid) {
         const updated = await api.updateRecipe(existingRid, payload);
