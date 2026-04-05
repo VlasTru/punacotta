@@ -30,33 +30,43 @@ let _currentLang = getLang();
 function t(en, ru) { return _currentLang === 'ru' ? (ru || en) : en; }
 
 const RU = {
-  // Nav
+  // Nav tabs
   "Orders":"Заказы","Products":"Продукты","Items":"Блюда","Menus":"Меню",
   "Procurement":"Снабжение","Suppliers":"Поставщики",
+  "Restaurants":"Рестораны","My Orders":"Мои заказы",
   // Buttons
   "+ New order":"+ Заказ","+ New product":"+ Продукт","+ New item":"+ Блюдо",
   "+ New menu":"+ Меню","+ New supplier":"+ Поставщик",
-  // Statuses
+  // Status names (badge/table)
+  "New":"Новый","Accepted":"Принят","Preparing":"Готовится","Done":"Выполнено",
+  "Dispatched":"Передан","Declined":"Отклонён","Delivered":"Доставлен",
+  // Status uppercase (kanban column headers)
   "NEW":"НОВЫЕ","ACCEPTED":"ПРИНЯТЫЕ","PREPARING":"ГОТОВЯТСЯ","DONE":"ВЫПОЛНЕНЫ",
   "DISPATCHED":"ПЕРЕДАНЫ","DECLINED":"ОТКЛОНЕНЫ","DELIVERED":"ДОСТАВЛЕНЫ",
-  // Fields / labels
+  // Status action buttons
+  "Accept":"Принять","Start Preparing":"Начать готовить","Mark as Done":"Выполнено",
+  "Dispatch":"Передать","Confirm as Delivered":"Подтвердить доставку",
+  // Fields and labels
   "Search":"Найти","Empty":"Пока пусто","From":"С","To":"по",
   "Deselect all":"Снять выделение","Select all":"Выбрать все",
   "Status":"Статус","ID":"Код","Name":"Название","Category":"Категория",
   "Units":"Единицы","Description":"Описание","Image":"Картинка",
   "Price":"Цена","Currency":"Валюта","Avail.":"В меню","Deliv.":"Достав.",
+  "SKU":"Артикул","Date placed":"Дата","First name":"Имя","Last name":"Фамилия",
+  "Total":"Итого","No orders found.":"Заказов не найдено.",
+  "Rows per page:":"Записей на стр.:",
   "Available (can be added to a menu)":"Есть (можно предлагать в меню)",
   "Deliverable (uncheck for pickup-only items)":"Доставляется (снимите галочку, если блюдо доступно только в заведении)",
-  "Schedule":"График","Time zone":"Часовой пояс",
-  "Save":"Сохранить","Cancel":"Отмена","Yes":"Да","No":"Нет",
-  "Delete":"Удалить","Edit":"Редактировать",
+  "Schedule":"График","Time zone":"Часовой пояс","Save":"Сохранить","Cancel":"Отмена",
+  "Yes":"Да","No":"Нет","Delete":"Удалить","Edit":"Редактировать",
   "Expiry (hours)":"Срок хранения (часов)","Street address":"Улица, район, дом",
   "City":"Город","ZIP":"Почтовый индекс","Email":"Email","Phone":"Телефон",
   "Contact first name":"Имя представителя","Contact last name":"Фамилия представителя",
   "Contact title":"Должность представителя",
   "Delivery terms":"Условия доставки","Term":"Условие",
   "CUT-OFF":"Последнее время","BEFORE (DAYS)":"До (дней)","AFTER (DAYS)":"После (дней)",
-  "General":"Общие параметры","Contents":"Состав",
+  "General":"Общие параметры","Contents":"Состав","Contents →":"Состав →",
+  "← General":"← Общие","Schedule →":"График →",
   "Mon":"Пн","Tue":"Вт","Wed":"Ср","Thu":"Чт","Fri":"Пт","Sat":"Сб","Sun":"Вс",
   "Weekly Schedule":"График меню на неделю",
   "grams":"граммы","kilograms":"килограммы","litres":"литры","pcs":"шт.",
@@ -64,10 +74,16 @@ const RU = {
   "cold drinks":"холодные напитки","hot drinks":"горячие напитки","alcohol":"алкоголь",
   "main courses":"основные блюда","side dishes":"гарниры","desserts":"десерты",
   "soups":"супы","appetizers":"закуски",
-  "Delivery fee":"Стоимость доставки","Log in":"Зайти",
-  "Forgot password?":"Пароль подзабылся?","Create account":"Зарегистрироваться",
-  "Welcome back":"И снова здравствуйте","password":"пароль",
-  "Reset password":"Сбросить пароль",
+  "Delivery":"Доставка","Delivery fee":"Стоимость доставки",
+  "Pickup (free)":"Самовывоз (бесплатно)","Fulfillment":"Тип получения",
+  "Your order":"Ваш заказ","Add items from the menu.":"Добавьте блюда из меню.",
+  "Place order":"Оформить заказ","Next →":"Далее →","New order":"Новый заказ",
+  "Save schedule":"Сохранить график",
+  "Latest order no later than":"Последний заказ может быть принят не позже",
+  "before closing":"до закрытия","Add period":"+ Период","Closed":"Закрыто",
+  "Log in":"Зайти","Forgot password?":"Пароль подзабылся?",
+  "Create account":"Зарегистрироваться","Welcome back":"И снова здравствуйте",
+  "password":"пароль","Reset password":"Сбросить пароль",
   "Send recovery link":"Отправить ссылку","Back to login":"Обратно к авторизации",
   "I am a…":"Я…","Manufacturer":"Ресторан / Производитель","Customer":"Покупатель",
   "Already have an account? Log in →":"У вас уже есть учётная запись? Войдите с ней",
@@ -79,25 +95,22 @@ const RU = {
   "Unless these items are deleted, the product may not be deleted either. Do you wish to remove the above items along with the product?":
     "Если не удалить эти блюда, то и продукт тоже удалить нельзя. Хотите удалить продукт и все блюда, куда он входит?",
   "Delete product?":"Удалить продукт?","Failed to fetch":"Не грузится",
-  "← General":"← Общие","Schedule →":"График →","Contents →":"Состав →",
-  "SKU":"Артикул","+ Add product":"+ Добавить продукт","Remove":"Убрать",
   "No items yet.":"Пока нет.",
-  "Latest order no later than":"Последний заказ может быть принят не позже",
-  "before closing":"до закрытия",
+  "No products added yet.":"Пока в составе ничего нет.",
   "🕐 Schedule":"🕐 График","↩ Log out":"↩ Выход",
-  "Pickup (free)":"Самовывоз (бесплатно)","Your order":"Ваш заказ",
-  "Add items from the menu.":"Добавьте блюда из меню.",
-  "Place order":"Оформить заказ","Fulfillment":"Тип получения",
-  "Restaurants":"Рестораны","My Orders":"Мои заказы",
   "No orders yet":"Заказов пока нет","I got my order ✓":"Получил(а) заказ ✓",
   "Cancel order?":"Отменить заказ?",
   "Are you sure you want to cancel order":"Вы уверены, что хотите отменить заказ",
   "No restaurants open right now":"Сейчас нет открытых ресторанов",
   "Check back soon!":"Загляните позже!",
+  "New Item":"Новое блюдо","Edit Item":"Редактировать блюдо",
+  "Delete items?":"Удалить блюда?",
+  "Are you sure you wish to delete":"Вы уверены, что хотите удалить",
   "Save schedule":"Сохранить график",
-  "Latest order no later than":"Последний заказ может быть принят не позже",
-  "Add period":"+ Период","Closed":"Закрыто",
-};
+  "+ Add product":"+ Добавить продукт","Remove":"Убрать",
+  "No terms yet.":"Условий пока нет.",
+  "New Supplier":"Новый поставщик","Edit Supplier":"Редактировать поставщика",
+}
 
 function T({ children }) {
   // Reactive translation — re-renders when lang changes via LangContext
@@ -174,7 +187,7 @@ function Dialog({ open, title, children, onConfirm, onCancel, confirmLabel="Yes"
         <h3 style={{ fontFamily:G.font, fontSize:20, marginBottom:16 }}>{title}</h3>
         <div style={{ color:G.muted, lineHeight:1.6, marginBottom:24, fontSize:15 }}>{children}</div>
         <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
-          <Btn variant="ghost" onClick={onCancel}>Cancel</Btn>
+          <Btn variant="ghost" onClick={onCancel}>{tl("Cancel")}</Btn>
           <Btn variant={danger?"danger":"primary"} onClick={onConfirm}>{confirmLabel}</Btn>
         </div>
       </div>
@@ -295,7 +308,7 @@ function ImageUploader({ existingUrl, existingThumb, onImageReady, onRemove }) {
         <div style={{ display:"flex", gap:8 }}>
           <button onClick={()=>fileRef.current?.click()} style={{ background:"none", border:"none", color:G.caramel, cursor:"pointer", fontSize:13, padding:0, fontFamily:G.mono }}>Replace</button>
           <span style={{ color:G.border }}>·</span>
-          <button onClick={onRemove} style={{ background:"none", border:"none", color:G.red, cursor:"pointer", fontSize:13, padding:0, fontFamily:G.mono }}>Remove</button>
+          <button onClick={onRemove} style={{ background:"none", border:"none", color:G.red, cursor:"pointer", fontSize:13, padding:0, fontFamily:G.mono }}>{tl("Remove")}</button>
         </div>
       </div>
       <input ref={fileRef} type="file" accept=".jpg,.jpeg,.png" style={{display:"none"}} onChange={e=>loadFile(e.target.files[0])} />
@@ -314,7 +327,10 @@ function ImageUploader({ existingUrl, existingThumb, onImageReady, onRemove }) {
 }
 
 // ─── RECIPE FORM (shared New + Edit) ─────────────────────────────────────────
-function RecipeForm({ initial, lookups, onSave, onCancel, saving }) {
+function RecipeForm({
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+ initial, lookups, onSave, onCancel, saving }) {
   const [form, setForm] = useState({
     name:"", description:"", unid:"", caid:"", price:"", currency:"AMD",
     available:true, deliverable:true, image_url:null, image_thumb_url:null,
@@ -370,12 +386,12 @@ function RecipeForm({ initial, lookups, onSave, onCancel, saving }) {
   if (slide==="contents") return (
     <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4 }}>
-        <h4 style={{ fontFamily:G.font, fontSize:15, color:G.dark }}>Contents</h4>
-        <button onClick={()=>setSlide("general")} style={{ background:"none", border:"none", color:G.caramel, cursor:"pointer", fontFamily:G.mono, fontSize:13, fontWeight:600 }}>← General</button>
+        <h4 style={{ fontFamily:G.font, fontSize:15, color:G.dark }}>{tl("Contents")}</h4>
+        <button onClick={()=>setSlide("general")} style={{ background:"none", border:"none", color:G.caramel, cursor:"pointer", fontFamily:G.mono, fontSize:13, fontWeight:600 }}>{tl("← General")}</button>
       </div>
 
       {contents.length===0 && (
-        <p style={{ fontSize:13, color:G.muted }}>No products added yet.</p>
+        <p style={{ fontSize:13, color:G.muted }}>{tl("No products added yet.")}</p>
       )}
 
       {contents.map((c,i)=>(
@@ -398,7 +414,7 @@ function RecipeForm({ initial, lookups, onSave, onCancel, saving }) {
             <button onClick={()=>setContentQty(i,1)} style={{ width:24,height:24,borderRadius:5,border:"none",background:G.caramel,cursor:"pointer",fontWeight:700,fontSize:14,color:G.white,display:"flex",alignItems:"center",justifyContent:"center" }}>+</button>
           </div>
           {/* Remove */}
-          <button onClick={()=>removeContent(i)} style={{ background:"none",border:"none",color:G.red,cursor:"pointer",fontSize:13,fontFamily:G.mono,flexShrink:0 }}>Remove</button>
+          <button onClick={()=>removeContent(i)} style={{ background:"none",border:"none",color:G.red,cursor:"pointer",fontSize:13,fontFamily:G.mono,flexShrink:0 }}>{tl("Remove")}</button>
         </div>
       ))}
 
@@ -407,8 +423,8 @@ function RecipeForm({ initial, lookups, onSave, onCancel, saving }) {
       </button>
 
       <div style={{ display:"flex", gap:10, marginTop:4 }}>
-        <Btn size="sm" onClick={()=>onSave(form, imageBlob, removeImage, contents)} loading={saving}>Save</Btn>
-        <Btn variant="ghost" size="sm" onClick={onCancel}>Cancel</Btn>
+        <Btn size="sm" onClick={()=>onSave(form, imageBlob, removeImage, contents)} loading={saving}>{tl("Save")}</Btn>
+        <Btn variant="ghost" size="sm" onClick={onCancel}>{tl("Cancel")}</Btn>
       </div>
     </div>
   );
@@ -417,16 +433,16 @@ function RecipeForm({ initial, lookups, onSave, onCancel, saving }) {
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
-        <Input label="Name" value={form.name} onChange={v=>set("name",v)} required />
-        <Input label="Description" value={form.description||""} onChange={v=>set("description",v)} />
-        <Select label="Units" value={String(form.unid||"")} onChange={v=>set("unid",v)} options={lookups.units.map(u=>({value:String(u.unid),label:u.name}))} placeholder="Select units" />
-        <Select label="Category" value={String(form.caid||"")} onChange={v=>set("caid",v)} options={lookups.categories.map(c=>({value:String(c.caid),label:c.name}))} placeholder="Select category" />
-        <Input label="Price" type="number" value={String(form.price||"")} onChange={v=>set("price",v)} placeholder="0" />
-        <Select label="Currency" value={form.currency||"AMD"} onChange={v=>set("currency",v)} options={CURRENCIES} />
+        <Input label={tl("Name")} value={form.name} onChange={v=>set("name",v)} required />
+        <Input label={tl("Description")} value={form.description||""} onChange={v=>set("description",v)} />
+        <Select label={tl("Units")} value={String(form.unid||"")} onChange={v=>set("unid",v)} options={lookups.units.map(u=>({value:String(u.unid),label:u.name}))} placeholder="Select units" />
+        <Select label={tl("Category")} value={String(form.caid||"")} onChange={v=>set("caid",v)} options={lookups.categories.map(c=>({value:String(c.caid),label:c.name}))} placeholder="Select category" />
+        <Input label={tl("Price")} type="number" value={String(form.price||"")} onChange={v=>set("price",v)} placeholder="0" />
+        <Select label={tl("Currency")} value={form.currency||"AMD"} onChange={v=>set("currency",v)} options={CURRENCIES} />
       </div>
 
       <div>
-        <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:8 }}>Image</label>
+        <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:8 }}>{tl("Image")}</label>
         <ImageUploader
           existingUrl={form.image_url} existingThumb={form.image_thumb_url}
           onImageReady={blob=>{ setImageBlob(blob); if(blob) setRemoveImage(false); }}
@@ -446,9 +462,9 @@ function RecipeForm({ initial, lookups, onSave, onCancel, saving }) {
       </div>
 
       <div style={{ display:"flex", gap:10 }}>
-        <Btn size="sm" onClick={()=>onSave(form, imageBlob, removeImage, contents)} loading={saving}>Save</Btn>
-        <Btn variant="ghost" size="sm" onClick={onCancel}>Cancel</Btn>
-        <Btn variant="secondary" size="sm" onClick={()=>setSlide("contents")} style={{ marginLeft:"auto" }}>Contents →</Btn>
+        <Btn size="sm" onClick={()=>onSave(form, imageBlob, removeImage, contents)} loading={saving}>{tl("Save")}</Btn>
+        <Btn variant="ghost" size="sm" onClick={onCancel}>{tl("Cancel")}</Btn>
+        <Btn variant="secondary" size="sm" onClick={()=>setSlide("contents")} style={{ marginLeft:"auto" }}>{tl("Contents →")}</Btn>
       </div>
     </div>
   );
@@ -535,14 +551,17 @@ function AuthLayout({ children }) {
   );
 }
 
-function LoginPage({ onLogin, setPage }) {
+function LoginPage({
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+ onLogin, setPage }) {
   const [email, setEmail] = useState(""); const [pw, setPw] = useState(""); const [err, setErr] = useState(""); const [loading, setLoading] = useState(false);
   const submit = async() => { setErr(""); setLoading(true); try { const {token,user}=await api.login(email,pw); localStorage.setItem("token",token); onLogin(user); } catch(e){setErr(e.message);} finally{setLoading(false);} };
   return (
     <AuthLayout>
       <h2 style={{ fontFamily:G.font, fontSize:22, marginBottom:24 }}>Welcome back</h2>
       <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-        <Input label="Email" type="email" value={email} onChange={setEmail} placeholder="you@example.com" required />
+        <Input label={tl("Email")} type="email" value={email} onChange={setEmail} placeholder="you@example.com" required />
         <Input label="Password" type="password" value={pw} onChange={setPw} placeholder="••••••••" required error={err} />
         <Btn size="lg" onClick={submit} loading={loading}>Log in</Btn>
         <div style={{ display:"flex", justifyContent:"space-between" }}>
@@ -557,7 +576,10 @@ function LoginPage({ onLogin, setPage }) {
   );
 }
 
-function SignupPage({ setPage, toast, lang, setLang }) {
+function SignupPage({
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+ setPage, toast, lang, setLang }) {
   const [form, setForm] = useState({ first_name:"", last_name:"", email:"", phone:"", street_address:"", city:"", zip:"", password:"", is_manufacturer:false, business_name:"" });
   const [errors, setErrors] = useState({}); const [loading, setLoading] = useState(false);
   const set = (k,v) => setForm(p=>({...p,[k]:v}));
@@ -584,11 +606,11 @@ function SignupPage({ setPage, toast, lang, setLang }) {
           <Input label="Last name"  value={form.last_name}  onChange={v=>set("last_name",v)}  required error={errors.last_name} />
         </div>
         <Input label="Email" type="email" value={form.email} onChange={v=>set("email",v)} required error={errors.email} />
-        <Input label="Phone" value={form.phone} onChange={v=>set("phone",v)} placeholder="+374 91 …" />
-        <Input label="Street address" value={form.street_address} onChange={v=>set("street_address",v)} />
+        <Input label={tl("Phone")} value={form.phone} onChange={v=>set("phone",v)} placeholder="+374 91 …" />
+        <Input label={tl("Street address")} value={form.street_address} onChange={v=>set("street_address",v)} />
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:13 }}>
-          <Input label="City" value={form.city} onChange={v=>set("city",v)} />
-          <Input label="ZIP"  value={form.zip}  onChange={v=>set("zip",v)} />
+          <Input label={tl("City")} value={form.city} onChange={v=>set("city",v)} />
+          <Input label={tl("ZIP")}  value={form.zip}  onChange={v=>set("zip",v)} />
         </div>
         <Input label="Password" type="password" value={form.password} onChange={v=>set("password",v)} required error={errors.password} hint="Min 6 characters" />
         <div style={{ padding:"14px 16px", background:G.sand, borderRadius:10, border:`1px solid ${G.border}` }}>
@@ -607,7 +629,10 @@ function SignupPage({ setPage, toast, lang, setLang }) {
   );
 }
 
-function ForgotPage({ setPage, toast }) {
+function ForgotPage({
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+ setPage, toast }) {
   const [email, setEmail] = useState(""); const [loading, setLoading] = useState(false);
   const submit = async() => { setLoading(true); try { await api.forgot(email); toast("Recovery link sent!"); setPage("login"); } catch(e){toast(e.message,"error");} finally{setLoading(false);} };
   return (
@@ -771,7 +796,7 @@ function ProductsPage({ toast }) {
             <h3 style={{ fontFamily:G.font, fontSize:20, marginBottom:16 }}>{tl("Delete product?")}</h3>
             {affectedItems.length===0 ? (
               <p style={{ color:G.muted, lineHeight:1.6, marginBottom:24, fontSize:15 }}>
-                Are you sure you wish to delete <b>{selectedNames.join(", ")}</b>? {tl("This action may not be undone.")}
+                {tl("Are you sure you wish to delete")} <b>{selectedNames.join(", ")}</b>? {tl("This action may not be undone.")}
               </p>
             ) : (
               <p style={{ color:G.muted, lineHeight:1.6, marginBottom:24, fontSize:15 }}>
@@ -793,7 +818,10 @@ function ProductsPage({ toast }) {
 }
 
 // ─── RECIPES PAGE ─────────────────────────────────────────────────────────────
-function RecipesPage({ toast }) {
+function RecipesPage({
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+ toast }) {
   const [recipes, setRecipes] = useState([]); const [lookups, setLookups] = useState({units:[],categories:[]}); const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState([]); const [sortKey, setSortKey] = useState("name"); const [sortDir, setSortDir] = useState("asc");
   const [showNew, setShowNew] = useState(false); const [editRecipe, setEditRecipe] = useState(null);
@@ -852,21 +880,21 @@ function RecipesPage({ toast }) {
   };
 
   const cols = [
-    {key:"rid",label:"ID",sortable:true,render:r=><span style={{color:G.muted,fontSize:13}}>#{r._id}</span>},
+    {key:"rid",label:tl("ID"),sortable:true,render:r=><span style={{color:G.muted,fontSize:13}}>#{r._id}</span>},
     {key:"img",label:"🖼",sortable:false,render:r=><ImgCell r={r}/>},
-    {key:"name",label:"Name",sortable:true,render:r=>(
+    {key:"name",label:tl("Name"),sortable:true,render:r=>(
       <button className="recipe-link" onClick={()=>setEditRecipe(r)} style={{ background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.dark, padding:0, textAlign:"left" }}>{r.name}</button>
     )},
-    {key:"description",label:"Description",sortable:true,render:r=>r.description||<span style={{color:G.muted}}>—</span>},
-    {key:"units",label:"Units",sortable:false,render:r=>r.units||"—"},
-    {key:"available",label:"Avail.",sortable:false,render:r=><span>{r.available?"✅":"❌"}</span>},
-    {key:"deliverable",label:"Deliv.",sortable:false,render:r=><span>{r.deliverable!==false?"✅":"❌"}</span>},
-    {key:"price",label:"Price",sortable:false,render:r=><span style={{fontWeight:600}}>{r.price} {r.currency}</span>},
-    {key:"category",label:"Category",sortable:true,render:r=>r.category?<Badge>{r.category}</Badge>:<span style={{color:G.muted}}>—</span>},
+    {key:"description",label:tl("Description"),sortable:true,render:r=>r.description||<span style={{color:G.muted}}>—</span>},
+    {key:"units",label:tl("Units"),sortable:false,render:r=>r.units||"—"},
+    {key:"available",label:tl("Avail."),sortable:false,render:r=><span>{r.available?"✅":"❌"}</span>},
+    {key:"deliverable",label:tl("Deliv."),sortable:false,render:r=><span>{r.deliverable!==false?"✅":"❌"}</span>},
+    {key:"price",label:tl("Price"),sortable:false,render:r=><span style={{fontWeight:600}}>{r.price} {r.currency}</span>},
+    {key:"category",label:tl("Category"),sortable:true,render:r=>r.category?<Badge>{r.category}</Badge>:<span style={{color:G.muted}}>—</span>},
   ];
 
   return (
-    <Page title="Items" actions={<>{selected.length>0&&<Btn variant="danger" size="sm" onClick={()=>setDialog("del")}>Delete ({selected.length})</Btn>}<Btn size="sm" onClick={()=>setShowNew(s=>!s)}>+ New item</Btn></>}>
+    <Page title={tl("Items")} actions={<>{selected.length>0&&<Btn variant="danger" size="sm" onClick={()=>setDialog("del")}>{tl("Delete")} ({selected.length})</Btn>}<Btn size="sm" onClick={()=>setShowNew(s=>!s)}>{tl("+ New item")}</Btn></>}>
       {showNew&&(
         <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
           <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>New Item</h3>
@@ -947,7 +975,7 @@ function MenuCalendar({ menus, storeSchedule=DEFAULT_STORE }) {
             <div style={{ width:labelW, flexShrink:0 }} />
             {DAYS.map((d,i)=>(
               <div key={d} style={{ width:colW, flexShrink:0, padding:"8px 0", textAlign:"center", fontSize:12, fontWeight:700, color:G.muted, letterSpacing:"0.04em", borderLeft:`1px solid ${G.border}` }}>
-                {DAY_LABELS[i]}
+                {tl(DAY_LABELS[i])}
               </div>
             ))}
           </div>
@@ -1022,7 +1050,10 @@ function MenuCalendar({ menus, storeSchedule=DEFAULT_STORE }) {
 }
 
 // ─── MENUS PAGE ───────────────────────────────────────────────────────────────
-function MenusPage({ toast, storeSchedule, setStoreSchedule }) {
+function MenusPage({
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+ toast, storeSchedule, setStoreSchedule }) {
   const [menus, setMenus] = useState([]); const [loading, setLoading] = useState(true); const [viewMid, setViewMid] = useState(null);
   const [showNew, setShowNew] = useState(false); const [showSidebar, setShowSidebar] = useState(false); const [availRecipes, setAvailRecipes] = useState([]);
   const [sidebarCat, setSidebarCat] = useState(""); const [form, setForm] = useState({name:"",available:true,delivery_fee:"",recipe_ids:[]});
@@ -1145,7 +1176,7 @@ function MenusPage({ toast, storeSchedule, setStoreSchedule }) {
                   padding:"5px 12px", borderRadius:20, border:"none", cursor:"pointer", fontSize:12, fontWeight:700,
                   background:hoursDays.includes(d)?G.caramel:G.white, color:hoursDays.includes(d)?G.white:G.muted,
                   transition:"all 0.15s"
-                }}>{DAY_LABELS[i]}</button>
+                }}>{tl(DAY_LABELS[i])}</button>
               ))}
             </div>
 
@@ -1215,7 +1246,7 @@ function MenusPage({ toast, storeSchedule, setStoreSchedule }) {
   }
 
   return (
-    <Page title="Menus" actions={<Btn size="sm" onClick={()=>setShowNew(s=>!s)}>+ New menu</Btn>}>
+    <Page title={tl("Menus")} actions={<Btn size="sm" onClick={()=>setShowNew(s=>!s)}>{tl("+ New menu")}</Btn>}>
       {showNew&&(
         <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
           <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>New Menu</h3>
@@ -1237,8 +1268,8 @@ function MenusPage({ toast, storeSchedule, setStoreSchedule }) {
             <Btn variant="secondary" size="sm" onClick={()=>setShowSidebar(true)}>+ Add recipes</Btn>
           </div>
           <div style={{ display:"flex", gap:10 }}>
-            <Btn size="sm" onClick={saveNew} loading={saving}>Save</Btn>
-            <Btn variant="ghost" size="sm" onClick={()=>setShowNew(false)}>Cancel</Btn>
+            <Btn size="sm" onClick={saveNew} loading={saving}>{tl("Save")}</Btn>
+            <Btn variant="ghost" size="sm" onClick={()=>setShowNew(false)}>{tl("Cancel")}</Btn>
           </div>
         </div>
       )}
@@ -1313,7 +1344,10 @@ function fuzzyMatch(hay, needle) {
 }
 
 // ─── NEW ORDER MODAL ──────────────────────────────────────────────────────────
-function NewOrderModal({ onClose, onCreated, toast }) {
+function NewOrderModal({
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+ onClose, onCreated, toast }) {
   const [menus, setMenus]             = useState([]);
   const [mid, setMid]                 = useState("");
   const [selectedMenu, setSelectedMenu] = useState(null);
@@ -1410,7 +1444,7 @@ function NewOrderModal({ onClose, onCreated, toast }) {
           </div>
           <div style={{ padding:"16px 24px", borderTop:`1px solid ${G.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
             <span style={{ fontWeight:700, fontSize:16, color:G.caramel }}>{total > 0 ? `${total} AMD` : "—"}</span>
-            <Btn onClick={()=>submit(addr)} loading={saving} disabled={!otherStreet}>Place order</Btn>
+            <Btn onClick={()=>submit(addr)} loading={saving} disabled={!otherStreet}>{tl("Place order")}</Btn>
           </div>
         </div>
       </div>
@@ -1430,7 +1464,7 @@ function NewOrderModal({ onClose, onCreated, toast }) {
 
           {/* 1. Fulfillment — at top */}
           <div>
-            <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:8 }}>Fulfillment</label>
+            <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:8 }}>{tl("Fulfillment")}</label>
             <div style={{ display:"flex", gap:20 }}>
               {[{val:true,label:"Pickup (free)"},{val:false,label:`Delivery (+${selectedMenu?.delivery_fee||0} AMD)`}].map(opt=>(
                 <label key={String(opt.val)} style={{ display:"flex", alignItems:"center", gap:7, cursor:"pointer", fontSize:14 }}>
@@ -1451,7 +1485,7 @@ function NewOrderModal({ onClose, onCreated, toast }) {
             {customer ? (
               <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px", background:G.sand, borderRadius:8 }}>
                 <span style={{ flex:1, fontSize:14 }}>👤 {customer.first_name} {customer.last_name}</span>
-                <button onClick={()=>{setCustomer(null);setCustomerQ("");}} style={{ background:"none", border:"none", color:G.red, cursor:"pointer", fontSize:13, fontFamily:G.mono }}>Remove</button>
+                <button onClick={()=>{setCustomer(null);setCustomerQ("");}} style={{ background:"none", border:"none", color:G.red, cursor:"pointer", fontSize:13, fontFamily:G.mono }}>{tl("Remove")}</button>
               </div>
             ) : (
               <div style={{ position:"relative" }}>
@@ -1508,7 +1542,7 @@ function NewOrderModal({ onClose, onCreated, toast }) {
           )}
 
           {/* 4. Menu */}
-          <Select label="Menu" value={mid} onChange={selectMenu}
+          <Select label=tl("Menu") value={mid} onChange={selectMenu}
             options={menus.map(m=>({value:String(m.mid),label:m.name+(m.available?"":" (draft)")}))}
             placeholder="Select a menu" required />
 
@@ -1538,11 +1572,11 @@ function NewOrderModal({ onClose, onCreated, toast }) {
         <div style={{ padding:"16px 24px", borderTop:`1px solid ${G.border}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
           <span style={{ fontWeight:700, fontSize:16, color:G.caramel }}>{total > 0 ? `${total} AMD` : "—"}</span>
           <div style={{ display:"flex", gap:10 }}>
-            <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+            <Btn variant="ghost" onClick={onClose}>{tl("Cancel")}</Btn>
             {!pickup && addrMode==="other" ? (
-              <Btn onClick={()=>setStep(2)} disabled={!items.length||!mid}>Next →</Btn>
+              <Btn onClick={()=>setStep(2)} disabled={!items.length||!mid}>{tl("Next →")}</Btn>
             ) : (
-              <Btn onClick={()=>submit()} loading={saving} disabled={!canPlaceMain}>Place order</Btn>
+              <Btn onClick={()=>submit()} loading={saving} disabled={!canPlaceMain}>{tl("Place order")}</Btn>
             )}
           </div>
         </div>
@@ -1551,7 +1585,10 @@ function NewOrderModal({ onClose, onCreated, toast }) {
   );
 }
 
-function OrdersManufPage({ toast }) {
+function OrdersManufPage({
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+ toast }) {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dialog, setDialog] = useState(null);
@@ -1617,11 +1654,11 @@ function OrdersManufPage({ toast }) {
   // ── TABLE VIEW ──────────────────────────────────────────────────────────────
   const TABLE_COLS = [
     { key:"oid",        label:"#" },
-    { key:"created_at", label:"Date placed" },
-    { key:"first_name", label:"First name" },
-    { key:"last_name",  label:"Last name" },
-    { key:"status",     label:"Status" },
-    { key:"total",      label:"Total" },
+    { key:"created_at", label:tl("Date placed") },
+    { key:"first_name", label:tl("First name") },
+    { key:"last_name",  label:tl("Last name") },
+    { key:"status",     label:tl("Status") },
+    { key:"total",      label:tl("Total") },
   ];
 
   const tableRows = searched.map(o=>({
@@ -1722,7 +1759,7 @@ function OrdersManufPage({ toast }) {
                   <input type="checkbox" checked={checked}
                     onChange={()=>{ toggleStatus(s); setPage(0); }}
                     style={{ accentColor:G.caramel, width:14, height:14 }} />
-                  <span style={{ fontSize:13, color:G.dark, fontWeight:checked?500:400 }}>{s}</span>
+                  <span style={{ fontSize:13, color:G.dark, fontWeight:checked?500:400 }}>{tl(s)}</span>
                 </label>
               );
             })}
@@ -1734,11 +1771,11 @@ function OrdersManufPage({ toast }) {
 
   const toolbar = (
     <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"nowrap" }}>
-      <Btn size="sm" onClick={()=>setShowNewOrder(true)}>+ New order</Btn>
+      <Btn size="sm" onClick={()=>setShowNewOrder(true)}>{tl("+ New order")}</Btn>
       <SearchBox />
-      <span style={{ fontSize:12, color:G.muted }}>From</span>
+      <span style={{ fontSize:12, color:G.muted }}>{tl("From")}</span>
       <DatePicker value={dateFrom} max={dateTo} onChange={v=>{setDateFrom(v);setPage(0);}} />
-      <span style={{ fontSize:12, color:G.muted }}>To</span>
+      <span style={{ fontSize:12, color:G.muted }}>{tl("To")}</span>
       <DatePicker value={dateTo} min={dateFrom} onChange={v=>{setDateTo(v);setPage(0);}} />
       <ViewToggle />
       <StatusDropdown />
@@ -1746,7 +1783,7 @@ function OrdersManufPage({ toast }) {
   );
 
   return (
-    <Page title="Orders" actions={toolbar}>
+    <Page title={tl("Orders")} actions={toolbar}>
       {showNewOrder&&(
         <NewOrderModal
           toast={toast}
@@ -1762,7 +1799,7 @@ function OrdersManufPage({ toast }) {
             return (
               <div key={status} style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, overflow:"hidden" }}>
                 <div style={{ padding:"10px 14px", background:cfg.bg, borderBottom:`2px solid ${cfg.color}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                  <span style={{ fontSize:13, fontWeight:700, color:cfg.color, letterSpacing:"0.04em" }}>{status.toUpperCase()}</span>
+                  <span style={{ fontSize:13, fontWeight:700, color:cfg.color, letterSpacing:"0.04em" }}>{tl(status.toUpperCase())}</span>
                   <span style={{ fontSize:12, color:cfg.color, background:G.white, padding:"2px 8px", borderRadius:20, fontWeight:700 }}>{col.length}</span>
                 </div>
                 <div style={{ padding:10, display:"flex", flexDirection:"column", gap:8, minHeight:80 }}>
@@ -1776,17 +1813,17 @@ function OrdersManufPage({ toast }) {
                       <div style={{ marginBottom:8 }}>{(o.items||[]).map((it,i)=><div key={i} style={{fontSize:12}}>{it.qty}× {it.name}</div>)}</div>
                       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", borderTop:`1px solid ${G.border}`, paddingTop:8 }}>
                         <span style={{ fontWeight:700, color:G.caramel }}>{(o.items||[]).reduce((s,it)=>s+it.qty*it.price,0)} AMD</span>
-                        <span style={{ fontSize:11, color:G.muted }}>{o.pickup?"Pickup":"Delivery"}</span>
+                        <span style={{ fontSize:11, color:G.muted }}>{o.pickup?tl("Pickup (free)"):tl("Delivery")}</span>
                       </div>
                       {(cfg.next && !(o.status==="Done" && o.allNonDeliverable))&&(
                         <div style={{ display:"flex", gap:6, marginTop:8 }}>
-                          <Btn size="sm" onClick={()=>advance(o.oid)} style={{flex:1,fontSize:11,padding:"5px 0"}}>{cfg.next}</Btn>
+                          <Btn size="sm" onClick={()=>advance(o.oid)} style={{flex:1,fontSize:11,padding:"5px 0"}}>{tl(cfg.next)}</Btn>
                           {cfg.canDecline&&<Btn variant="danger" size="sm" onClick={()=>{setPending(o.oid);setDialog("decline");}} style={{fontSize:11,padding:"5px 10px"}}>✕</Btn>}
                         </div>
                       )}
                     </div>
                   ))}
-                  {col.length===0&&<div style={{padding:16,textAlign:"center",color:G.muted,fontSize:12}}>Empty</div>}
+                  {col.length===0&&<div style={{padding:16,textAlign:"center",color:G.muted,fontSize:12}}>{tl("Empty")}</div>}
                 </div>
               </div>
             );
@@ -1805,14 +1842,14 @@ function OrdersManufPage({ toast }) {
                       letterSpacing:"0.05em", textTransform:"uppercase", color:G.muted,
                       cursor:"pointer", userSelect:"none", whiteSpace:"nowrap"
                     }}>
-                      {c.label}{sortKey===c.key&&<span style={{marginLeft:4}}>{sortDir==="asc"?"↑":"↓"}</span>}
+                      {tl(c.label)}{sortKey===c.key&&<span style={{marginLeft:4}}>{sortDir==="asc"?"↑":"↓"}</span>}
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {paged.length===0?(
-                  <tr><td colSpan={TABLE_COLS.length} style={{padding:40,textAlign:"center",color:G.muted}}>No orders found.</td></tr>
+                  <tr><td colSpan={TABLE_COLS.length} style={{padding:40,textAlign:"center",color:G.muted}}>{tl("No orders found.")}</td></tr>
                 ):paged.map((o,i)=>{
                   const cfg=STATUS_CONFIG[o.status]||STATUS_CONFIG.New;
                   const d=new Date(o.created_at);
@@ -1826,7 +1863,7 @@ function OrdersManufPage({ toast }) {
                       <td style={{padding:"11px 16px",fontSize:14}}>{o.customer?.first_name}</td>
                       <td style={{padding:"11px 16px",fontSize:14}}>{o.customer?.last_name}</td>
                       <td style={{padding:"11px 16px"}}>
-                        <span style={{padding:"3px 10px",borderRadius:20,fontSize:12,fontWeight:700,background:cfg.bg,color:cfg.color}}>{o.status}</span>
+                        <span style={{padding:"3px 10px",borderRadius:20,fontSize:12,fontWeight:700,background:cfg.bg,color:cfg.color}}>{tl(o.status)}</span>
                       </td>
                       <td style={{padding:"11px 16px",fontSize:14,fontWeight:700,color:G.caramel}}>{o.total} AMD</td>
                     </tr>
@@ -1839,7 +1876,7 @@ function OrdersManufPage({ toast }) {
           {/* Pagination */}
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:10 }}>
             <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-              <span style={{ fontSize:13, color:G.muted }}>Rows per page:</span>
+              <span style={{ fontSize:13, color:G.muted }}>{tl("Rows per page:")}</span>
               {[10,25,50,100].map(n=>(
                 <button key={n} onClick={()=>{setPageSize(n);setPage(0);}} style={{
                   padding:"4px 10px", borderRadius:6, border:`1px solid ${pageSize===n?G.caramel:G.border}`,
@@ -1864,13 +1901,16 @@ function OrdersManufPage({ toast }) {
 }
 
 // ─── RESTAURANTS ──────────────────────────────────────────────────────────────
-function RestaurantsPage({ setPage, setActiveMenu }) {
+function RestaurantsPage({
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+ setPage, setActiveMenu }) {
   const [menus, setMenus] = useState([]); const [loading, setLoading] = useState(true);
   useEffect(()=>{api.getMenus().then(m=>{setMenus(m.filter(x=>x.available&&(x.recipes||[]).length>0));setLoading(false);}).catch(()=>setLoading(false));},[]);
   return (
-    <Page title="Restaurants">
+    <Page title={tl("Restaurants")}>
       {loading?<Spinner/>:menus.length===0?(
-        <div style={{ textAlign:"center", padding:80, color:G.muted }}><p style={{ fontFamily:G.font, fontSize:24, marginBottom:8 }}>No restaurants open right now</p><p>Check back soon!</p></div>
+        <div style={{ textAlign:"center", padding:80, color:G.muted }}><p style={{ fontFamily:G.font, fontSize:24, marginBottom:8 }}>{tl("No restaurants open right now")}</p><p>{tl("Check back soon!")}</p></div>
       ):(
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(320px, 1fr))", gap:20 }}>
           {menus.map(m=>(
@@ -1895,7 +1935,10 @@ function RestaurantsPage({ setPage, setActiveMenu }) {
 }
 
 // ─── ORDER PAGE ───────────────────────────────────────────────────────────────
-function OrderPage({ menu, user, setPage, toast }) {
+function OrderPage({
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+ menu, user, setPage, toast }) {
   const [qty, setQty] = useState({}); const [delivery, setDelivery] = useState(null);
   const [savedAddresses, setSavedAddresses] = useState([]);
   const [selectedAddr, setSelectedAddr] = useState(0); // index into savedAddresses, or -1 = "other"
@@ -1995,9 +2038,9 @@ function OrderPage({ menu, user, setPage, toast }) {
 
         {/* CART */}
         <div style={{ background:G.white, borderRadius:16, border:`1px solid ${G.border}`, padding:22, position:"sticky", top:80 }}>
-          <h3 style={{ fontFamily:G.font, fontSize:18, marginBottom:16 }}>Your order</h3>
+          <h3 style={{ fontFamily:G.font, fontSize:18, marginBottom:16 }}>{tl("Your order")}</h3>
           {cartItems.length===0?(
-            <p style={{ color:G.muted, fontSize:13, marginBottom:16 }}>Add items from the menu.</p>
+            <p style={{ color:G.muted, fontSize:13, marginBottom:16 }}>{tl("Add items from the menu.")}</p>
           ):(
             <div style={{ marginBottom:16 }}>
               {cartItems.map((it,i)=>(
@@ -2020,7 +2063,7 @@ function OrderPage({ menu, user, setPage, toast }) {
               <div style={{ padding:"10px 12px", background:"#fff7ed", border:"1px solid #fed7aa", borderRadius:8, fontSize:12, color:"#92400e" }}>
                 <strong>Pickup only</strong><br/>Your order includes items available for pickup only. Delivery for this order may not be fulfilled.
               </div>
-            ):[{val:"pickup",label:"Pickup (free)"},{val:"delivery",label:`Delivery (+${menu.delivery_fee} AMD)`}].map(opt=>(
+            ):[{val:"pickup",label:"Pickup (free)"},{val:"delivery",label:`${tl("Delivery")} (+${menu.delivery_fee} AMD)`}].map(opt=>(
               <label key={opt.val} style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8, cursor:"pointer", fontSize:13 }}>
                 <input type="radio" name="delivery" value={opt.val} checked={delivery===opt.val} onChange={()=>setDelivery(opt.val)} style={{accentColor:G.caramel}} />
                 {opt.label}
@@ -2057,8 +2100,8 @@ function OrderPage({ menu, user, setPage, toast }) {
           )}
 
           <div style={{ borderTop:`1px solid ${G.border}`, paddingTop:12, marginBottom:14 }}>
-            {deliveryFee>0&&<div style={{ display:"flex", justifyContent:"space-between", fontSize:13, color:G.muted, marginBottom:6 }}><span>Delivery fee</span><span>{deliveryFee} AMD</span></div>}
-            <div style={{ display:"flex", justifyContent:"space-between", fontWeight:700, fontSize:16 }}><span>Total</span><span style={{color:G.caramel}}>{total} AMD</span></div>
+            {deliveryFee>0&&<div style={{ display:"flex", justifyContent:"space-between", fontSize:13, color:G.muted, marginBottom:6 }}><span>{tl("Delivery fee")}</span><span>{deliveryFee} AMD</span></div>}
+            <div style={{ display:"flex", justifyContent:"space-between", fontWeight:700, fontSize:16 }}><span>{tl("Total")}</span><span style={{color:G.caramel}}>{total} AMD</span></div>
           </div>
 
           <Btn onClick={submit} loading={submitting} disabled={itemTotal===0} title={itemTotal===0?"Please add items to your order":undefined} style={{width:"100%"}}>Place order</Btn>
@@ -2070,15 +2113,18 @@ function OrderPage({ menu, user, setPage, toast }) {
 }
 
 // ─── ORDERS (CUSTOMER) ────────────────────────────────────────────────────────
-function OrdersCustPage({ toast }) {
+function OrdersCustPage({
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+ toast }) {
   const [orders, setOrders] = useState([]); const [loading, setLoading] = useState(true); const [dialog, setDialog] = useState(null); const [pending, setPending] = useState(null);
   const load=useCallback(async()=>{setLoading(true);try{setOrders(await api.getOrders());}catch(e){toast(e.message,"error");}finally{setLoading(false);}},[]); useEffect(()=>{load();},[]);
   const cancel=async()=>{try{const u=await api.cancelOrder(pending);setOrders(p=>p.map(o=>o.oid===pending?u:o));toast(`Order #${pending} cancelled`);setDialog(null);}catch(e){toast(e.message,"error");}};
   const confirmDel=async oid=>{try{const u=await api.confirmDelivery(oid);setOrders(p=>p.map(o=>o.oid===oid?u:o));toast("Order confirmed as delivered!");}catch(e){toast(e.message,"error");}};
   return (
-    <Page title="My Orders">
+    <Page title={tl("My Orders")}>
       {loading?<Spinner/>:orders.length===0?(
-        <div style={{ textAlign:"center", padding:80, color:G.muted }}><p style={{ fontFamily:G.font, fontSize:22 }}>No orders yet</p></div>
+        <div style={{ textAlign:"center", padding:80, color:G.muted }}><p style={{ fontFamily:G.font, fontSize:22 }}>{tl("No orders yet")}</p></div>
       ):(
         <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
           {orders.map(o=>{
@@ -2088,7 +2134,7 @@ function OrdersCustPage({ toast }) {
               <div key={o.oid} style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, padding:20 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:12 }}>
                   <div><span style={{ fontWeight:700, fontSize:15 }}>Order #{o.oid}</span><span style={{ marginLeft:10, fontSize:12, color:G.muted }}>{new Date(o.created_at).toLocaleString()}</span></div>
-                  <span style={{ padding:"4px 12px", borderRadius:20, fontSize:12, fontWeight:700, background:cfg.bg, color:cfg.color }}>{o.status}</span>
+                  <span style={{ padding:"4px 12px", borderRadius:20, fontSize:12, fontWeight:700, background:cfg.bg, color:cfg.color }}>{tl(o.status)}</span>
                 </div>
                 <div style={{ marginBottom:12 }}>
                   {(o.items||[]).map((it,i)=>(
@@ -2098,10 +2144,10 @@ function OrdersCustPage({ toast }) {
                   ))}
                 </div>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                  <span style={{ fontWeight:700, color:G.caramel }}>{total} AMD · {o.pickup?"Pickup":"Delivery"}</span>
+                  <span style={{ fontWeight:700, color:G.caramel }}>{total} AMD · {o.pickup?tl("Pickup (free)"):tl("Delivery")}</span>
                   <div style={{ display:"flex", gap:8 }}>
-                    {!["Declined","Delivered"].includes(o.status)&&<Btn variant="ghost" size="sm" onClick={()=>{setPending(o.oid);setDialog("cancel");}}>Cancel</Btn>}
-                    {["Done","Dispatched"].includes(o.status)&&<Btn variant="success" size="sm" onClick={()=>confirmDel(o.oid)}>I got my order ✓</Btn>}
+                    {!["Declined","Delivered"].includes(o.status)&&<Btn variant="ghost" size="sm" onClick={()=>{setPending(o.oid);setDialog("cancel");}}>{tl("Cancel")}</Btn>}
+                    {["Done","Dispatched"].includes(o.status)&&<Btn variant="success" size="sm" onClick={()=>confirmDel(o.oid)}>{tl("I got my order ✓")}</Btn>}
                   </div>
                 </div>
               </div>
@@ -2109,7 +2155,7 @@ function OrdersCustPage({ toast }) {
           })}
         </div>
       )}
-      <Dialog open={dialog==="cancel"} title="Cancel order?" onConfirm={cancel} onCancel={()=>setDialog(null)}>Are you sure you want to cancel order #{pending}?</Dialog>
+      <Dialog open={dialog==="cancel"} title="Cancel order?" onConfirm={cancel} onCancel={()=>setDialog(null)}>{tl("Are you sure you want to cancel order")} #{pending}?</Dialog>
     </Page>
   );
 }
@@ -2149,7 +2195,10 @@ function maxLatestOrder(periods) {
   return periodDiff(last.start, last.end);
 }
 
-function SchedulePage({ toast, storeSchedule, setStoreSchedule }) {
+function SchedulePage({
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+ toast, storeSchedule, setStoreSchedule }) {
   const [schedule, setSchedule] = useState(storeSchedule);
   const [timezone, setTimezone] = useState(
     Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
@@ -2212,7 +2261,7 @@ function SchedulePage({ toast, storeSchedule, setStoreSchedule }) {
   const globalMax = allMaxes.length ? allMaxes.reduce((a,b)=>timeToMins(a)<timeToMins(b)?a:b) : "12:00";
 
   return (
-    <Page title="Schedule" actions={<Btn onClick={save} loading={saving}>Save schedule</Btn>}>
+    <Page title="Schedule" actions={<Btn onClick={save} loading={saving}>{tl("Save schedule")}</Btn>}>
       <div style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, padding:24, marginBottom:16 }}>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20, alignItems:"end" }}>
           <Select label="Time zone" value={timezone} onChange={setTimezone}
@@ -2223,7 +2272,7 @@ function SchedulePage({ toast, storeSchedule, setStoreSchedule }) {
               <input type="time" value={latestOrder} min="00:00" max={globalMax}
                 onChange={e=>setLatestOrder(e.target.value)}
                 style={{ padding:"9px 12px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:14, fontFamily:G.mono, outline:"none" }} />
-              <span style={{ fontSize:13, color:G.dark, fontWeight:600 }}>before closing</span>
+              <span style={{ fontSize:13, color:G.dark, fontWeight:600 }}>{tl("before closing")}</span>
               <span style={{ fontSize:12, color:G.muted }}>(max {globalMax})</span>
             </div>
           </div>
@@ -2241,7 +2290,7 @@ function SchedulePage({ toast, storeSchedule, setStoreSchedule }) {
                     <input type="checkbox" checked={!isOff}
                       onChange={e=>{ if(e.target.checked) addPeriod(day); else setSchedule(p=>({...p,[day]:[]})); }}
                       style={{accentColor:G.caramel, width:16, height:16}} />
-                    <span style={{ fontWeight:700, fontSize:14, color:isOff?G.muted:G.dark }}>{DAY_LABELS[di]}</span>
+                    <span style={{ fontWeight:700, fontSize:14, color:isOff?G.muted:G.dark }}>{tl(DAY_LABELS[di])}</span>
                   </label>
                   {isOff&&<span style={{ fontSize:12, color:G.muted, fontStyle:"italic" }}>Closed</span>}
                 </div>
@@ -2253,12 +2302,12 @@ function SchedulePage({ toast, storeSchedule, setStoreSchedule }) {
                       <span style={{ color:G.muted, fontSize:13 }}>–</span>
                       <input type="time" value={per.end} onChange={e=>updatePeriod(day,i,"end",e.target.value)}
                         style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none" }} />
-                      <button onClick={()=>removePeriod(day,i)} style={{ background:"none", border:"none", color:G.red, cursor:"pointer", fontSize:13, fontFamily:G.mono, padding:"0 4px" }}>Remove</button>
+                      <button onClick={()=>removePeriod(day,i)} style={{ background:"none", border:"none", color:G.red, cursor:"pointer", fontSize:13, fontFamily:G.mono, padding:"0 4px" }}>{tl("Remove")}</button>
                     </div>
                   ))}
                   {!isOff&&(
                     <button onClick={()=>addPeriod(day)} style={{ background:"none", border:`1px dashed ${G.border}`, color:G.caramel, cursor:"pointer", fontSize:12, fontFamily:G.mono, padding:"5px 12px", borderRadius:8, alignSelf:"flex-start", fontWeight:600 }}>
-                      + Add period
+                      {tl("Add period")}
                     </button>
                   )}
                 </div>
@@ -2272,7 +2321,10 @@ function SchedulePage({ toast, storeSchedule, setStoreSchedule }) {
 }
 
 // ─── PROCUREMENT PAGE ─────────────────────────────────────────────────────────
-function ProcurementPage({ toast }) {
+function ProcurementPage({
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+ toast }) {
   const [data, setData] = useState({ products:[], links:[] });
   const [suppliers, setSuppliers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2340,7 +2392,7 @@ function ProcurementPage({ toast }) {
                       <div style={{ display:"flex", gap:6, alignItems:"center" }}>
                         <input type="number" value={editExpiry} onChange={e=>setEditExpiry(e.target.value)} placeholder="hours"
                           style={{ width:70, padding:"5px 8px", borderRadius:6, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none" }} />
-                        <Btn size="sm" onClick={()=>saveExpiry(p.pid)}>Save</Btn>
+                        <Btn size="sm" onClick={()=>saveExpiry(p.pid)}>{tl("Save")}</Btn>
                         <Btn size="sm" variant="ghost" onClick={()=>setEditPid(null)}>×</Btn>
                       </div>
                     ):(
@@ -2400,7 +2452,10 @@ function ProcurementPage({ toast }) {
 const CUTOFF_HOURS = Array.from({length:23},(_,i)=>`${String(i+1).padStart(2,"0")}:00`);
 const DELIVERY_DAYS = Array.from({length:31},(_,i)=>i);
 
-function SupplierForm({ initial, onSave, onCancel, saving }) {
+function SupplierForm({
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+ initial, onSave, onCancel, saving }) {
   const BLANK_SUP = { name:"", contact_fname:"", contact_lname:"", contact_title:"",
                       email:"", phone:"", street_address:"", city:"", zip:"", schedule:null };
   const [form, setForm] = useState({...BLANK_SUP,...(initial||{})});
@@ -2430,7 +2485,7 @@ function SupplierForm({ initial, onSave, onCancel, saving }) {
     <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
         <h4 style={{ fontFamily:G.font, fontSize:15 }}>Schedule</h4>
-        <button onClick={()=>setSlide("general")} style={{ background:"none", border:"none", color:G.caramel, cursor:"pointer", fontFamily:G.mono, fontSize:13, fontWeight:600 }}>← General</button>
+        <button onClick={()=>setSlide("general")} style={{ background:"none", border:"none", color:G.caramel, cursor:"pointer", fontFamily:G.mono, fontSize:13, fontWeight:600 }}>{tl("← General")}</button>
       </div>
       <Select label="Timezone" value={timezone} onChange={setTimezone} options={TIMEZONES} />
 
@@ -2460,7 +2515,7 @@ function SupplierForm({ initial, onSave, onCancel, saving }) {
                   </td>
                 </tr>
               ))}
-              {sortedTerms.length===0&&<tr><td colSpan={5} style={{ padding:20, textAlign:"center", color:G.muted, fontSize:13 }}>No terms yet.</td></tr>}
+              {sortedTerms.length===0&&<tr><td colSpan={5} style={{ padding:20, textAlign:"center", color:G.muted, fontSize:13 }}>{tl("No terms yet.")}</td></tr>}
             </tbody>
           </table>
         </div>
@@ -2483,7 +2538,7 @@ function SupplierForm({ initial, onSave, onCancel, saving }) {
               </select>
             </div>
             <Btn size="sm" onClick={addTerm}>Add</Btn>
-            <Btn size="sm" variant="ghost" onClick={()=>setShowNewTerm(false)}>Cancel</Btn>
+            <Btn size="sm" variant="ghost" onClick={()=>setShowNewTerm(false)}>{tl("Cancel")}</Btn>
           </div>
         ) : (
           <button onClick={()=>setShowNewTerm(true)} style={{ background:"none", border:`1px dashed ${G.border}`, color:G.caramel, cursor:"pointer", fontSize:13, fontFamily:G.mono, padding:"7px 14px", borderRadius:8, fontWeight:600 }}>
@@ -2493,8 +2548,8 @@ function SupplierForm({ initial, onSave, onCancel, saving }) {
       </div>
 
       <div style={{ display:"flex", gap:10, marginTop:4 }}>
-        <Btn size="sm" onClick={()=>onSave(buildPayload())} loading={saving}>Save</Btn>
-        <Btn variant="ghost" size="sm" onClick={onCancel}>Cancel</Btn>
+        <Btn size="sm" onClick={()=>onSave(buildPayload())} loading={saving}>{tl("Save")}</Btn>
+        <Btn variant="ghost" size="sm" onClick={onCancel}>{tl("Cancel")}</Btn>
       </div>
     </div>
   );
@@ -2503,9 +2558,9 @@ function SupplierForm({ initial, onSave, onCancel, saving }) {
     <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
         <Input label="Name" value={form.name} onChange={v=>set("name",v)} required />
-        <Input label="Contact title" value={form.contact_title||""} onChange={v=>set("contact_title",v)} placeholder="e.g. Sales Manager" />
-        <Input label="Contact first name" value={form.contact_fname||""} onChange={v=>set("contact_fname",v)} />
-        <Input label="Contact last name" value={form.contact_lname||""} onChange={v=>set("contact_lname",v)} />
+        <Input label={tl("Contact title")} value={form.contact_title||""} onChange={v=>set("contact_title",v)} placeholder="e.g. Sales Manager" />
+        <Input label={tl("Contact first name")} value={form.contact_fname||""} onChange={v=>set("contact_fname",v)} />
+        <Input label={tl("Contact last name")} value={form.contact_lname||""} onChange={v=>set("contact_lname",v)} />
         <Input label="Email" type="email" value={form.email||""} onChange={v=>set("email",v)} required />
         <Input label="Phone" value={form.phone||""} onChange={v=>set("phone",v)} required />
         <Input label="Street address" value={form.street_address||""} onChange={v=>set("street_address",v)} required />
@@ -2515,15 +2570,18 @@ function SupplierForm({ initial, onSave, onCancel, saving }) {
         </div>
       </div>
       <div style={{ display:"flex", gap:10 }}>
-        <Btn size="sm" onClick={()=>onSave(buildPayload())} loading={saving}>Save</Btn>
-        <Btn variant="ghost" size="sm" onClick={onCancel}>Cancel</Btn>
-        <Btn variant="secondary" size="sm" onClick={()=>setSlide("schedule")} style={{ marginLeft:"auto" }}>Schedule →</Btn>
+        <Btn size="sm" onClick={()=>onSave(buildPayload())} loading={saving}>{tl("Save")}</Btn>
+        <Btn variant="ghost" size="sm" onClick={onCancel}>{tl("Cancel")}</Btn>
+        <Btn variant="secondary" size="sm" onClick={()=>setSlide("schedule")} style={{ marginLeft:"auto" }}>{tl("Schedule →")}</Btn>
       </div>
     </div>
   );
 }
 
-function SuppliersPage({ toast }) {
+function SuppliersPage({
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+ toast }) {
   const [suppliers, setSuppliers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showNew, setShowNew] = useState(false);
@@ -2573,9 +2631,9 @@ function SuppliersPage({ toast }) {
   ];
 
   return (
-    <Page title="Suppliers" actions={
+    <Page title={tl("Suppliers")} actions={
       <>{selected.length>0&&<Btn variant="danger" size="sm" onClick={()=>setDialog("del")}>Delete ({selected.length})</Btn>}
-      <Btn size="sm" onClick={()=>setShowNew(s=>!s)}>+ New supplier</Btn></>
+      <Btn size="sm" onClick={()=>setShowNew(s=>!s)}>{tl("+ New supplier")}</Btn></>
     }>
       {showNew&&(
         <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
