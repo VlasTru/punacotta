@@ -180,6 +180,8 @@ function Toast({ toasts, remove }) {
 
 // ─── DIALOG ───────────────────────────────────────────────────────────────────
 function Dialog({ open, title, children, onConfirm, onCancel, confirmLabel="Yes", danger=true }) {
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
   if (!open) return null;
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center" }}>
@@ -255,6 +257,8 @@ function Spinner() {
 
 // ─── IMAGE UPLOADER + CROP ────────────────────────────────────────────────────
 function ImageUploader({ existingUrl, existingThumb, onImageReady, onRemove }) {
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
   const [src, setSrc] = useState(null);
   const [crop, setCrop] = useState();
   const [completedCrop, setCompletedCrop] = useState(null);
@@ -950,6 +954,8 @@ function timeToMins(t) {
 }
 
 function MenuCalendar({ menus, storeSchedule=DEFAULT_STORE }) {
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
   const START_H = 7, END_H = 23, TOTAL = (END_H-START_H)*60;
   const colW = 110, rowH = 48, labelW = 52;
 
