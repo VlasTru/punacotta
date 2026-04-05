@@ -2043,7 +2043,7 @@ function OrderPage({
                     <div style={{ flex:1, minWidth:0 }}>
                       <p style={{ fontWeight:600, fontSize:14, display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
                         <span style={{ cursor:(r.image_url||r.image_thumb_url)?"pointer":"default" }} onClick={()=>(r.image_url||r.image_thumb_url)&&setLightbox({src:r.image_url||r.image_thumb_url,description:r.description})}>{r.name}</span>
-                        {r.deliverable===false&&<em style={{ fontSize:11, fontWeight:400, color:G.muted }}>(in store pickup only)</em>}
+                        {r.deliverable===false&&<span style={{ fontSize:12, fontWeight:400, color:G.muted, fontStyle:"normal" }}>(pick-up only)</span>}
                       </p>
                       <p style={{ fontSize:13, color:G.caramel, fontWeight:600 }}>{r.price} {r.currency}</p>
                     </div>
@@ -2069,7 +2069,7 @@ function OrderPage({
             <div style={{ marginBottom:16 }}>
               {cartItems.map((it,i)=>(
                 <div key={i} style={{ display:"flex", alignItems:"center", gap:6, fontSize:13, marginBottom:8 }}>
-                  <span style={{ flex:1 }}>{it.name}{it.deliverable===false&&<span style={{marginLeft:4}}>📦</span>}</span>
+                  <span style={{ flex:1 }}>{it.name}{it.deliverable===false&&<span style={{ fontSize:12, color:G.muted, marginLeft:6 }}>(pick-up only)</span>}</span>
                   <div style={{ display:"flex", alignItems:"center", gap:3 }}>
                     <button onClick={()=>changeQty(it.rid,-1)} style={{ width:20, height:20, borderRadius:4, border:`1px solid ${G.border}`, background:G.white, cursor:"pointer", fontSize:12, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>−</button>
                     <span style={{ minWidth:16, textAlign:"center", fontWeight:700 }}>{it.qty}</span>

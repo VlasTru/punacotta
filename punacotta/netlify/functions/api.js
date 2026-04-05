@@ -141,7 +141,8 @@ async function fetchOrder(oid) {
     customer = { first_name: order.walkin_name, last_name: '', email: null, uid: null }
   }
   const allNonDeliverable = items.length > 0 && items.every(i => i.deliverable === false)
-  return { ...order, items, customer, allNonDeliverable }
+  const doneIsTerminal = order.pickup || allNonDeliverable
+  return { ...order, items, customer, allNonDeliverable: doneIsTerminal }
 }
 
 // ─── MULTIPART PARSER ─────────────────────────────────────────────────────────
@@ -625,12 +626,13 @@ async function route(method, segments, body, headers, event) {
         if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
         const [o] = await dbq('SELECT * FROM "order" WHERE oid=$1', [r1])
         if (!o) return [404, { error: 'Not found' }]
-        // Check if all items are non-deliverable — if so, Done is terminal
+        // Done is terminal for: pickup orders OR orders where all items are non-deliverable
         const items = await dbq(`
           SELECT r.deliverable FROM order_item oi
           JOIN recipe r ON r.rid=oi.rid WHERE oi.oid=$1`, [r1])
         const allNonDeliverable = items.length > 0 && items.every(i => i.deliverable === false)
-        const transitions = allNonDeliverable
+        const doneIsTerminal = o.pickup || allNonDeliverable
+        const transitions = doneIsTerminal
           ? { New:'Accepted', Accepted:'Preparing', Preparing:'Done' }
           : { New:'Accepted', Accepted:'Preparing', Preparing:'Done', Done:'Dispatched', Dispatched:'Delivered' }
         const next = transitions[o.status]
