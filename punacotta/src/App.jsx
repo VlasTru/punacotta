@@ -1540,7 +1540,7 @@ function NewOrderModal({
           )}
 
           {/* 4. Menu */}
-          <Select label={tl("Menu"))} value={mid} onChange={selectMenu}
+          <Select label={tl("Menu")} value={mid} onChange={selectMenu}
             options={menus.map(m=>({value:String(m.mid),label:m.name+(m.available?"":" (draft)")}))}
             placeholder="Select a menu" required />
 
