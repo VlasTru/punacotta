@@ -716,9 +716,22 @@ function ProductsPage({ toast }) {
   const [editProduct, setEditProduct] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [usageMap, setUsageMap] = useState({});
+  // Procurement data merged in
+  const [procLinks, setProcLinks] = useState([]); // [{pid,supplier_name,price,currency,psid,sid}]
+  const [suppliers, setSuppliers] = useState([]);
+  const [editPid, setEditPid] = useState(null);
+  const [editExpiry, setEditExpiry] = useState("");
+  const [linkPid, setLinkPid] = useState(null);
+  const [linkSid, setLinkSid] = useState(""); const [linkPrice, setLinkPrice] = useState(""); const [linkCurrency, setLinkCurrency] = useState("AMD");
 
-  const load = useCallback(async()=>{ setLoading(true); try{ const[p,l]=await Promise.all([api.getProducts(),api.getProductLookups()]); setProducts(p); setLookups(l); } catch(e){toast(e.message,"error");} finally{setLoading(false);} },[]);
+  const load = useCallback(async()=>{ setLoading(true); try{
+    const[p,l,proc,sups]=await Promise.all([api.getProducts(),api.getProductLookups(),api.getProcurement(),api.getSuppliers()]);
+    setProducts(p); setLookups(l); setProcLinks(proc.links||[]); setSuppliers(sups);
+    // Merge expiry_hours from procurement into products
+    setProducts(p.map(prod=>{ const pd=proc.products?.find(x=>x.pid===prod.pid); return pd?{...prod,expiry_hours:pd.expiry_hours}:prod; }));
+  } catch(e){toast(e.message,"error");} finally{setLoading(false);} },[]);
   useEffect(()=>{load();},[]);
+
   const sorted=[...products].sort((a,b)=>{ const v=String(a[sortKey]||"")<String(b[sortKey]||"")?-1:String(a[sortKey]||"")>String(b[sortKey]||"")?1:0; return sortDir==="asc"?v:-v; });
   const toggleSort=k=>{if(sortKey===k)setSortDir(d=>d==="asc"?"desc":"asc");else{setSortKey(k);setSortDir("asc");}};
   const toggleSel=id=>setSelected(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
@@ -745,6 +758,27 @@ function ProductsPage({ toast }) {
 
   const openEdit = p => { setEditProduct(p); setEditForm({name:p.name, sku:p.sku||"", unid:String(p.unid||""), caid:String(p.caid||"")}); };
 
+  const saveExpiry = async (pid) => {
+    try {
+      await api.patchProductExpiry(pid, { expiry_hours: editExpiry ? Number(editExpiry) : null });
+      setProducts(prev=>prev.map(p=>p.pid===pid?{...p,expiry_hours:editExpiry?Number(editExpiry):null}:p));
+      setEditPid(null); toast("Expiry saved");
+    } catch(e){ toast(e.message,"error"); }
+  };
+
+  const linkSupplier = async () => {
+    if (!linkSid) { toast("Select a supplier","error"); return; }
+    try {
+      await api.linkSupplierProduct(linkSid, { pid:linkPid, price:linkPrice?Number(linkPrice):null, currency:linkCurrency });
+      await load(); setLinkPid(null); setLinkSid(""); setLinkPrice(""); toast("Supplier linked");
+    } catch(e){ toast(e.message,"error"); }
+  };
+
+  const unlinkSupplier = async (sid, psid) => {
+    try { await api.unlinkSupplierProduct(sid, psid); await load(); toast("Supplier unlinked"); }
+    catch(e){ toast(e.message,"error"); }
+  };
+
   const openDeleteDialog = async () => {
     try { setUsageMap(await api.getProductUsage(selected) || {}); } catch { setUsageMap({}); }
     setDialog("del");
@@ -769,9 +803,57 @@ function ProductsPage({ toast }) {
     {key:"name",  label:tl("Name"),     sortable:true,  render:r=>(
       <button onClick={()=>openEdit(r)} style={{background:"none",border:"none",cursor:"pointer",fontFamily:G.mono,fontSize:14,color:G.dark,padding:0,textAlign:"left",textDecoration:"underline dotted",textUnderlineOffset:3}}>{r.name}</button>
     )},
-    {key:"sku",   label:tl("SKU"),      sortable:true,  render:r=>r.sku||<span style={{color:G.muted}}>—</span>},
-    {key:"category",label:tl("Category"),sortable:true, render:r=>r.category?<Badge>{r.category}</Badge>:<span style={{color:G.muted}}>—</span>},
-    {key:"units", label:tl("Units"),    sortable:false, render:r=>r.units||<span style={{color:G.muted}}>—</span>},
+    {key:"sku",      label:tl("SKU"),        sortable:true,  render:r=>r.sku||<span style={{color:G.muted}}>—</span>},
+    {key:"category", label:tl("Category"),   sortable:true,  render:r=>r.category?<Badge>{r.category}</Badge>:<span style={{color:G.muted}}>—</span>},
+    {key:"units",    label:tl("Units"),      sortable:false, render:r=>r.units||<span style={{color:G.muted}}>—</span>},
+    {key:"expiry",   label:tl("Expiry (hours)"), sortable:false, render:r=>(
+      editPid===r.pid ? (
+        <div style={{ display:"flex", gap:4, alignItems:"center" }}>
+          <input type="number" value={editExpiry} onChange={e=>setEditExpiry(e.target.value)} placeholder="h"
+            style={{ width:60, padding:"3px 6px", borderRadius:6, border:`1px solid ${G.border}`, fontSize:12, fontFamily:G.mono, outline:"none" }} />
+          <Btn size="sm" onClick={()=>saveExpiry(r.pid)}>✓</Btn>
+          <button onClick={()=>setEditPid(null)} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:14}}>×</button>
+        </div>
+      ) : (
+        <button onClick={()=>{setEditPid(r.pid);setEditExpiry(r.expiry_hours||"");}}
+          style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:r.expiry_hours?G.dark:G.caramel,fontFamily:G.mono}}>
+          {r.expiry_hours?`${r.expiry_hours}h`:"+ Set"}
+        </button>
+      )
+    )},
+    {key:"suppliers", label:tl("Suppliers"), sortable:false, render:r=>{
+      const links = procLinks.filter(l=>l.pid===r.pid);
+      return (
+        <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
+          {links.map(l=>(
+            <div key={l.psid} style={{ display:"flex", alignItems:"center", gap:6, fontSize:12 }}>
+              <span style={{flex:1}}>{l.supplier_name}</span>
+              {l.price&&<span style={{color:G.caramel,fontWeight:600}}>{l.price} {l.currency}</span>}
+              <button onClick={()=>unlinkSupplier(l.sid,l.psid)} style={{background:"none",border:"none",color:G.muted,cursor:"pointer",fontSize:12,lineHeight:1}}>×</button>
+            </div>
+          ))}
+          {linkPid===r.pid ? (
+            <div style={{ display:"flex", gap:4, alignItems:"center", flexWrap:"wrap", marginTop:2 }}>
+              <select value={linkSid} onChange={e=>setLinkSid(e.target.value)} style={{padding:"3px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
+                <option value="">Supplier…</option>
+                {suppliers.map(s=><option key={s.sid} value={s.sid}>{s.name}</option>)}
+              </select>
+              <input type="number" value={linkPrice} onChange={e=>setLinkPrice(e.target.value)} placeholder="Price" style={{width:60,padding:"3px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}} />
+              <select value={linkCurrency} onChange={e=>setLinkCurrency(e.target.value)} style={{padding:"3px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
+                {["AMD","USD","EUR","RUR"].map(c=><option key={c}>{c}</option>)}
+              </select>
+              <Btn size="sm" onClick={linkSupplier}>Link</Btn>
+              <button onClick={()=>setLinkPid(null)} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:14}}>×</button>
+            </div>
+          ):(
+            <button onClick={()=>{setLinkPid(r.pid);setLinkSid("");setLinkPrice("");}}
+              style={{background:"none",border:"none",cursor:"pointer",fontSize:11,color:G.caramel,fontFamily:G.mono,fontWeight:600,textAlign:"left"}}>
+              + Add supplier
+            </button>
+          )}
+        </div>
+      );
+    }},
   ];
 
   return (
@@ -2349,133 +2431,389 @@ function ProcurementPage({
  toast }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
-  const [data, setData] = useState({ products:[], links:[] });
+  const [orders, setOrders]       = useState([]);
   const [suppliers, setSuppliers] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [editPid, setEditPid] = useState(null);
-  const [editExpiry, setEditExpiry] = useState("");
-  const [linkPid, setLinkPid] = useState(null); // product being linked to a supplier
-  const [linkSid, setLinkSid] = useState("");
-  const [linkPrice, setLinkPrice] = useState("");
-  const [linkCurrency, setLinkCurrency] = useState("AMD");
+  const [products, setProducts]   = useState([]);
+  const [procLinks, setProcLinks] = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [showNew, setShowNew]     = useState(false);
+  const [viewOrder, setViewOrder] = useState(null);  // order being viewed/accepted
+  const [sortKey, setSortKey]     = useState("order_id");
+  const [sortDir, setSortDir]     = useState("asc");
+  const [page, setPage]           = useState(0);
+  const [pageSize, setPageSize]   = useState(25);
+  const [saving, setSaving]       = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const [acceptDialog, setAcceptDialog]   = useState(false);
+  const [acceptComments, setAcceptComments] = useState("");
+  const [acceptItems, setAcceptItems]     = useState([]);
+
+  // New order form state
+  const [newSid, setNewSid]         = useState("");
+  const [newTerm, setNewTerm]       = useState("");
+  const [newFee, setNewFee]         = useState("");
+  const [newCurrency, setNewCurrency] = useState("AMD");
+  const [newRows, setNewRows]       = useState([]); // [{pid,qty,unit_price,currency}]
 
   const load = useCallback(async()=>{
     setLoading(true);
     try {
-      const [d, s] = await Promise.all([api.getProcurement(), api.getSuppliers()]);
-      setData(d); setSuppliers(s);
+      const [o, s, proc] = await Promise.all([
+        api.getSupplierOrders(),
+        api.getSuppliers(),
+        api.getProcurement(),
+      ]);
+      setOrders(o||[]); setSuppliers(s||[]);
+      setProducts(proc.products||[]); setProcLinks(proc.links||[]);
     } catch(e){ toast(e.message,"error"); }
     finally{ setLoading(false); }
   },[]);
   useEffect(()=>{ load(); },[]);
 
-  const saveExpiry = async (pid) => {
+  // Products filtered by selected supplier
+  const availProducts = newSid
+    ? products.filter(p => procLinks.some(l=>l.pid===p.pid && String(l.sid)===String(newSid)))
+    : products;
+
+  const addRow = () => {
+    const pid = availProducts[0]?.pid||"";
+    const link = procLinks.find(l=>String(l.pid)===String(pid) && String(l.sid)===String(newSid));
+    setNewRows(r=>[...r,{pid,qty:1,unit_price:link?.price||0,currency:link?.currency||newCurrency}]);
+  };
+  const removeRow = i => setNewRows(r=>r.filter((_,j)=>j!==i));
+  const updateRow = (i,k,v) => setNewRows(r=>r.map((x,j)=>j===i?{...x,[k]:v}:x));
+  const rowQtyChange = (i,delta) => setNewRows(r=>r.map((x,j)=>j===i?{...x,qty:Math.max(0,Math.min(9999,Math.round((parseFloat(x.qty)||0+delta)*1000)/1000))}:x));
+
+  const calcTotals = (rows) => {
+    const subtotal = rows.reduce((s,r)=>s+(parseFloat(r.qty)||0)*(parseFloat(r.unit_price)||0),0);
+    const delivery = parseFloat(newFee)||0;
+    const vat = (subtotal+delivery)*0.2;
+    return { subtotal, delivery, vat, total: subtotal+delivery+vat };
+  };
+
+  const saveOrder = async (submit=false) => {
+    if (!newSid) { toast("Select a supplier","error"); return; }
+    if (!newRows.length) { toast("Add at least one product","error"); return; }
+    setSaving(true);
     try {
-      await api.patchProductExpiry(pid, { expiry_hours: editExpiry ? Number(editExpiry) : null });
-      setData(d=>({...d, products:d.products.map(p=>p.pid===pid?{...p,expiry_hours:editExpiry?Number(editExpiry):null}:p)}));
-      setEditPid(null); toast("Expiry saved");
+      const items = newRows.map(r=>({ pid:Number(r.pid), qty_ordered:parseFloat(r.qty)||1, unit_price:parseFloat(r.unit_price)||0, currency:r.currency||newCurrency }));
+      const order = await api.createSupplierOrder({ sid:Number(newSid), items, delivery_term:newTerm||null, delivery_fee:parseFloat(newFee)||0, currency:newCurrency });
+      if (submit) {
+        const submitted = await api.submitSupplierOrder(order.soid);
+        toast(`Order #${submitted.order_id} submitted`);
+        // Trigger PDF download
+        downloadPDF(submitted.po_pdf_url, submitted.order_id, "purchase_order");
+        setOrders(o=>[submitted,...o]);
+      } else {
+        toast(`Order #${order.order_id} saved`);
+        setOrders(o=>[order,...o]);
+      }
+      setShowNew(false); resetNewForm();
+    } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
+  };
+
+  const resetNewForm = () => { setNewSid(""); setNewTerm(""); setNewFee(""); setNewRows([]); };
+
+  const downloadPDF = (b64, orderId, type) => {
+    if (!b64) return;
+    const bytes = Uint8Array.from(atob(b64), c=>c.charCodeAt(0));
+    const blob = new Blob([bytes], {type:"application/pdf"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const now = new Date();
+    const ts = `${String(now.getDate()).padStart(2,"0")}-${String(now.getMonth()+1).padStart(2,"0")}-${now.getFullYear()}_${String(now.getHours()).padStart(2,"0")}_${String(now.getMinutes()).padStart(2,"0")}_${String(now.getSeconds()).padStart(2,"0")}`;
+    a.href = url; a.download = `${ts}_${type}.pdf`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const openOrder = async (soid) => {
+    try {
+      const o = await api.getSupplierOrder(soid);
+      setViewOrder(o);
+      setAcceptItems(o.items.map(it=>({...it, qty_actual: it.qty_actual !== null ? it.qty_actual : it.qty_ordered})));
     } catch(e){ toast(e.message,"error"); }
   };
 
-  const linkSupplier = async () => {
-    if (!linkSid) { toast("Select a supplier","error"); return; }
+  const doAccept = async () => {
+    if (!viewOrder) return;
+    setSaving(true);
     try {
-      await api.linkSupplierProduct(linkSid, { pid:linkPid, price:linkPrice?Number(linkPrice):null, currency:linkCurrency });
-      await load(); setLinkPid(null); setLinkSid(""); setLinkPrice(""); toast("Supplier linked");
-    } catch(e){ toast(e.message,"error"); }
+      const result = await api.acceptSupplierOrder(viewOrder.soid, {
+        items_actual: acceptItems.map(it=>({soiid:it.soiid, qty_actual:parseFloat(it.qty_actual)||0})),
+        comments: acceptComments,
+      });
+      toast(`Order #${viewOrder.order_id} accepted`);
+      if (result.has_discrepancy && result.recon_pdf_url) {
+        downloadPDF(result.recon_pdf_url, viewOrder.order_id, "reconciliation");
+      }
+      setOrders(o=>o.map(x=>x.soid===viewOrder.soid?{...x,status:"Accepted"}:x));
+      setViewOrder(null); setAcceptDialog(false); setAcceptComments("");
+    } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
   };
 
-  const unlinkSupplier = async (sid, psid) => {
-    try { await api.unlinkSupplierProduct(sid, psid); await load(); toast("Supplier unlinked"); }
-    catch(e){ toast(e.message,"error"); }
-  };
+  const terms = viewOrder ? (suppliers.find(s=>s.sid===viewOrder.sid)?.schedule?.delivery||[]) : [];
+  const selectedSupplier = suppliers.find(s=>String(s.sid)===String(newSid));
+  const availTerms = selectedSupplier?.schedule?.delivery || [];
 
-  if (loading) return <Page title="Procurement"><Spinner/></Page>;
+  const sorted = [...orders].sort((a,b)=>{
+    let av=a[sortKey]||"", bv=b[sortKey]||"";
+    const v = String(av)<String(bv)?-1:String(av)>String(bv)?1:0;
+    return sortDir==="asc"?v:-v;
+  });
+  const totalPages = Math.ceil(sorted.length/pageSize);
+  const paged = sorted.slice(page*pageSize,(page+1)*pageSize);
+  const toggleSort = k => { if(sortKey===k)setSortDir(d=>d==="asc"?"desc":"asc"); else{setSortKey(k);setSortDir("asc");} };
+
+  const totals = calcTotals(newRows);
+  const STATUS_COLORS = { New:G.muted, Submitted:"#eab308", Cancelled:G.red, Delivered:"#3b82f6", Accepted:G.green };
 
   return (
-    <Page title="Procurement">
-      <div style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, overflow:"hidden" }}>
-        <table style={{ width:"100%", borderCollapse:"collapse" }}>
-          <thead>
-            <tr style={{ background:G.sand, borderBottom:`1px solid ${G.border}` }}>
-              {["Product","Category","Units","Expiry (hours)","Suppliers"].map(h=>(
-                <th key={h} style={{ padding:"11px 16px", textAlign:"left", fontSize:12, fontWeight:700, letterSpacing:"0.05em", textTransform:"uppercase", color:G.muted }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {data.products.map((p,i)=>{
-              const prodLinks = data.links.filter(l=>l.pid===p.pid);
+    <Page title={tl("Procurement")} actions={<Btn size="sm" onClick={()=>setShowNew(s=>!s)}>+ New Order</Btn>}>
+
+      {/* ── NEW ORDER FORM ─────────────────────────────────────────────── */}
+      {showNew&&(
+        <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:24, animation:"fadeIn 0.2s ease" }}>
+          <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>New Supplier Order</h3>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:14, marginBottom:16 }}>
+            <div>
+              <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Supplier *</label>
+              <select value={newSid} onChange={e=>{setNewSid(e.target.value);setNewTerm("");setNewRows([]);}}
+                style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}>
+                <option value="">Select supplier…</option>
+                {suppliers.map(s=><option key={s.sid} value={s.sid}>{s.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Delivery term</label>
+              <select value={newTerm} onChange={e=>setNewTerm(e.target.value)}
+                style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}>
+                <option value="">Select term…</option>
+                {availTerms.map(t=><option key={t.name} value={t.name}>{t.name} (cut-off {t.cutoff})</option>)}
+              </select>
+            </div>
+            <Input label="Delivery fee" type="number" value={String(newFee)} onChange={setNewFee} placeholder="0" />
+            <div>
+              <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Currency</label>
+              <select value={newCurrency} onChange={e=>setNewCurrency(e.target.value)}
+                style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}>
+                {["AMD","USD","EUR","RUR"].map(c=><option key={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* Product rows */}
+          <div style={{ background:G.sand, borderRadius:10, padding:14, marginBottom:14 }}>
+            <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr auto", gap:8, marginBottom:8 }}>
+              {["Product","Qty","Unit Price","Total",""].map(h=><span key={h} style={{fontSize:11,fontWeight:700,color:G.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>{h}</span>)}
+            </div>
+            {newRows.map((r,i)=>{
+              const tot = (parseFloat(r.qty)||0)*(parseFloat(r.unit_price)||0);
               return (
-                <tr key={p.pid} style={{ borderBottom:i<data.products.length-1?`1px solid ${G.border}`:"none", verticalAlign:"top" }}>
-                  <td style={{ padding:"12px 16px", fontSize:14, fontWeight:600 }}>{p.name}</td>
-                  <td style={{ padding:"12px 16px", fontSize:13 }}>{p.category?<Badge>{p.category}</Badge>:<span style={{color:G.muted}}>—</span>}</td>
-                  <td style={{ padding:"12px 16px", fontSize:13, color:G.muted }}>{p.units||"—"}</td>
-                  <td style={{ padding:"12px 16px" }}>
-                    {editPid===p.pid ? (
-                      <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-                        <input type="number" value={editExpiry} onChange={e=>setEditExpiry(e.target.value)} placeholder="hours"
-                          style={{ width:70, padding:"5px 8px", borderRadius:6, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none" }} />
-                        <Btn size="sm" onClick={()=>saveExpiry(p.pid)}>{tl("Save")}</Btn>
-                        <Btn size="sm" variant="ghost" onClick={()=>setEditPid(null)}>×</Btn>
-                      </div>
-                    ):(
-                      <button onClick={()=>{setEditPid(p.pid);setEditExpiry(p.expiry_hours||"");}}
-                        style={{ background:"none", border:"none", cursor:"pointer", fontSize:13, color:p.expiry_hours?G.dark:G.caramel, fontFamily:G.mono }}>
-                        {p.expiry_hours ? `${p.expiry_hours}h` : "+ Set expiry"}
-                      </button>
-                    )}
-                  </td>
-                  <td style={{ padding:"12px 16px" }}>
-                    <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-                      {prodLinks.map(l=>(
-                        <div key={l.psid} style={{ display:"flex", alignItems:"center", gap:8, fontSize:13 }}>
-                          <span style={{ flex:1 }}>{l.supplier_name}</span>
-                          {l.price&&<span style={{ color:G.caramel, fontWeight:600 }}>{l.price} {l.currency}</span>}
-                          <button onClick={()=>unlinkSupplier(l.sid, l.psid)} style={{ background:"none", border:"none", color:G.muted, cursor:"pointer", fontSize:12, fontFamily:G.mono }}>×</button>
-                        </div>
-                      ))}
-                      {linkPid===p.pid ? (
-                        <div style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap", marginTop:4 }}>
-                          <select value={linkSid} onChange={e=>setLinkSid(e.target.value)}
-                            style={{ padding:"5px 8px", borderRadius:6, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none" }}>
-                            <option value="">Supplier…</option>
-                            {suppliers.map(s=><option key={s.sid} value={s.sid}>{s.name}</option>)}
-                          </select>
-                          <input type="number" value={linkPrice} onChange={e=>setLinkPrice(e.target.value)} placeholder="Price"
-                            style={{ width:70, padding:"5px 8px", borderRadius:6, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none" }} />
-                          <select value={linkCurrency} onChange={e=>setLinkCurrency(e.target.value)}
-                            style={{ padding:"5px 8px", borderRadius:6, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none" }}>
-                            {["AMD","USD","EUR","RUR"].map(c=><option key={c} value={c}>{c}</option>)}
-                          </select>
-                          <Btn size="sm" onClick={linkSupplier}>Link</Btn>
-                          <Btn size="sm" variant="ghost" onClick={()=>setLinkPid(null)}>×</Btn>
-                        </div>
-                      ):(
-                        <button onClick={()=>{setLinkPid(p.pid);setLinkSid("");setLinkPrice("");}}
-                          style={{ background:"none", border:"none", cursor:"pointer", fontSize:12, color:G.caramel, fontFamily:G.mono, fontWeight:600, textAlign:"left" }}>
-                          + Add supplier
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
+                <div key={i} style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr auto", gap:8, marginBottom:6, alignItems:"center" }}>
+                  <select value={r.pid} onChange={e=>{
+                    const link=procLinks.find(l=>String(l.pid)===e.target.value&&String(l.sid)===String(newSid));
+                    updateRow(i,"pid",e.target.value);
+                    if(link){updateRow(i,"unit_price",link.price||0);updateRow(i,"currency",link.currency||newCurrency);}
+                  }} style={{padding:"6px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}>
+                    <option value="">Select product…</option>
+                    {availProducts.map(p=><option key={p.pid} value={p.pid}>{p.name}{p.sku?` (${p.sku})`:""}</option>)}
+                  </select>
+                  <div style={{display:"flex",alignItems:"center",gap:3}}>
+                    <button onClick={()=>rowQtyChange(i,-1)} style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",fontWeight:700,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
+                    <input type="number" value={r.qty} step="any" min={0} onChange={e=>updateRow(i,"qty",e.target.value)}
+                      style={{width:60,padding:"4px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,textAlign:"center",fontFamily:G.mono,outline:"none"}} />
+                    <button onClick={()=>rowQtyChange(i,1)} style={{width:22,height:22,borderRadius:5,border:"none",background:G.caramel,cursor:"pointer",fontWeight:700,fontSize:13,color:G.white,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                  </div>
+                  <input type="number" value={r.unit_price} min={0} onChange={e=>updateRow(i,"unit_price",e.target.value)}
+                    style={{padding:"6px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}} />
+                  <span style={{fontSize:13,fontWeight:600,color:G.caramel}}>{tot.toFixed(2)}</span>
+                  <button onClick={()=>removeRow(i)} style={{background:"none",border:"none",color:G.red,cursor:"pointer",fontSize:16,lineHeight:1}}>×</button>
+                </div>
               );
             })}
-            {data.products.length===0&&(
-              <tr><td colSpan={5} style={{ padding:40, textAlign:"center", color:G.muted }}>No products yet.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+            <button onClick={addRow} style={{background:"none",border:`1px dashed ${G.border}`,color:G.caramel,cursor:"pointer",fontSize:13,fontFamily:G.mono,padding:"6px 14px",borderRadius:8,fontWeight:600,marginTop:4}}>
+              + Add product
+            </button>
+          </div>
+
+          {/* Totals */}
+          <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:16 }}>
+            <div style={{ minWidth:240, display:"flex", flexDirection:"column", gap:4 }}>
+              {[["Subtotal",totals.subtotal],["Delivery",totals.delivery],["VAT (20%)",totals.vat],["Total",totals.total]].map(([l,v])=>(
+                <div key={l} style={{ display:"flex", justifyContent:"space-between", fontSize:13 }}>
+                  <span style={{color:G.muted}}>{l}</span>
+                  <span style={{fontWeight:l==="Total"?700:400,color:l==="Total"?G.caramel:G.dark}}>{v.toFixed(2)} {newCurrency}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ display:"flex", gap:10 }}>
+            <Btn onClick={()=>saveOrder(true)} loading={saving}>Submit</Btn>
+            <Btn variant="secondary" onClick={()=>saveOrder(false)} loading={saving}>Save</Btn>
+            <Btn variant="ghost" onClick={()=>{ setConfirmCancel(true); }}>Cancel</Btn>
+          </div>
+        </div>
+      )}
+
+      {/* ── ORDERS TABLE ───────────────────────────────────────────────── */}
+      {loading?<Spinner/>:(
+        <>
+          <div style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, overflow:"hidden", marginBottom:14 }}>
+            <table style={{ width:"100%", borderCollapse:"collapse" }}>
+              <thead>
+                <tr style={{ background:G.sand, borderBottom:`1px solid ${G.border}` }}>
+                  {[["order_id","ID"],["created_at","Placed on"],["status","Status"],["etd","ETD"],["supplier_name","Supplier"],["total","Total"],["po","PO"],["recon","Reconciliation"]].map(([k,h])=>(
+                    <th key={k} onClick={k!=="po"&&k!=="recon"?()=>toggleSort(k):undefined}
+                      style={{ padding:"11px 14px", textAlign:"left", fontSize:11, fontWeight:700, letterSpacing:"0.05em", textTransform:"uppercase", color:G.muted, cursor:k!=="po"&&k!=="recon"?"pointer":"default", userSelect:"none", whiteSpace:"nowrap" }}>
+                      {h}{sortKey===k&&<span style={{marginLeft:3}}>{sortDir==="asc"?"↑":"↓"}</span>}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {paged.length===0?(
+                  <tr><td colSpan={8} style={{padding:40,textAlign:"center",color:G.muted}}>No supplier orders yet.</td></tr>
+                ):paged.map((o,i)=>{
+                  const d = new Date(o.created_at);
+                  const dateStr = `${String(d.getDate()).padStart(2,"0")}-${String(d.getMonth()+1).padStart(2,"0")}-${d.getFullYear()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+                  const etdStr = o.etd ? new Date(o.etd).toLocaleDateString("en-GB") : "—";
+                  return (
+                    <tr key={o.soid} style={{ borderBottom:i<paged.length-1?`1px solid ${G.border}`:"none" }}>
+                      <td style={{padding:"10px 14px"}}>
+                        {["Submitted"].includes(o.status) ? (
+                          <button onClick={()=>openOrder(o.soid)} style={{background:"none",border:"none",cursor:"pointer",fontFamily:G.mono,fontSize:14,color:G.caramel,fontWeight:700,textDecoration:"underline",padding:0}}>{o.order_id}</button>
+                        ) : <span style={{fontWeight:700,fontSize:14}}>{o.order_id}</span>}
+                      </td>
+                      <td style={{padding:"10px 14px",fontSize:13,color:G.muted}}>{dateStr}</td>
+                      <td style={{padding:"10px 14px"}}><span style={{fontSize:12,fontWeight:700,color:STATUS_COLORS[o.status]||G.muted}}>{o.status}</span></td>
+                      <td style={{padding:"10px 14px",fontSize:13,color:G.muted}}>{etdStr}</td>
+                      <td style={{padding:"10px 14px",fontSize:14}}>{o.supplier_name}</td>
+                      <td style={{padding:"10px 14px",fontSize:14,fontWeight:600,color:G.caramel}}>—</td>
+                      <td style={{padding:"10px 14px"}}>
+                        {o.po_pdf_url&&o.status!=="New"?(
+                          <button onClick={async()=>{ const r=await api.getSupplierOrderPDF(o.soid); downloadPDF(r.pdf,o.order_id,"purchase_order"); }}
+                            style={{background:"none",border:"none",cursor:"pointer",color:G.caramel,fontFamily:G.mono,fontSize:12,fontWeight:600}}>PDF</button>
+                        ):<span style={{color:G.muted,fontSize:12}}>—</span>}
+                      </td>
+                      <td style={{padding:"10px 14px"}}>
+                        {o.recon_pdf_url&&o.status==="Accepted"?(
+                          <button onClick={async()=>{ const r=await api.getSupplierOrderPDF(o.soid,"recon"); downloadPDF(r.pdf,o.order_id,"reconciliation"); }}
+                            style={{background:"none",border:"none",cursor:"pointer",color:G.caramel,fontFamily:G.mono,fontSize:12,fontWeight:600}}>PDF</button>
+                        ):<span style={{color:G.muted,fontSize:12}}>—</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination */}
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:10 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+              <span style={{fontSize:13,color:G.muted}}>Rows:</span>
+              {[10,25,50].map(n=>(
+                <button key={n} onClick={()=>{setPageSize(n);setPage(0);}} style={{padding:"3px 9px",borderRadius:6,border:`1px solid ${pageSize===n?G.caramel:G.border}`,background:pageSize===n?G.caramel:G.white,color:pageSize===n?G.white:G.muted,fontSize:12,cursor:"pointer",fontFamily:G.mono}}>{n}</button>
+              ))}
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+              <span style={{fontSize:13,color:G.muted}}>{sorted.length} orders · page {totalPages?page+1:0}/{totalPages}</span>
+              {[["«",0],["‹",page-1],["›",page+1],["»",totalPages-1]].map(([lbl,target])=>(
+                <button key={lbl} onClick={()=>setPage(Math.max(0,Math.min(totalPages-1,target)))} disabled={target<0||target>=totalPages}
+                  style={{padding:"3px 8px",borderRadius:6,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",fontSize:13,opacity:(target<0||target>=totalPages)?0.4:1}}>{lbl}</button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ── VIEW / ACCEPT ORDER DIALOG ──────────────────────────────────── */}
+      {viewOrder&&(
+        <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+          <div style={{ background:G.white, borderRadius:16, width:"100%", maxWidth:760, maxHeight:"90vh", display:"flex", flexDirection:"column", boxShadow:"0 20px 60px rgba(44,24,16,0.2)", animation:"fadeIn 0.2s ease" }}>
+            <div style={{ padding:"20px 24px", borderBottom:`1px solid ${G.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <h3 style={{fontFamily:G.font,fontSize:18}}>Order #{viewOrder.order_id} — {viewOrder.supplier_name}</h3>
+              <button onClick={()=>setViewOrder(null)} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:G.muted,lineHeight:1}}>×</button>
+            </div>
+            <div style={{ flex:1, overflowY:"auto", padding:24 }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", marginBottom:16 }}>
+                <thead>
+                  <tr style={{ background:G.sand, borderBottom:`1px solid ${G.border}` }}>
+                    {["Product","SKU","Qty (ordered)","Qty (actual)","Unit Price","Total (ord/act)"].map(h=>(
+                      <th key={h} style={{padding:"9px 12px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,letterSpacing:"0.04em"}}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {acceptItems.map((it,i)=>{
+                    const totOrd = (parseFloat(it.qty_ordered)||0)*(parseFloat(it.unit_price)||0);
+                    const totAct = (parseFloat(it.qty_actual)||0)*(parseFloat(it.unit_price)||0);
+                    const zeroed = parseFloat(it.qty_actual)===0;
+                    return (
+                      <tr key={it.soiid} style={{ background:zeroed?"#FFCAB9":"transparent", borderBottom:`1px solid ${G.border}` }}>
+                        <td style={{padding:"9px 12px",fontSize:14}}>{it.product_name}</td>
+                        <td style={{padding:"9px 12px",fontSize:13,color:G.muted}}>{it.sku||"—"}</td>
+                        <td style={{padding:"9px 12px",fontSize:14}}>{it.qty_ordered}</td>
+                        <td style={{padding:"9px 12px"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:4}}>
+                            <button onClick={()=>setAcceptItems(a=>a.map((x,j)=>j===i?{...x,qty_actual:Math.max(0,(parseFloat(x.qty_actual)||0)-1)}:x))} style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",fontWeight:700,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
+                            <input type="number" value={it.qty_actual} step="any" min={0}
+                              onChange={e=>setAcceptItems(a=>a.map((x,j)=>j===i?{...x,qty_actual:e.target.value}:x))}
+                              style={{width:70,padding:"4px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,textAlign:"center",fontFamily:G.mono,outline:"none"}} />
+                            <button onClick={()=>setAcceptItems(a=>a.map((x,j)=>j===i?{...x,qty_actual:(parseFloat(x.qty_actual)||0)+1}:x))} style={{width:22,height:22,borderRadius:5,border:"none",background:G.caramel,cursor:"pointer",fontWeight:700,fontSize:13,color:G.white,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                          </div>
+                        </td>
+                        <td style={{padding:"9px 12px",fontSize:13}}>{it.unit_price} {it.currency}</td>
+                        <td style={{padding:"9px 12px",fontSize:13,color:G.caramel,fontWeight:600}}>{totOrd.toFixed(2)} / {totAct.toFixed(2)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ padding:"16px 24px", borderTop:`1px solid ${G.border}`, display:"flex", gap:10, justifyContent:"flex-end" }}>
+              <Btn variant="ghost" onClick={()=>setViewOrder(null)}>Close</Btn>
+              <Btn onClick={()=>setAcceptDialog(true)}>Accept order</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Accept confirm dialog */}
+      {acceptDialog&&(
+        <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1100, display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <div style={{ background:G.white, borderRadius:16, padding:32, maxWidth:480, width:"90%", boxShadow:"0 20px 60px rgba(44,24,16,0.2)" }}>
+            <h3 style={{fontFamily:G.font,fontSize:20,marginBottom:12}}>Accept order?</h3>
+            <p style={{color:G.muted,fontSize:14,lineHeight:1.6,marginBottom:16}}>The order will become accepted and no changes will be available from this point. Please, double-check the contents and add comments before you proceed. In case of discrepancies, a reconciliation report will be created.</p>
+            <textarea value={acceptComments} onChange={e=>setAcceptComments(e.target.value.slice(0,1000))}
+              placeholder="Comments (optional, up to 1000 characters)"
+              rows={4} style={{width:"100%",padding:"10px 12px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none",resize:"vertical",marginBottom:6}} />
+            <span style={{fontSize:11,color:G.muted}}>{acceptComments.length}/1000</span>
+            <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:14}}>
+              <Btn variant="ghost" onClick={()=>setAcceptDialog(false)}>Cancel</Btn>
+              <Btn onClick={doAccept} loading={saving}>Yes</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cancel new order confirm dialog */}
+      {confirmCancel&&(
+        <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1100, display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <div style={{ background:G.white, borderRadius:16, padding:32, maxWidth:420, width:"90%", boxShadow:"0 20px 60px rgba(44,24,16,0.2)" }}>
+            <h3 style={{fontFamily:G.font,fontSize:20,marginBottom:12}}>Discard order?</h3>
+            <p style={{color:G.muted,fontSize:14,marginBottom:20}}>The changes to the order will not be saved. Are you sure?</p>
+            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+              <Btn variant="ghost" onClick={()=>setConfirmCancel(false)}>Cancel</Btn>
+              <Btn variant="danger" onClick={()=>{ setShowNew(false); resetNewForm(); setConfirmCancel(false); }}>Yes</Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </Page>
   );
 }
-
-// ─── SUPPLIERS PAGE ───────────────────────────────────────────────────────────
-const CUTOFF_HOURS = Array.from({length:23},(_,i)=>`${String(i+1).padStart(2,"0")}:00`);
-const DELIVERY_DAYS = Array.from({length:31},(_,i)=>i);
-
 function SupplierForm({
  initial, onSave, onCancel, saving }) {
   const lang = useLangContext();

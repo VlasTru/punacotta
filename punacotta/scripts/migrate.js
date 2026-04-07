@@ -197,6 +197,35 @@ ON CONFLICT (name) DO NOTHING;
 
 -- Remove deprecated categories (safe to re-run)
 DELETE FROM recipe_category WHERE name IN ('snacks','starters');
+
+-- Supplier orders
+CREATE TABLE IF NOT EXISTS supplier_order (
+  soid          SERIAL PRIMARY KEY,
+  owner_uid     INTEGER NOT NULL REFERENCES "user"(uid),
+  sid           INTEGER NOT NULL REFERENCES supplier(sid),
+  order_id      VARCHAR(30) NOT NULL,           -- e.g. 102-DC-05
+  status        VARCHAR(15) NOT NULL DEFAULT 'New',  -- New/Submitted/Cancelled/Delivered/Accepted
+  delivery_term VARCHAR(50),
+  delivery_fee  NUMERIC(10,2) DEFAULT 0,
+  currency      VARCHAR(3)   DEFAULT 'AMD',
+  etd           DATE,
+  submitted_at  TIMESTAMPTZ,
+  accepted_at   TIMESTAMPTZ,
+  comments      TEXT,
+  po_pdf_url    TEXT,
+  recon_pdf_url TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS supplier_order_item (
+  soiid         SERIAL PRIMARY KEY,
+  soid          INTEGER NOT NULL REFERENCES supplier_order(soid) ON DELETE CASCADE,
+  pid           INTEGER NOT NULL REFERENCES product(pid),
+  qty_ordered   NUMERIC(10,3) NOT NULL DEFAULT 1,
+  qty_actual    NUMERIC(10,3),
+  unit_price    NUMERIC(10,2) NOT NULL DEFAULT 0,
+  currency      VARCHAR(3)    DEFAULT 'AMD'
+);
 `
 
 await client.connect()

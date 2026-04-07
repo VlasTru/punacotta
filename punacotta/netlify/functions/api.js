@@ -794,13 +794,302 @@ async function route(method, segments, body, headers, event) {
     }
   }
 
-  // ── PROCUREMENT (product-supplier links + expiry) ─────────────────────────
+  // ── PROCUREMENT (supplier orders) ────────────────────────────────────────
   if (r0 === 'procurement') {
     if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
-    // GET /procurement — all products with their suppliers and expiry
-    if (method === 'GET') {
+
+    // ── Helper: fetch full supplier order ──────────────────────────────────
+    async function fetchSO(soid) {
+      const [o] = await dbq('SELECT so.*, s.name AS supplier_name, s.contact_fname, s.contact_lname, s.email AS supplier_email, s.phone AS supplier_phone, s.street_address AS supplier_street, s.city AS supplier_city, s.zip AS supplier_zip, s.schedule AS supplier_schedule FROM supplier_order so JOIN supplier s ON s.sid=so.sid WHERE so.soid=$1', [soid])
+      if (!o) return null
+      const items = await dbq(`SELECT soi.*, p.name AS product_name, p.sku FROM supplier_order_item soi JOIN product p ON p.pid=soi.pid WHERE soi.soid=$1 ORDER BY soi.soiid`, [soid])
+      return { ...o, items }
+    }
+
+    // ── Helper: generate order_id ──────────────────────────────────────────
+    async function generateOrderId(sid, uid, mm) {
+      const supplier = (await dbq('SELECT name, sid, created_at FROM supplier WHERE sid=$1', [sid]))[0]
+      if (!supplier) throw new Error('Supplier not found')
+
+      // Get initials for this supplier
+      const words = supplier.name.trim().split(/\s+/)
+      let initials = words.length === 1
+        ? supplier.name.slice(0, 2).toUpperCase()
+        : (words[0][0] + words[1][0]).toUpperCase()
+
+      // Check for collision with same initials among this user's suppliers
+      const allSuppliers = await dbq('SELECT sid, name, created_at FROM supplier WHERE owner_uid=$1 ORDER BY created_at', [uid])
+      const sameInitials = allSuppliers.filter(s => {
+        const w = s.name.trim().split(/\s+/)
+        const ini = w.length === 1 ? s.name.slice(0,2).toUpperCase() : (w[0][0]+w[1][0]).toUpperCase()
+        return ini === initials && s.sid !== sid
+      })
+      if (sameInitials.length > 0) {
+        // Append sequential number for the later-created supplier
+        const laterIdx = allSuppliers.filter(s => {
+          const w = s.name.trim().split(/\s+/)
+          const ini = w.length === 1 ? s.name.slice(0,2).toUpperCase() : (w[0][0]+w[1][0]).toUpperCase()
+          return ini === initials
+        }).findIndex(s => s.sid === sid)
+        if (laterIdx > 0) initials = initials + laterIdx
+      }
+
+      // Global sequence across all supplier orders for this user
+      const [{ count }] = await dbq('SELECT COUNT(*) AS count FROM supplier_order WHERE owner_uid=$1', [uid])
+      const seq = parseInt(count) + 1
+      const mmStr = String(mm).padStart(2, '0')
+      return `${seq}-${initials}-${mmStr}`
+    }
+
+    // ── Helper: calculate ETD ──────────────────────────────────────────────
+    function calcETD(supplierSchedule, termName, now) {
+      const delivery = supplierSchedule?.delivery || []
+      const term = delivery.find(t => t.name === termName)
+      if (!term) return null
+      const nowMins = now.getHours() * 60 + now.getMinutes()
+      const [ch, cm] = (term.cutoff || '12:00').split(':').map(Number)
+      const cutoffMins = ch * 60 + cm
+      const days = nowMins < cutoffMins ? (term.days_before ?? 0) : (term.days_after ?? term.days_before + 1 ?? 1)
+      const etd = new Date(now)
+      etd.setDate(etd.getDate() + days)
+      return etd.toISOString().split('T')[0]
+    }
+
+    // ── Helper: generate PDF (purchase order or reconciliation) ─────────────
+    async function generatePDF(type, order, user) {
+      const { PDFDocument, rgb, StandardFonts } = await import('pdf-lib')
+      const doc = await PDFDocument.create()
+      const page = doc.addPage([595, 842]) // A4
+      const font = await doc.embedFont(StandardFonts.Helvetica)
+      const bold = await doc.embedFont(StandardFonts.HelveticaBold)
+      const { height } = page.getSize()
+
+      const fmtDate = (d) => {
+        if (!d) return ''
+        const dt = new Date(d)
+        return `${String(dt.getDate()).padStart(2,'0')}-${String(dt.getMonth()+1).padStart(2,'0')}-${dt.getFullYear()} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`
+      }
+
+      let y = height - 50
+      const L = 40, R = 555, MID = 300
+
+      const drawText = (text, x, yPos, sz=10, f=font, col=rgb(0,0,0)) => {
+        page.drawText(String(text||''), { x, y:yPos, size:sz, font:f, color:col })
+      }
+      const drawLine = (yPos) => {
+        page.drawLine({ start:{x:L,y:yPos}, end:{x:R,y:yPos}, thickness:0.5, color:rgb(0.8,0.8,0.8) })
+      }
+
+      const title = type === 'po'
+        ? `PURCHASE ORDER #${order.order_id}`
+        : `RECONCILIATION REPORT #${order.order_id}RR`
+      drawText(title, MID, y, 13, bold)
+      y -= 30
+
+      // Customer (left) + Supplier (right)
+      const u = await dbq('SELECT * FROM "user" WHERE uid=$1', [user.uid])
+      const cu = u[0] || {}
+      drawText('Customer', L, y, 9, bold); drawText('Supplier', MID, y, 9, bold); y -= 14
+      drawText(cu.business_name || `${cu.first_name} ${cu.last_name}`, L, y); drawText(order.supplier_name, MID, y); y -= 12
+      drawText(`${cu.first_name} ${cu.last_name}`, L, y); drawText(`${order.contact_fname||''} ${order.contact_lname||''}`.trim(), MID, y); y -= 12
+      drawText(cu.email||'', L, y); drawText(order.supplier_email||'', MID, y); y -= 12
+      drawText(cu.phone||'', L, y); drawText(order.supplier_phone||'', MID, y); y -= 12
+      drawText([cu.street_address,cu.city,cu.zip].filter(Boolean).join(', '), L, y)
+      drawText([order.supplier_street,order.supplier_city,order.supplier_zip].filter(Boolean).join(', '), MID, y)
+      y -= 12
+      drawText('Date', L, y, 9, bold); drawText(fmtDate(order.submitted_at||order.created_at), L+50, y); y -= 20
+      drawLine(y); y -= 10
+
+      // Shipping terms + ETD
+      if (order.delivery_term) {
+        drawText('Shipping Terms', L, y, 9, bold); drawText('ETD', L+150, y, 9, bold); y -= 12
+        drawText(order.delivery_term, L, y); drawText(order.etd ? fmtDate(order.etd).split(' ')[0] : '', L+150, y); y -= 20
+        drawLine(y); y -= 10
+      }
+
+      // Reconciliation comments
+      if (type === 'recon' && order.comments) {
+        drawText('Comments', L, y, 9, bold); y -= 12
+        drawText(order.comments, L, y); y -= 20
+        drawLine(y); y -= 10
+      }
+
+      // Table header
+      const cols = type === 'po'
+        ? [['#',L],['SKU',L+25],['Name',L+90],['Qty',L+270],['Unit Price',L+320],['Total',L+400]]
+        : [['#',L],['SKU',L+25],['Name',L+90],['Qty ord/act',L+240],['Unit Price',L+320],['Total ord/act',L+390]]
+      cols.forEach(([h,x]) => drawText(h, x, y, 9, bold))
+      y -= 5; drawLine(y); y -= 12
+
+      // Items
+      let subtotalOrig = 0, subtotalAct = 0
+      order.items.forEach((it, idx) => {
+        const tot = (it.qty_ordered||0) * (it.unit_price||0)
+        const totAct = (it.qty_actual!==null&&it.qty_actual!==undefined ? it.qty_actual : it.qty_ordered) * (it.unit_price||0)
+        subtotalOrig += tot; subtotalAct += totAct
+        if (type === 'po') {
+          [String(idx+1),it.sku||'',it.product_name||'',String(it.qty_ordered),`${it.unit_price} ${it.currency}`,`${tot.toFixed(2)}`]
+            .forEach((v,i) => drawText(v, cols[i][1], y, 9))
+        } else {
+          const qtyDisp = `${it.qty_ordered} / ${it.qty_actual!==null&&it.qty_actual!==undefined?it.qty_actual:it.qty_ordered}`
+          const totDisp = `${tot.toFixed(2)} / ${totAct.toFixed(2)}`
+          const rowColor = it.qty_actual===0 ? rgb(1,0.79,0.73) : rgb(1,1,1)
+          if (it.qty_actual===0) page.drawRectangle({ x:L, y:y-2, width:R-L, height:14, color:rowColor })
+          ;[String(idx+1),it.sku||'',it.product_name||'',qtyDisp,`${it.unit_price} ${it.currency}`,totDisp]
+            .forEach((v,i) => drawText(v, cols[i][1], y, 9))
+        }
+        y -= 13
+      })
+
+      drawLine(y); y -= 12
+      const deliv = Number(order.delivery_fee||0)
+      const vatOrig = (subtotalOrig + deliv) * 0.2
+      const vatAct  = (subtotalAct  + deliv) * 0.2
+
+      const summaryRows = type === 'po'
+        ? [['Subtotal', subtotalOrig.toFixed(2)], ['Delivery', deliv.toFixed(2)], ['VAT (20%)', vatOrig.toFixed(2)], ['Total', (subtotalOrig+deliv+vatOrig).toFixed(2)]]
+        : [
+            ['Subtotal (orig / act)', `${subtotalOrig.toFixed(2)} / ${subtotalAct.toFixed(2)}`],
+            ['Delivery', deliv.toFixed(2)],
+            ['VAT (orig / act)', `${vatOrig.toFixed(2)} / ${vatAct.toFixed(2)}`],
+            ['Total (orig / act)', `${(subtotalOrig+deliv+vatOrig).toFixed(2)} / ${(subtotalAct+deliv+vatAct).toFixed(2)}`],
+          ]
+      summaryRows.forEach(([label, val]) => {
+        drawText(label, MID, y, 9, bold); drawText(val, R-80, y, 9)
+        y -= 13
+      })
+
+      y -= 10
+      drawText('Signature: ________________________', L, y, 9)
+      drawText('Signed by: ________________________', MID, y, 9)
+
+      const pdfBytes = await doc.save()
+      return Buffer.from(pdfBytes).toString('base64')
+    }
+
+    // GET /procurement/orders — list all supplier orders
+    if (r1 === 'orders' && !r2 && method === 'GET') {
+      const rows = await dbq(`
+        SELECT so.*, s.name AS supplier_name
+        FROM supplier_order so
+        JOIN supplier s ON s.sid=so.sid
+        WHERE so.owner_uid=$1
+        ORDER BY so.soid DESC`, [user.uid])
+      return [200, rows]
+    }
+
+    // GET /procurement/orders/:soid — single order
+    if (r1 === 'orders' && r2 && !segments[3] && method === 'GET') {
+      const o = await fetchSO(r2)
+      if (!o || o.owner_uid !== user.uid) return [404, { error:'Not found' }]
+      return [200, o]
+    }
+
+    // POST /procurement/orders — create new order
+    if (r1 === 'orders' && !r2 && method === 'POST') {
+      const { sid, items, delivery_term, delivery_fee, currency } = body
+      if (!sid) return [400, { error:'Supplier required' }]
+      const now = new Date()
+      const order_id = await generateOrderId(sid, user.uid, now.getMinutes())
+      const [sup] = await dbq('SELECT * FROM supplier WHERE sid=$1', [sid])
+      const etd = sup?.schedule ? calcETD(sup.schedule, delivery_term, now) : null
+      const res = await dbr(`INSERT INTO supplier_order (owner_uid,sid,order_id,status,delivery_term,delivery_fee,currency,etd)
+        VALUES ($1,$2,$3,'New',$4,$5,$6,$7) RETURNING soid`,
+        [user.uid, sid, order_id, delivery_term||null, Number(delivery_fee)||0, currency||'AMD', etd])
+      const soid = res.rows[0].soid
+      for (const it of (items||[])) {
+        await dbr('INSERT INTO supplier_order_item (soid,pid,qty_ordered,unit_price,currency) VALUES ($1,$2,$3,$4,$5)',
+          [soid, it.pid, it.qty_ordered||1, it.unit_price||0, it.currency||currency||'AMD'])
+      }
+      return [201, await fetchSO(soid)]
+    }
+
+    // PATCH /procurement/orders/:soid — update (New status only)
+    if (r1 === 'orders' && r2 && !segments[3] && method === 'PATCH') {
+      const { items, delivery_term, delivery_fee, currency } = body
+      const [o] = await dbq('SELECT * FROM supplier_order WHERE soid=$1 AND owner_uid=$2', [r2, user.uid])
+      if (!o) return [404, { error:'Not found' }]
+      if (o.status !== 'New') return [400, { error:'Only New orders can be edited' }]
+      if (delivery_term !== undefined) await dbr('UPDATE supplier_order SET delivery_term=$1 WHERE soid=$2', [delivery_term, r2])
+      if (delivery_fee !== undefined) await dbr('UPDATE supplier_order SET delivery_fee=$1 WHERE soid=$2', [Number(delivery_fee)||0, r2])
+      if (currency !== undefined)     await dbr('UPDATE supplier_order SET currency=$1 WHERE soid=$2', [currency, r2])
+      if (Array.isArray(items)) {
+        await dbr('DELETE FROM supplier_order_item WHERE soid=$1', [r2])
+        for (const it of items) {
+          await dbr('INSERT INTO supplier_order_item (soid,pid,qty_ordered,unit_price,currency) VALUES ($1,$2,$3,$4,$5)',
+            [r2, it.pid, it.qty_ordered||1, it.unit_price||0, it.currency||o.currency||'AMD'])
+        }
+      }
+      return [200, await fetchSO(r2)]
+    }
+
+    // POST /procurement/orders/:soid/submit — submit order + generate PO PDF
+    if (r1 === 'orders' && r2 && segments[3] === 'submit' && method === 'POST') {
+      const [o] = await dbq('SELECT * FROM supplier_order WHERE soid=$1 AND owner_uid=$2', [r2, user.uid])
+      if (!o) return [404, { error:'Not found' }]
+      if (o.status !== 'New') return [400, { error:'Only New orders can be submitted' }]
+      const now = new Date()
+      // Recalculate order_id minutes from current time
+      const [sup] = await dbq('SELECT * FROM supplier WHERE sid=$1', [o.sid])
+      const etd = sup?.schedule ? calcETD(sup.schedule, o.delivery_term, now) : o.etd
+      // Update order_id to use submission minutes
+      const baseId = o.order_id.slice(0, -2) + String(now.getMinutes()).padStart(2,'0')
+      await dbr(`UPDATE supplier_order SET status='Submitted', submitted_at=$1, etd=$2, order_id=$3 WHERE soid=$4`,
+        [now.toISOString(), etd, baseId, r2])
+      const full = await fetchSO(r2)
+      const pdfB64 = await generatePDF('po', full, user)
+      await dbr('UPDATE supplier_order SET po_pdf_url=$1 WHERE soid=$2', [pdfB64, r2])
+      return [200, { ...full, po_pdf_url: pdfB64, status:'Submitted' }]
+    }
+
+    // POST /procurement/orders/:soid/cancel
+    if (r1 === 'orders' && r2 && segments[3] === 'cancel' && method === 'POST') {
+      const [o] = await dbq('SELECT * FROM supplier_order WHERE soid=$1 AND owner_uid=$2', [r2, user.uid])
+      if (!o) return [404, { error:'Not found' }]
+      if (['Accepted','Cancelled'].includes(o.status)) return [400, { error:'Cannot cancel' }]
+      await dbr(`UPDATE supplier_order SET status='Cancelled' WHERE soid=$1`, [r2])
+      return [200, await fetchSO(r2)]
+    }
+
+    // POST /procurement/orders/:soid/accept — accept with reconciliation
+    if (r1 === 'orders' && r2 && segments[3] === 'accept' && method === 'POST') {
+      const { items_actual, comments } = body
+      const [o] = await dbq('SELECT * FROM supplier_order WHERE soid=$1 AND owner_uid=$2', [r2, user.uid])
+      if (!o) return [404, { error:'Not found' }]
+      if (o.status !== 'Submitted') return [400, { error:'Only Submitted orders can be accepted' }]
+      // Save actual quantities
+      for (const it of (items_actual||[])) {
+        await dbr('UPDATE supplier_order_item SET qty_actual=$1 WHERE soiid=$2 AND soid=$3',
+          [it.qty_actual, it.soiid, r2])
+      }
+      const now = new Date()
+      await dbr(`UPDATE supplier_order SET status='Accepted', accepted_at=$1, comments=$2 WHERE soid=$3`,
+        [now.toISOString(), comments||null, r2])
+      const full = await fetchSO(r2)
+      // Check for discrepancies
+      const hasDiscrepancy = full.items.some(it =>
+        it.qty_actual !== null && Number(it.qty_actual) !== Number(it.qty_ordered)
+      )
+      let reconB64 = null
+      if (hasDiscrepancy) {
+        reconB64 = await generatePDF('recon', full, user)
+        await dbr('UPDATE supplier_order SET recon_pdf_url=$1 WHERE soid=$2', [reconB64, r2])
+      }
+      return [200, { ...full, status:'Accepted', has_discrepancy:hasDiscrepancy, recon_pdf_url:reconB64 }]
+    }
+
+    // GET /procurement/orders/:soid/pdf — serve PO or recon PDF as base64
+    if (r1 === 'orders' && r2 && segments[3] === 'pdf' && method === 'GET') {
+      const col = segments[4] === 'recon' ? 'recon_pdf_url' : 'po_pdf_url'
+      const [row] = await dbq(`SELECT ${col} FROM supplier_order WHERE soid=$1 AND owner_uid=$2`, [r2, user.uid])
+      if (!row?.[col]) return [404, { error:'PDF not found' }]
+      return [200, { pdf: row[col] }]
+    }
+
+    // GET /procurement — product-supplier links for ProductsPage
+    if (method === 'GET' && !r1) {
       const products = await dbq(`
-        SELECT p.pid, p.name, p.expiry_hours,
+        SELECT p.pid, p.name, p.sku, p.expiry_hours,
                u.name AS units, c.name AS category
         FROM product p
         LEFT JOIN units u ON u.unid=p.unid

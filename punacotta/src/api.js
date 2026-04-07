@@ -59,8 +59,16 @@ export const api = {
   unlinkSupplierProduct: (sid, psid) => req('DELETE', `/suppliers/${sid}/products/${psid}`),
 
   // Procurement
-  getProcurement:    ()         => req('GET',   '/procurement'),
-  patchProductExpiry:(pid,data) => req('PATCH', `/procurement/${pid}`, data),
+  getProcurement:         ()           => req('GET',   '/procurement'),
+  patchProductExpiry:     (pid,data)   => req('PATCH', `/procurement/${pid}`, data),
+  getSupplierOrders:      ()           => req('GET',   '/procurement/orders'),
+  getSupplierOrder:       (soid)       => req('GET',   `/procurement/orders/${soid}`),
+  createSupplierOrder:    (data)       => req('POST',  '/procurement/orders', data),
+  updateSupplierOrder:    (soid,data)  => req('PATCH', `/procurement/orders/${soid}`, data),
+  submitSupplierOrder:    (soid)       => req('POST',  `/procurement/orders/${soid}/submit`),
+  cancelSupplierOrder:    (soid)       => req('POST',  `/procurement/orders/${soid}/cancel`),
+  acceptSupplierOrder:    (soid,data)  => req('POST',  `/procurement/orders/${soid}/accept`, data),
+  getSupplierOrderPDF:    (soid,type)  => req('GET',   `/procurement/orders/${soid}/pdf${type==='recon'?'/recon':''}`),
 
   // Recipes
   getRecipes:          ()          => req('GET',    '/recipes'),
