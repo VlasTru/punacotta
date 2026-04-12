@@ -58,7 +58,10 @@ export const api = {
   linkSupplierProduct:   (sid, data) => req('POST',   `/suppliers/${sid}/products`, data),
   unlinkSupplierProduct: (sid, psid) => req('DELETE', `/suppliers/${sid}/products/${psid}`),
 
-  // Procurement
+  // Stock & Forecast
+  getStock:    () => req('GET',  '/stock'),
+  getForecast: () => req('GET',  '/forecast'),
+  runForecast: () => req('POST', '/forecast'),
   getProcurement:         ()           => req('GET',   '/procurement'),
   patchProductExpiry:     (pid,data)   => req('PATCH', `/procurement/${pid}`, data),
   getSupplierOrders:      ()           => req('GET',   '/procurement/orders'),

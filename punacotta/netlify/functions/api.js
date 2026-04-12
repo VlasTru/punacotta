@@ -1072,19 +1072,35 @@ async function route(method, segments, body, headers, event) {
 
     // POST /procurement/orders/:soid/accept — accept with reconciliation
     if (r1 === 'orders' && r2 && segments[3] === 'accept' && method === 'POST') {
-      const { items_actual, comments } = body
+      const { items_actual, items_added, comments } = body
       const [o] = await dbq('SELECT * FROM supplier_order WHERE soid=$1 AND owner_uid=$2', [r2, user.uid])
       if (!o) return [404, { error:'Not found' }]
       if (o.status !== 'Submitted') return [400, { error:'Only Submitted orders can be accepted' }]
-      // Save actual quantities
+      // Update existing items' actual quantities
       for (const it of (items_actual||[])) {
         await dbr('UPDATE supplier_order_item SET qty_actual=$1 WHERE soiid=$2 AND soid=$3',
           [it.qty_actual, it.soiid, r2])
+      }
+      // Insert newly added items (substitutions)
+      for (const it of (items_added||[])) {
+        if (!it.pid) continue
+        await dbr(`INSERT INTO supplier_order_item (soid,pid,qty_ordered,qty_actual,unit_price,currency)
+          VALUES ($1,$2,0,$3,$4,$5)`, [r2, it.pid, it.qty_actual||0, it.unit_price||0, it.currency||o.currency||'AMD'])
       }
       const now = new Date()
       await dbr(`UPDATE supplier_order SET status='Accepted', accepted_at=$1, comments=$2 WHERE soid=$3`,
         [now.toISOString(), comments||null, r2])
       const full = await fetchSO(r2)
+      // Update inventory: add qty_actual of each item to product_stock
+      for (const it of full.items) {
+        const qty = Number(it.qty_actual ?? it.qty_ordered)
+        if (qty > 0) {
+          await dbr(`INSERT INTO product_stock (pid, owner_uid, qty, source, source_id, created_at)
+            VALUES ($1,$2,$3,'supplier_order',$4,$5)
+            ON CONFLICT (pid, owner_uid, source, source_id) DO UPDATE SET qty=$3`,
+            [it.pid, user.uid, qty, r2, now.toISOString()])
+        }
+      }
       // Check for discrepancies
       const hasDiscrepancy = full.items.some(it =>
         it.qty_actual !== null && Number(it.qty_actual) !== Number(it.qty_ordered)
@@ -1130,7 +1146,154 @@ async function route(method, segments, body, headers, event) {
     }
   }
 
+  // ── STOCK ────────────────────────────────────────────────────────────────
+  if (r0 === 'stock') {
+    if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+    if (method === 'GET') {
+      const rows = await dbq(
+        `SELECT pid, SUM(qty) AS qty FROM product_stock WHERE owner_uid=$1 GROUP BY pid`,
+        [user.uid])
+      return [200, rows]
+    }
+  }
+
+  // ── FORECAST ─────────────────────────────────────────────────────────────
+  if (r0 === 'forecast') {
+    if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+    if (method === 'GET') {
+      const rows = await dbq(
+        `SELECT pid, tg, ts, td, tf, series, period_start, period_end
+         FROM product_forecast WHERE owner_uid=$1`, [user.uid])
+      const map = {}
+      rows.forEach(r => { map[r.pid] = { ...r, series: r.series || [] } })
+      return [200, map]
+    }
+    if (method === 'POST') {
+      // Run forecast computation
+      await runForecast(user.uid)
+      const rows = await dbq(
+        `SELECT pid, tg, ts, td, tf, series, period_start, period_end
+         FROM product_forecast WHERE owner_uid=$1`, [user.uid])
+      const map = {}
+      rows.forEach(r => { map[r.pid] = { ...r, series: r.series || [] } })
+      return [200, map]
+    }
+  }
+
   return [404, { error: 'Not found' }]
+}
+
+// ─── FORECAST ENGINE ──────────────────────────────────────────────────────────
+async function runForecast(ownerUid) {
+  const now = new Date()
+  const periodStart = new Date(now); periodStart.setHours(8,0,0,0)
+  const periodEnd   = new Date(periodStart); periodEnd.setDate(periodEnd.getDate() + 7)
+
+  // Get all products for this user's menus
+  const products = await dbq(`
+    SELECT DISTINCT rp.pid
+    FROM recipe_product rp
+    JOIN recipe r ON r.rid=rp.rid
+    JOIN menu_recipe mr ON mr.rid=r.rid
+    JOIN menu m ON m.mid=mr.mid
+    WHERE m.owner_uid=$1 AND r.deleted=false`, [ownerUid])
+
+  for (const { pid } of products) {
+    // ── TS: current stock ──────────────────────────────────────────────────
+    const [stockRow] = await dbq(
+      `SELECT COALESCE(SUM(qty),0) AS ts FROM product_stock WHERE pid=$1 AND owner_uid=$2`,
+      [pid, ownerUid])
+    const ts = Number(stockRow?.ts || 0)
+
+    // ── TD: qty in submitted supplier orders due within forecast period ────
+    const tdRows = await dbq(`
+      SELECT COALESCE(SUM(soi.qty_ordered),0) AS td
+      FROM supplier_order_item soi
+      JOIN supplier_order so ON so.soid=soi.soid
+      WHERE soi.pid=$1 AND so.owner_uid=$2
+        AND so.status='Submitted'
+        AND so.etd IS NOT NULL
+        AND so.etd >= $3 AND so.etd <= $4`,
+      [pid, ownerUid, periodStart.toISOString().split('T')[0], periodEnd.toISOString().split('T')[0]])
+    const td = Number(tdRows[0]?.td || 0)
+
+    // ── TF: forecast demand using order history ────────────────────────────
+    // Get daily sales (qty of this product consumed via menu orders) for last 90 days
+    const salesRows = await dbq(`
+      SELECT DATE(o.created_at) AS day, SUM(oi.qty * rp.qty) AS consumed
+      FROM order_item oi
+      JOIN recipe_product rp ON rp.rid=oi.rid AND rp.pid=$1
+      JOIN "order" o ON o.oid=oi.oid
+      JOIN menu m ON m.mid=o.mid
+      WHERE m.owner_uid=$2
+        AND o.created_at >= NOW() - INTERVAL '90 days'
+        AND o.status NOT IN ('Declined','Cancelled')
+      GROUP BY DATE(o.created_at)
+      ORDER BY day`, [pid, ownerUid])
+
+    let tfSeries = []
+    if (salesRows.length >= 30) {
+      // ARIMA: fit on training data, forecast 7 days
+      tfSeries = arimaForecast(salesRows.map(r => Number(r.consumed)), 7)
+    } else if (salesRows.length > 0) {
+      // Weekly mean fallback
+      const meanDaily = salesRows.reduce((s,r)=>s+Number(r.consumed),0) / salesRows.length
+      tfSeries = Array(7).fill(meanDaily)
+    } else {
+      tfSeries = Array(7).fill(0)
+    }
+    const tf = tfSeries.reduce((a,b)=>a+b, 0)
+
+    // ── TG series: daily grand total over 7-day period ─────────────────────
+    const tg = td + ts - tf
+    const series = tfSeries.map((f,i) => {
+      const dayTD = i === 0 ? td : 0  // delivery arrives on first day
+      return dayTD + ts - f
+    })
+
+    await dbq(`
+      INSERT INTO product_forecast (pid, owner_uid, tg, ts, td, tf, series, period_start, period_end)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      ON CONFLICT (pid, owner_uid) DO UPDATE
+        SET tg=$3,ts=$4,td=$5,tf=$6,series=$7,period_start=$8,period_end=$9,computed_at=NOW()`,
+      [pid, ownerUid, tg, ts, td, tf, JSON.stringify(series),
+       periodStart.toISOString(), periodEnd.toISOString()])
+  }
+}
+
+// Simple ARIMA(1,1,1) in JS — fits on series, returns h-step forecast
+function arimaForecast(series, h) {
+  if (series.length < 3) return Array(h).fill(series[0]||0)
+  // Difference once
+  const diff = series.slice(1).map((v,i)=>v-series[i])
+  // Estimate AR(1) coefficient via Yule-Walker
+  const n = diff.length
+  const mean = diff.reduce((a,b)=>a+b,0)/n
+  const c = diff.map(v=>v-mean)
+  const r0 = c.reduce((a,v)=>a+v*v,0)/n
+  const r1 = c.slice(1).reduce((a,v,i)=>a+v*c[i],0)/(n-1)
+  const phi = r0>0 ? Math.max(-0.99,Math.min(0.99, r1/r0)) : 0
+  // Residuals and MA(1)
+  const resid = c.map((v,i)=>i===0?0:v-phi*c[i-1])
+  const theta = -0.3 // fixed MA coefficient
+  // Forecast in differenced space
+  let last = diff[diff.length-1] - mean
+  let lastRes = resid[resid.length-1]
+  const forecast = []
+  for (let i=0;i<h;i++) {
+    const next = mean + phi*last + theta*lastRes
+    forecast.push(next)
+    lastRes = 0 // future innovations = 0
+    last = next
+  }
+  // Un-difference: start from last original value
+  const result = []
+  let prev = series[series.length-1]
+  for (const f of forecast) {
+    prev = prev + f
+    result.push(Math.max(0, prev))
+  }
+  return result
 }
 
 // ─── NETLIFY HANDLER ──────────────────────────────────────────────────────────

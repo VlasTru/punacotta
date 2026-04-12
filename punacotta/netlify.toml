@@ -9,6 +9,9 @@
 [functions]
   node_bundler  = "esbuild"
 
+[functions."forecast-scheduled"]
+  schedule = "0 8 * * *"
+
 # Rewrite all /api/* calls to Netlify Functions
 [[redirects]]
   from   = "/api/*"

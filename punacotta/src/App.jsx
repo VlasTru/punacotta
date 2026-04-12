@@ -395,7 +395,7 @@ function RecipeForm({
     setContents(p=>p.map((c,j)=>j===i?{...c,pid,label:prod?.label||""}:c));
   };
   const setContentQty = (i, delta) =>
-    setContents(p=>p.map((c,j)=>j===i?{...c,qty:Math.max(0,Math.min(1000,Math.round((parseFloat(c.qty)||0)+delta)*1000)/1000)}:c));
+    setContents(p=>p.map((c,j)=>j===i?{...c,qty:Math.max(0,Math.min(1000, Math.round(((parseFloat(c.qty)||0)+delta)*1000)/1000))}:c));
   const setContentQtyDirect = (i, val) =>
     setContents(p=>p.map((c,j)=>j===i?{...c,qty:val}:c));
 
@@ -723,12 +723,20 @@ function ProductsPage({ toast }) {
   const [editExpiry, setEditExpiry] = useState("");
   const [linkPid, setLinkPid] = useState(null);
   const [linkSid, setLinkSid] = useState(""); const [linkPrice, setLinkPrice] = useState(""); const [linkCurrency, setLinkCurrency] = useState("AMD");
+  const [stock, setStock]       = useState({}); // pid → qty
+  const [forecast, setForecast] = useState({}); // pid → {tg, series, period_start, period_end}
+  const [refreshingForecast, setRefreshingForecast] = useState(false);
 
   const load = useCallback(async()=>{ setLoading(true); try{
-    const[p,l,proc,sups]=await Promise.all([api.getProducts(),api.getProductLookups(),api.getProcurement(),api.getSuppliers()]);
+    const[p,l,proc,sups,stk,fc]=await Promise.all([
+      api.getProducts(),api.getProductLookups(),api.getProcurement(),api.getSuppliers(),
+      api.getStock(),api.getForecast().catch(()=>({})),
+    ]);
     setProducts(p); setLookups(l); setProcLinks(proc.links||[]); setSuppliers(sups);
     // Merge expiry_hours from procurement into products
     setProducts(p.map(prod=>{ const pd=proc.products?.find(x=>x.pid===prod.pid); return pd?{...prod,expiry_hours:pd.expiry_hours}:prod; }));
+    const stockMap = {}; (stk||[]).forEach(s=>{ stockMap[s.pid]=(stockMap[s.pid]||0)+Number(s.qty); }); setStock(stockMap);
+    setForecast(fc||{});
   } catch(e){toast(e.message,"error");} finally{setLoading(false);} },[]);
   useEffect(()=>{load();},[]);
 
@@ -798,14 +806,45 @@ function ProductsPage({ toast }) {
   affectedItems.sort((a,b)=>a.name.localeCompare(b.name));
   const selectedNames = selected.map(id=>products.find(p=>p.pid===id)?.name).filter(Boolean);
 
+  const refreshForecast = async () => {
+    setRefreshingForecast(true);
+    try {
+      const fc = await api.runForecast();
+      setForecast(fc||{});
+      toast("Forecast updated");
+    } catch(e){ toast(e.message,"error"); } finally{ setRefreshingForecast(false); }
+  };
+
+  // Mini SVG sparkline for forecast TG series
+  const Sparkline = ({ series=[], tg=0 }) => {
+    if (!series.length) return <span style={{color:G.muted,fontSize:12}}>—</span>;
+    const W=80, H=28, pad=2;
+    const min = Math.min(...series), max = Math.max(...series);
+    const range = max - min || 1;
+    const pts = series.map((v,i)=>{
+      const x = pad + (i/(series.length-1||1))*(W-pad*2);
+      const y = H - pad - ((v-min)/range)*(H-pad*2);
+      return `${x},${y}`;
+    }).join(" ");
+    const color = tg >= 0 ? G.green : G.red;
+    return (
+      <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1}}>
+        <span style={{fontSize:11,fontWeight:700,color}}>{tg>0?"+":""}{Math.round(tg)}</span>
+        <svg width={W} height={H} style={{overflow:"visible"}}>
+          <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round"/>
+          <line x1={pad} y1={H/2} x2={W-pad} y2={H/2} stroke={G.border} strokeWidth="0.5" strokeDasharray="2,2"/>
+        </svg>
+      </div>
+    );
+  };
+
   const cols = [
-    {key:"pid",   label:tl("ID"),       sortable:true,  render:r=><span style={{color:G.muted,fontSize:13}}>#{r._id}</span>},
-    {key:"name",  label:tl("Name"),     sortable:true,  render:r=>(
+    {key:"pid",      label:tl("ID"),         sortable:true,  render:r=><span style={{color:G.muted,fontSize:13}}>#{r._id}</span>},
+    {key:"name",     label:tl("Name"),        sortable:true,  render:r=>(
       <button onClick={()=>openEdit(r)} style={{background:"none",border:"none",cursor:"pointer",fontFamily:G.mono,fontSize:14,color:G.dark,padding:0,textAlign:"left",textDecoration:"underline dotted",textUnderlineOffset:3}}>{r.name}</button>
     )},
-    {key:"sku",      label:tl("SKU"),        sortable:true,  render:r=>r.sku||<span style={{color:G.muted}}>—</span>},
-    {key:"category", label:tl("Category"),   sortable:true,  render:r=>r.category?<Badge>{r.category}</Badge>:<span style={{color:G.muted}}>—</span>},
-    {key:"units",    label:tl("Units"),      sortable:false, render:r=>r.units||<span style={{color:G.muted}}>—</span>},
+    {key:"sku",      label:tl("SKU"),         sortable:true,  render:r=>r.sku||<span style={{color:G.muted}}>—</span>},
+    {key:"category", label:tl("Category"),    sortable:true,  render:r=>r.category?<Badge>{r.category}</Badge>:<span style={{color:G.muted}}>—</span>},
     {key:"expiry",   label:tl("Expiry (hours)"), sortable:false, render:r=>(
       editPid===r.pid ? (
         <div style={{ display:"flex", gap:4, alignItems:"center" }}>
@@ -854,10 +893,33 @@ function ProductsPage({ toast }) {
         </div>
       );
     }},
+    {key:"stock",    label:tl("Stock"),       sortable:false, render:r=>{
+      const qty = stock[r.pid];
+      return qty!=null ? <span style={{fontWeight:600,color:qty>0?G.dark:G.red}}>{qty}</span> : <span style={{color:G.muted}}>—</span>;
+    }},
+    {key:"forecast", label:(()=>{
+      const fc = Object.values(forecast)[0];
+      const start = fc?.period_start ? new Date(fc.period_start) : null;
+      const end   = fc?.period_end   ? new Date(fc.period_end)   : null;
+      const fmt = d => d ? `${String(d.getDate()).padStart(2,"0")}-${String(d.getMonth()+1).padStart(2,"0")}-${d.getFullYear()} 08:00 AM` : "—";
+      return (
+        <span title={start&&end?`from ${fmt(start)} to ${fmt(end)}`:""} style={{textDecoration:"underline dotted",textUnderlineOffset:3,cursor:"help"}}>
+          {tl("Forecast")}
+        </span>
+      );
+    })(), sortable:false, render:r=>{
+      const fc = forecast[r.pid];
+      return <Sparkline series={fc?.series||[]} tg={fc?.tg??0} />;
+    }},
+    {key:"units",    label:tl("Units"),       sortable:false, render:r=>r.units||<span style={{color:G.muted}}>—</span>},
   ];
 
   return (
-    <Page title={tl("Products")} actions={<>{selected.length>0&&<Btn variant="danger" size="sm" onClick={openDeleteDialog}>{tl("Delete")} ({selected.length})</Btn>}<Btn size="sm" onClick={()=>setShowForm(s=>!s)}>{tl("+ New product")}</Btn></>}>
+    <Page title={tl("Products")} actions={<div style={{display:"flex",gap:8}}>
+      {selected.length>0&&<Btn variant="danger" size="sm" onClick={openDeleteDialog}>{tl("Delete")} ({selected.length})</Btn>}
+      <Btn variant="secondary" size="sm" onClick={refreshForecast} loading={refreshingForecast}>↻ Forecast</Btn>
+      <Btn size="sm" onClick={()=>setShowForm(s=>!s)}>{tl("+ New product")}</Btn>
+    </div>}>
       {showForm&&(
         <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
           <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>New Product</h3>
@@ -1805,15 +1867,14 @@ function OrdersManufPage({
     </div>
   );
 
-  // Search input with × clear
-  const SearchBox = () => (
-    <div style={{ position:"relative", display:"inline-flex", alignItems:"center" }}>
-      <input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}} placeholder="Search…"
-        style={{ padding:"6px 28px 6px 10px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, width:160, outline:"none" }}
-        onFocus={e=>e.target.style.borderColor=G.caramel} onBlur={e=>e.target.style.borderColor=G.border} />
-      {search&&<button onClick={()=>{setSearch("");setPage(0);}} style={{ position:"absolute", right:6, background:"none", border:"none", cursor:"pointer", color:G.muted, fontSize:14, lineHeight:1, padding:0 }}>×</button>}
-    </div>
-  );
+  // Search debounce ref — 2 second delay as per spec
+  const searchRef = useRef(null);
+  const [searchInput, setSearchInput] = useState("");
+  useEffect(()=>{
+    clearTimeout(searchRef.current);
+    searchRef.current = setTimeout(()=>{ setSearch(searchInput); setPage(0); }, 2000);
+    return ()=>clearTimeout(searchRef.current);
+  },[searchInput]);
 
   // Kanban/Table toggle
   const ViewToggle = () => (
@@ -1878,7 +1939,12 @@ function OrdersManufPage({
   const toolbar = (
     <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"nowrap" }}>
       <Btn size="sm" onClick={()=>setShowNewOrder(true)}>{tl("+ New order")}</Btn>
-      <SearchBox />
+      <div style={{ position:"relative", display:"inline-flex", alignItems:"center" }}>
+        <input value={searchInput} onChange={e=>setSearchInput(e.target.value)} placeholder={tl("Search")+"…"}
+          style={{ padding:"6px 28px 6px 10px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, width:160, outline:"none" }}
+          onFocus={e=>e.target.style.borderColor=G.caramel} onBlur={e=>e.target.style.borderColor=G.border} />
+        {searchInput&&<button onClick={()=>{setSearchInput("");setSearch("");setPage(0);}} style={{ position:"absolute", right:6, background:"none", border:"none", cursor:"pointer", color:G.muted, fontSize:14, lineHeight:1, padding:0 }}>×</button>}
+      </div>
       <span style={{ fontSize:12, color:G.muted }}>{tl("From")}</span>
       <DatePicker value={dateFrom} max={dateTo} onChange={v=>{setDateFrom(v);setPage(0);}} />
       <span style={{ fontSize:12, color:G.muted }}>{tl("To")}</span>
@@ -2539,7 +2605,8 @@ function ProcurementPage({
     setSaving(true);
     try {
       const result = await api.acceptSupplierOrder(viewOrder.soid, {
-        items_actual: acceptItems.map(it=>({soiid:it.soiid, qty_actual:parseFloat(it.qty_actual)||0})),
+        items_actual: acceptItems.filter(it=>it.soiid).map(it=>({soiid:it.soiid, qty_actual:parseFloat(it.qty_actual)||0})),
+        items_added:  acceptItems.filter(it=>!it.soiid && it.pid).map(it=>({pid:Number(it.pid), qty_actual:parseFloat(it.qty_actual)||0, unit_price:parseFloat(it.unit_price)||0, currency:it.currency})),
         comments: acceptComments,
       });
       toast(`Order #${viewOrder.order_id} accepted`);
@@ -2740,7 +2807,7 @@ function ProcurementPage({
               <table style={{ width:"100%", borderCollapse:"collapse", marginBottom:16 }}>
                 <thead>
                   <tr style={{ background:G.sand, borderBottom:`1px solid ${G.border}` }}>
-                    {["Product","SKU","Qty (ordered)","Qty (actual)","Unit Price","Total (ord/act)"].map(h=>(
+                    {["Product","SKU","Qty (ordered)","Qty (actual)","Unit Price","Total (ord/act)",""].map(h=>(
                       <th key={h} style={{padding:"9px 12px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,letterSpacing:"0.04em"}}>{h}</th>
                     ))}
                   </tr>
@@ -2750,11 +2817,23 @@ function ProcurementPage({
                     const totOrd = (parseFloat(it.qty_ordered)||0)*(parseFloat(it.unit_price)||0);
                     const totAct = (parseFloat(it.qty_actual)||0)*(parseFloat(it.unit_price)||0);
                     const zeroed = parseFloat(it.qty_actual)===0;
+                    const hasDiscrepancy = parseFloat(it.qty_actual) !== parseFloat(it.qty_ordered);
+                    const isAdded = !it.soiid; // newly added row not in original order
                     return (
-                      <tr key={it.soiid} style={{ background:zeroed?"#FFCAB9":"transparent", borderBottom:`1px solid ${G.border}` }}>
-                        <td style={{padding:"9px 12px",fontSize:14}}>{it.product_name}</td>
-                        <td style={{padding:"9px 12px",fontSize:13,color:G.muted}}>{it.sku||"—"}</td>
-                        <td style={{padding:"9px 12px",fontSize:14}}>{it.qty_ordered}</td>
+                      <tr key={it.soiid||`new-${i}`} style={{ background:hasDiscrepancy?"#FFCAB9":"transparent", borderBottom:`1px solid ${G.border}` }}>
+                        <td style={{padding:"9px 12px",fontSize:14}}>
+                          {isAdded ? (
+                            <select value={it.pid} onChange={e=>{
+                              const p=products.find(x=>String(x.pid)===e.target.value);
+                              setAcceptItems(a=>a.map((x,j)=>j===i?{...x,pid:e.target.value,product_name:p?.name||"",sku:p?.sku||""}:x));
+                            }} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}>
+                              <option value="">Select product…</option>
+                              {products.map(p=><option key={p.pid} value={p.pid}>{p.name}{p.sku?` (${p.sku})`:""}</option>)}
+                            </select>
+                          ) : it.product_name}
+                        </td>
+                        <td style={{padding:"9px 12px",fontSize:13,color:G.muted}}>{isAdded?"—":it.sku||"—"}</td>
+                        <td style={{padding:"9px 12px",fontSize:14,color:G.muted}}>{isAdded?"—":it.qty_ordered}</td>
                         <td style={{padding:"9px 12px"}}>
                           <div style={{display:"flex",alignItems:"center",gap:4}}>
                             <button onClick={()=>setAcceptItems(a=>a.map((x,j)=>j===i?{...x,qty_actual:Math.max(0,(parseFloat(x.qty_actual)||0)-1)}:x))} style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",fontWeight:700,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
@@ -2764,11 +2843,30 @@ function ProcurementPage({
                             <button onClick={()=>setAcceptItems(a=>a.map((x,j)=>j===i?{...x,qty_actual:(parseFloat(x.qty_actual)||0)+1}:x))} style={{width:22,height:22,borderRadius:5,border:"none",background:G.caramel,cursor:"pointer",fontWeight:700,fontSize:13,color:G.white,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
                           </div>
                         </td>
-                        <td style={{padding:"9px 12px",fontSize:13}}>{it.unit_price} {it.currency}</td>
-                        <td style={{padding:"9px 12px",fontSize:13,color:G.caramel,fontWeight:600}}>{totOrd.toFixed(2)} / {totAct.toFixed(2)}</td>
+                        <td style={{padding:"9px 12px",fontSize:13}}>
+                          {isAdded ? (
+                            <input type="number" value={it.unit_price} min={0} step="any" onChange={e=>setAcceptItems(a=>a.map((x,j)=>j===i?{...x,unit_price:e.target.value}:x))}
+                              style={{width:80,padding:"4px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}} />
+                          ) : `${it.unit_price} ${it.currency}`}
+                        </td>
+                        <td style={{padding:"9px 12px",fontSize:13,color:G.caramel,fontWeight:600}}>
+                          {isAdded ? `— / ${((parseFloat(it.qty_actual)||0)*(parseFloat(it.unit_price)||0)).toFixed(2)}`
+                            : `${totOrd.toFixed(2)} / ${totAct.toFixed(2)}`}
+                        </td>
+                        <td style={{padding:"9px 12px"}}>
+                          {isAdded && <button onClick={()=>setAcceptItems(a=>a.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:G.red,cursor:"pointer",fontSize:16,lineHeight:1}}>×</button>}
+                        </td>
                       </tr>
                     );
                   })}
+                  <tr>
+                    <td colSpan={7} style={{padding:"8px 12px"}}>
+                      <button onClick={()=>setAcceptItems(a=>[...a,{pid:"",product_name:"",sku:"",qty_ordered:0,qty_actual:1,unit_price:0,currency:viewOrder?.currency||"AMD",soiid:null}])}
+                        style={{background:"none",border:`1px dashed ${G.border}`,color:G.caramel,cursor:"pointer",fontSize:12,fontFamily:G.mono,padding:"5px 12px",borderRadius:7,fontWeight:600}}>
+                        + Add product
+                      </button>
+                    </td>
+                  </tr>
                 </tbody>
               </table>
             </div>

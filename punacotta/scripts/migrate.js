@@ -198,8 +198,33 @@ ON CONFLICT (name) DO NOTHING;
 -- Remove deprecated categories (safe to re-run)
 DELETE FROM recipe_category WHERE name IN ('snacks','starters');
 
--- Supplier orders
-CREATE TABLE IF NOT EXISTS supplier_order (
+-- Product stock (inventory from accepted supplier orders)
+CREATE TABLE IF NOT EXISTS product_stock (
+  psid       SERIAL PRIMARY KEY,
+  pid        INTEGER NOT NULL REFERENCES product(pid),
+  owner_uid  INTEGER NOT NULL REFERENCES "user"(uid),
+  qty        NUMERIC(10,3) NOT NULL DEFAULT 0,
+  source     VARCHAR(30) NOT NULL DEFAULT 'supplier_order',
+  source_id  INTEGER,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(pid, owner_uid, source, source_id)
+);
+
+-- Product forecast (pre-computed daily)
+CREATE TABLE IF NOT EXISTS product_forecast (
+  pfid         SERIAL PRIMARY KEY,
+  pid          INTEGER NOT NULL REFERENCES product(pid),
+  owner_uid    INTEGER NOT NULL REFERENCES "user"(uid),
+  tg           NUMERIC(10,3),
+  ts           NUMERIC(10,3),
+  td           NUMERIC(10,3),
+  tf           NUMERIC(10,3),
+  series       JSONB,   -- array of 7 daily TG values
+  period_start TIMESTAMPTZ,
+  period_end   TIMESTAMPTZ,
+  computed_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(pid, owner_uid)
+);
   soid          SERIAL PRIMARY KEY,
   owner_uid     INTEGER NOT NULL REFERENCES "user"(uid),
   sid           INTEGER NOT NULL REFERENCES supplier(sid),
