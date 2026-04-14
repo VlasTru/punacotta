@@ -2797,7 +2797,7 @@ function ProcurementPage({
                   return (
                     <tr key={o.soid} style={{ borderBottom:i<paged.length-1?`1px solid ${G.border}`:"none" }}>
                       <td style={{padding:"10px 14px"}}>
-                        {o.status==="Submitted" ? (
+                        {["New","Submitted"].includes(o.status) ? (
                           <button onClick={()=>openOrder(o.soid)} style={{background:"none",border:"none",cursor:"pointer",fontFamily:G.mono,fontSize:14,color:G.caramel,fontWeight:700,textDecoration:"underline",padding:0}}>{o.order_id}</button>
                         ) : o.status==="Draft" ? (
                           <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -2857,25 +2857,64 @@ function ProcurementPage({
         <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
           <div style={{ background:G.white, borderRadius:16, width:"100%", maxWidth:760, maxHeight:"90vh", display:"flex", flexDirection:"column", boxShadow:"0 20px 60px rgba(44,24,16,0.2)", animation:"fadeIn 0.2s ease" }}>
             <div style={{ padding:"20px 24px", borderBottom:`1px solid ${G.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-              <h3 style={{fontFamily:G.font,fontSize:18}}>Order #{viewOrder.order_id} — {viewOrder.supplier_name}</h3>
+              <h3 style={{fontFamily:G.font,fontSize:18}}>
+                {viewOrder.status==="New"?"Edit order":"Accept order"} #{viewOrder.order_id} — {viewOrder.supplier_name}
+              </h3>
               <button onClick={()=>setViewOrder(null)} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:G.muted,lineHeight:1}}>×</button>
             </div>
             <div style={{ flex:1, overflowY:"auto", padding:24 }}>
               <table style={{ width:"100%", borderCollapse:"collapse", marginBottom:16 }}>
                 <thead>
                   <tr style={{ background:G.sand, borderBottom:`1px solid ${G.border}` }}>
-                    {["Product","SKU","Qty (ordered)","Qty (actual)","Unit Price","Total (ord/act)",""].map(h=>(
+                    {(viewOrder.status==="New"
+                      ? ["Product","SKU","Qty","Unit Price","Total",""]
+                      : ["Product","SKU","Qty (ordered)","Qty (actual)","Unit Price","Total (ord/act)",""]
+                    ).map(h=>(
                       <th key={h} style={{padding:"9px 12px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,letterSpacing:"0.04em"}}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {acceptItems.map((it,i)=>{
+                    const qty = viewOrder.status==="New" ? parseFloat(it.qty_actual)??parseFloat(it.qty_ordered) : parseFloat(it.qty_actual);
                     const totOrd = (parseFloat(it.qty_ordered)||0)*(parseFloat(it.unit_price)||0);
-                    const totAct = (parseFloat(it.qty_actual)||0)*(parseFloat(it.unit_price)||0);
-                    const zeroed = parseFloat(it.qty_actual)===0;
-                    const hasDiscrepancy = parseFloat(it.qty_actual) !== parseFloat(it.qty_ordered);
-                    const isAdded = !it.soiid; // newly added row not in original order
+                    const totAct = (qty||0)*(parseFloat(it.unit_price)||0);
+                    const hasDiscrepancy = viewOrder.status!=="New" && parseFloat(it.qty_actual) !== parseFloat(it.qty_ordered);
+                    const isAdded = !it.soiid;
+                    if (viewOrder.status==="New") return (
+                      <tr key={it.soiid||`new-${i}`} style={{ borderBottom:`1px solid ${G.border}` }}>
+                        <td style={{padding:"9px 12px",fontSize:14}}>
+                          {isAdded ? (
+                            <select value={it.pid} onChange={e=>{
+                              const p=products.find(x=>String(x.pid)===e.target.value);
+                              setAcceptItems(a=>a.map((x,j)=>j===i?{...x,pid:e.target.value,product_name:p?.name||"",sku:p?.sku||""}:x));
+                            }} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}>
+                              <option value="">Select product…</option>
+                              {products.map(p=><option key={p.pid} value={p.pid}>{p.name}{p.sku?` (${p.sku})`:""}</option>)}
+                            </select>
+                          ) : it.product_name}
+                        </td>
+                        <td style={{padding:"9px 12px",fontSize:13,color:G.muted}}>{it.sku||"—"}</td>
+                        <td style={{padding:"9px 12px"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:4}}>
+                            <button onClick={()=>setAcceptItems(a=>a.map((x,j)=>j===i?{...x,qty_actual:Math.max(0,(parseFloat(x.qty_actual)||0)-1)}:x))} style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",fontWeight:700,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
+                            <input type="number" value={it.qty_actual??it.qty_ordered} step="any" min={0}
+                              onChange={e=>setAcceptItems(a=>a.map((x,j)=>j===i?{...x,qty_actual:e.target.value}:x))}
+                              style={{width:70,padding:"4px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,textAlign:"center",fontFamily:G.mono,outline:"none"}}/>
+                            <button onClick={()=>setAcceptItems(a=>a.map((x,j)=>j===i?{...x,qty_actual:(parseFloat(x.qty_actual)||0)+1}:x))} style={{width:22,height:22,borderRadius:5,border:"none",background:G.caramel,cursor:"pointer",fontWeight:700,fontSize:13,color:G.white,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                          </div>
+                        </td>
+                        <td style={{padding:"9px 12px"}}>
+                          <input type="number" value={it.unit_price} min={0} step="any"
+                            onChange={e=>setAcceptItems(a=>a.map((x,j)=>j===i?{...x,unit_price:e.target.value}:x))}
+                            style={{width:80,padding:"4px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}/>
+                        </td>
+                        <td style={{padding:"9px 12px",fontSize:13,color:G.caramel,fontWeight:600}}>{totAct.toFixed(2)}</td>
+                        <td style={{padding:"9px 12px"}}>
+                          {isAdded&&<button onClick={()=>setAcceptItems(a=>a.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:G.red,cursor:"pointer",fontSize:16,lineHeight:1}}>×</button>}
+                        </td>
+                      </tr>
+                    );
                     return (
                       <tr key={it.soiid||`new-${i}`} style={{ background:hasDiscrepancy?"#FFCAB9":"transparent", borderBottom:`1px solid ${G.border}` }}>
                         <td style={{padding:"9px 12px",fontSize:14}}>
@@ -2929,7 +2968,27 @@ function ProcurementPage({
             </div>
             <div style={{ padding:"16px 24px", borderTop:`1px solid ${G.border}`, display:"flex", gap:10, justifyContent:"flex-end" }}>
               <Btn variant="ghost" onClick={()=>setViewOrder(null)}>Close</Btn>
-              <Btn onClick={()=>setAcceptDialog(true)}>Accept order</Btn>
+              {viewOrder?.status==="New" ? (<>
+                <Btn variant="secondary" loading={saving} onClick={async()=>{
+                  setSaving(true);
+                  try {
+                    const items = acceptItems.filter(it=>it.soiid).map(it=>({soiid:it.soiid,pid:it.pid,qty_ordered:parseFloat(it.qty_actual)||0,unit_price:parseFloat(it.unit_price)||0,currency:it.currency}));
+                    await api.updateSupplierOrder(viewOrder.soid, { items });
+                    toast("Order saved"); await load(); setViewOrder(null);
+                  } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
+                }}>Save</Btn>
+                <Btn loading={saving} onClick={async()=>{
+                  setSaving(true);
+                  try {
+                    const submitted = await api.submitSupplierOrder(viewOrder.soid);
+                    toast(`Order #${submitted.order_id} submitted`);
+                    downloadPDF(submitted.po_pdf_url, submitted.order_id, "purchase_order");
+                    await load(); setViewOrder(null);
+                  } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
+                }}>Submit</Btn>
+              </>) : viewOrder?.status==="Submitted" ? (
+                <Btn onClick={()=>setAcceptDialog(true)}>Accept order</Btn>
+              ) : null}
             </div>
           </div>
         </div>
