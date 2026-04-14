@@ -192,6 +192,18 @@ async function route(method, segments, body, headers, event) {
       const [u] = await dbq('SELECT * FROM "user" WHERE email = $1', [email?.toLowerCase()])
       if (!u || !(await bcrypt.compare(password, u.password_hash)))
         return [401, { error: 'Invalid email or password' }]
+      // Check email verification
+      if (!u.email_verified) {
+        // Check if a verify token was sent within the last hour
+        const [recent] = await dbq(
+          `SELECT tid FROM auth_token WHERE uid=$1 AND purpose='verify' AND used=false
+           AND created_at > NOW() - INTERVAL '1 hour' ORDER BY created_at DESC LIMIT 1`, [u.uid])
+        if (recent) {
+          return [403, { error: 'unverified_recent', message: 'Please verify your email. A message has been sent earlier for you to confirm registration.' }]
+        }
+        // Token expired — allow re-registration by clearing expired tokens
+        return [403, { error: 'unverified_expired', message: 'Your verification link has expired. Please register again.' }]
+      }
       return [200, { token: signToken({ uid:u.uid, email:u.email, is_manufacturer:u.is_manufacturer }), user: safe(u) }]
     }
     if (r1 === 'register' && method === 'POST') {
@@ -199,8 +211,18 @@ async function route(method, segments, body, headers, event) {
               password, is_manufacturer, business_name } = body
       if (!first_name || !last_name || !email || !password) return [400, { error: 'Missing required fields' }]
       if (password.trim().length < 6) return [400, { error: 'Password must be at least 6 characters' }]
-      const ex = await dbq('SELECT uid FROM "user" WHERE email = $1', [email.toLowerCase()])
-      if (ex.length) return [409, { error: 'A username with this email already exists. Please, login.' }]
+      const [ex] = await dbq('SELECT uid, email_verified FROM "user" WHERE email = $1', [email.toLowerCase()])
+      if (ex) {
+        if (ex.email_verified) return [409, { error: 'A username with this email already exists. Please, login.' }]
+        // Unverified — check if a recent token exists (within 1 hour)
+        const [recent] = await dbq(
+          `SELECT tid FROM auth_token WHERE uid=$1 AND purpose='verify' AND used=false
+           AND created_at > NOW() - INTERVAL '1 hour'`, [ex.uid])
+        if (recent) return [409, { error: 'A verification email was recently sent to this address. Please check your inbox.' }]
+        // Token expired — delete old user and allow re-registration
+        await dbr('DELETE FROM auth_token WHERE uid=$1', [ex.uid])
+        await dbr('DELETE FROM "user" WHERE uid=$1', [ex.uid])
+      }
       const hash = await bcrypt.hash(password.trim(), 10)
       await dbr(
         `INSERT INTO "user" (first_name,last_name,email,phone,street_address,city,zip,password_hash,is_manufacturer,business_name)
@@ -1042,7 +1064,24 @@ async function route(method, segments, body, headers, event) {
       return [200, await fetchSO(r2)]
     }
 
-    // POST /procurement/orders/:soid/submit — submit order + generate PO PDF
+    // POST /procurement/orders/:soid/promote — Draft → New
+    if (r1 === 'orders' && r2 && segments[3] === 'promote' && method === 'POST') {
+      const [o] = await dbq('SELECT * FROM supplier_order WHERE soid=$1 AND owner_uid=$2', [r2, user.uid])
+      if (!o) return [404, { error: 'Not found' }]
+      if (o.status !== 'Draft') return [400, { error: 'Only Draft orders can be promoted' }]
+      await dbr(`UPDATE supplier_order SET status='New' WHERE soid=$1`, [r2])
+      return [200, await fetchSO(r2)]
+    }
+
+    // POST /procurement/orders/draft — auto-create draft orders from forecast deficit
+    if (r1 === 'orders' && r2 === 'draft' && method === 'POST') {
+      await syncDraftOrders(user.uid)
+      const rows = await dbq(`SELECT so.*, s.name AS supplier_name FROM supplier_order so
+        JOIN supplier s ON s.sid=so.sid WHERE so.owner_uid=$1 AND so.status='Draft' ORDER BY so.soid DESC`, [user.uid])
+      return [200, rows]
+    }
+
+
     if (r1 === 'orders' && r2 && segments[3] === 'submit' && method === 'POST') {
       const [o] = await dbq('SELECT * FROM supplier_order WHERE soid=$1 AND owner_uid=$2', [r2, user.uid])
       if (!o) return [404, { error:'Not found' }]
@@ -1180,10 +1219,191 @@ async function route(method, segments, body, headers, event) {
     }
   }
 
+  // ── REPORTS ───────────────────────────────────────────────────────────────
+  if (r0 === 'reports') {
+    if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+
+    // GET /reports/sales?period=week|month|year
+    if (r1 === 'sales' && method === 'GET') {
+      const period = segments[2] || 'week'
+      const intervals = { week:'7 days', month:'30 days', year:'365 days' }
+      const interval = intervals[period] || '7 days'
+      const rows = await dbq(`
+        SELECT DATE(o.created_at) AS day,
+               SUM(oi.qty * oi.price) AS revenue
+        FROM "order" o
+        JOIN order_item oi ON oi.oid = o.oid
+        JOIN menu m ON m.mid = o.mid
+        WHERE m.owner_uid = $1
+          AND o.status NOT IN ('Declined','Cancelled')
+          AND o.created_at >= NOW() - INTERVAL '${interval}'
+        GROUP BY DATE(o.created_at)
+        ORDER BY day ASC`, [user.uid])
+      return [200, rows]
+    }
+
+    // GET /reports/abc
+    if (r1 === 'abc' && method === 'GET') {
+      // ABC by revenue contribution
+      const items = await dbq(`
+        SELECT r.rid, r.name,
+               SUM(oi.qty * oi.price) AS revenue,
+               COUNT(DISTINCT o.oid) AS order_count,
+               STDDEV(oi.qty * oi.price) AS revenue_stddev,
+               AVG(oi.qty * oi.price) AS revenue_avg
+        FROM order_item oi
+        JOIN recipe r ON r.rid = oi.rid
+        JOIN "order" o ON o.oid = oi.oid
+        JOIN menu m ON m.mid = o.mid
+        WHERE m.owner_uid = $1
+          AND o.status NOT IN ('Declined','Cancelled')
+          AND o.created_at >= NOW() - INTERVAL '365 days'
+        GROUP BY r.rid, r.name
+        ORDER BY revenue DESC`, [user.uid])
+
+      // ABC classification: A=top 80%, B=next 15%, C=bottom 5%
+      const total = items.reduce((s, r) => s + Number(r.revenue), 0)
+      let cumulative = 0
+      const classified = items.map(r => {
+        cumulative += Number(r.revenue)
+        const pct = total > 0 ? cumulative / total : 0
+        const abc = pct <= 0.8 ? 'A' : pct <= 0.95 ? 'B' : 'C'
+        // XYZ: coefficient of variation — X(stable)<0.5, Y(variable)0.5-1, Z(erratic)>1
+        const cv = r.revenue_avg > 0 ? Number(r.revenue_stddev||0) / Number(r.revenue_avg) : 0
+        const xyz = cv < 0.5 ? 'X' : cv < 1 ? 'Y' : 'Z'
+        return { ...r, revenue: Number(r.revenue), abc, xyz, cv: Math.round(cv*100)/100 }
+      })
+
+      // Association rules (basket analysis) — orders as transactions
+      const orderItems = await dbq(`
+        SELECT o.oid, r.name AS item
+        FROM order_item oi
+        JOIN recipe r ON r.rid = oi.rid
+        JOIN "order" o ON o.oid = oi.oid
+        JOIN menu m ON m.mid = o.mid
+        WHERE m.owner_uid = $1
+          AND o.status NOT IN ('Declined','Cancelled')
+          AND o.created_at >= NOW() - INTERVAL '365 days'
+        ORDER BY o.oid, r.name`, [user.uid])
+
+      // Group by order → transactions
+      const transactions = {}
+      orderItems.forEach(({ oid, item }) => {
+        if (!transactions[oid]) transactions[oid] = new Set()
+        transactions[oid].add(item)
+      })
+      const txList = Object.values(transactions).map(s => [...s])
+      const nTx = txList.length
+      const rules = []
+
+      if (nTx >= 5) {
+        // Find all items with support >= 0.05
+        const itemFreq = {}
+        txList.forEach(tx => tx.forEach(item => { itemFreq[item] = (itemFreq[item]||0)+1 }))
+        const freqItems = Object.keys(itemFreq).filter(i => itemFreq[i]/nTx >= 0.05)
+
+        // Generate 2-item association rules
+        for (let i = 0; i < freqItems.length; i++) {
+          for (let j = i+1; j < freqItems.length; j++) {
+            const a = freqItems[i], b = freqItems[j]
+            const both = txList.filter(tx => tx.includes(a) && tx.includes(b)).length
+            const supp = both / nTx
+            if (supp < 0.05) continue
+            const confAB = both / itemFreq[a]
+            const confBA = both / itemFreq[b]
+            if (confAB >= 0.2) rules.push({ antecedent:a, consequent:b, support:supp, confidence:confAB, lift:confAB/(itemFreq[b]/nTx) })
+            if (confBA >= 0.2) rules.push({ antecedent:b, consequent:a, support:supp, confidence:confBA, lift:confBA/(itemFreq[a]/nTx) })
+          }
+        }
+        rules.sort((a,b) => b.confidence - a.confidence)
+      }
+
+      return [200, { items: classified, rules: rules.slice(0,10) }]
+    }
+  }
+
   return [404, { error: 'Not found' }]
 }
 
-// ─── FORECAST ENGINE ──────────────────────────────────────────────────────────
+// ─── SYNC DRAFT ORDERS FROM FORECAST ─────────────────────────────────────────
+async function syncDraftOrders(ownerUid) {
+  // Get current forecast deficits per product
+  const forecasts = await dbq(
+    `SELECT pid, tg FROM product_forecast WHERE owner_uid=$1 AND tg < 0`, [ownerUid])
+  if (!forecasts.length) {
+    // No deficits — delete all existing Draft orders
+    await dbr(`DELETE FROM supplier_order_item WHERE soid IN (
+      SELECT soid FROM supplier_order WHERE owner_uid=$1 AND status='Draft')`, [ownerUid])
+    await dbr(`DELETE FROM supplier_order WHERE owner_uid=$1 AND status='Draft'`, [ownerUid])
+    return
+  }
+
+  // Group deficit products by cheapest supplier
+  const supplierGroups = {} // sid → [{pid, qty_needed, unit_price, currency}]
+  for (const { pid, tg } of forecasts) {
+    const qtyNeeded = Math.abs(Number(tg))
+    // Find cheapest supplier link for this product
+    const links = await dbq(`
+      SELECT ps.sid, ps.price, ps.currency FROM product_supplier ps
+      JOIN supplier s ON s.sid=ps.sid
+      WHERE ps.pid=$1 AND s.owner_uid=$2
+      ORDER BY ps.price ASC NULLS LAST LIMIT 1`, [pid, ownerUid])
+    if (!links.length) continue
+    const { sid, price, currency } = links[0]
+    if (!supplierGroups[sid]) supplierGroups[sid] = []
+    supplierGroups[sid].push({ pid, qty_needed: qtyNeeded, unit_price: price||0, currency: currency||'AMD' })
+  }
+
+  // Get or create a Draft order per supplier
+  for (const [sid, items] of Object.entries(supplierGroups)) {
+    const [existing] = await dbq(
+      `SELECT soid FROM supplier_order WHERE owner_uid=$1 AND sid=$2 AND status='Draft'`,
+      [ownerUid, sid])
+
+    if (existing) {
+      // Update existing draft items
+      await dbr('DELETE FROM supplier_order_item WHERE soid=$1', [existing.soid])
+      for (const it of items) {
+        await dbr(`INSERT INTO supplier_order_item (soid,pid,qty_ordered,unit_price,currency)
+          VALUES ($1,$2,$3,$4,$5)`, [existing.soid, it.pid, it.qty_needed, it.unit_price, it.currency])
+      }
+    } else {
+      // Create new Draft order
+      const sup = (await dbq('SELECT * FROM supplier WHERE sid=$1', [sid]))[0]
+      // Pick cheapest delivery term
+      const terms = sup?.schedule?.delivery || []
+      const term = terms.sort((a,b)=>(a.days_before??99)-(b.days_before??99))[0]
+      const now = new Date()
+      const mm = String(now.getMinutes()).padStart(2,'0')
+      // Simple order_id for draft
+      const [{ count }] = await dbq('SELECT COUNT(*) AS count FROM supplier_order WHERE owner_uid=$1', [ownerUid])
+      const seq = parseInt(count)+1
+      const words = sup.name.trim().split(/\s+/)
+      const initials = words.length===1 ? sup.name.slice(0,2).toUpperCase() : (words[0][0]+words[1][0]).toUpperCase()
+      const orderId = `${seq}-${initials}-${mm}`
+      const res = await dbr(`INSERT INTO supplier_order
+        (owner_uid,sid,order_id,status,delivery_term,delivery_fee,currency)
+        VALUES ($1,$2,$3,'Draft',$4,0,$5) RETURNING soid`,
+        [ownerUid, sid, orderId, term?.name||null, 'AMD'])
+      const soid = res.rows[0].soid
+      for (const it of items) {
+        await dbr(`INSERT INTO supplier_order_item (soid,pid,qty_ordered,unit_price,currency)
+          VALUES ($1,$2,$3,$4,$5)`, [soid, it.pid, it.qty_needed, it.unit_price, it.currency])
+      }
+    }
+  }
+
+  // Delete Draft orders for suppliers that no longer have deficit products
+  const activeSids = Object.keys(supplierGroups).map(Number)
+  const allDrafts = await dbq(
+    `SELECT soid, sid FROM supplier_order WHERE owner_uid=$1 AND status='Draft'`, [ownerUid])
+  for (const draft of allDrafts) {
+    if (!activeSids.includes(Number(draft.sid))) {
+      await dbr('DELETE FROM supplier_order_item WHERE soid=$1', [draft.soid])
+      await dbr('DELETE FROM supplier_order WHERE soid=$1', [draft.soid])
+    }
+  }
+}
 async function runForecast(ownerUid) {
   const now = new Date()
   const periodStart = new Date(now); periodStart.setHours(8,0,0,0)

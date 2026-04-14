@@ -103,6 +103,9 @@ const RU = {
   "Are you sure you want to cancel order":"Вы уверены, что хотите отменить заказ",
   "No restaurants open right now":"Сейчас нет открытых ресторанов",
   "Check back soon!":"Загляните позже!",
+  "Reports":"Отчёты","Week":"Неделя","Month":"Месяц","Year":"Год",
+  "Revenue":"Выручка","ABC Analysis":"ABC-анализ","Association Rules":"Правила ассоциации",
+  "No data yet.":"Данных пока нет.",
   "New Item":"Новое блюдо","Edit Item":"Редактировать блюдо",
   "Delete items?":"Удалить блюда?",
   "Are you sure you wish to delete":"Вы уверены, что хотите удалить",
@@ -497,7 +500,7 @@ function Nav({ user, page, setPage, logout, lang, setLang }) {
   const [dropOpen, setDropOpen] = useState(false);
   const tl = k => lang==='ru' ? (RU[k]||k) : k;
   const links = isM
-    ? [{key:"orders-manuf",label:tl("Orders")},{key:"products",label:tl("Products")},{key:"items",label:tl("Items")},{key:"menus",label:tl("Menus")},{key:"procurement",label:tl("Procurement")},{key:"suppliers",label:tl("Suppliers")}]
+    ? [{key:"orders-manuf",label:tl("Orders")},{key:"products",label:tl("Products")},{key:"items",label:tl("Items")},{key:"menus",label:tl("Menus")},{key:"procurement",label:tl("Procurement")},{key:"suppliers",label:tl("Suppliers")},{key:"reports",label:tl("Reports")}]
     : [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")}];
   const navigate = key => { setPage(key); setDropOpen(false); };
   return (
@@ -576,7 +579,21 @@ function LoginPage({ onLogin, setPage, setLang }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
   const [email, setEmail] = useState(""); const [pw, setPw] = useState(""); const [err, setErr] = useState(""); const [loading, setLoading] = useState(false);
-  const submit = async() => { setErr(""); setLoading(true); try { const {token,user}=await api.login(email,pw); localStorage.setItem("token",token); onLogin(user); } catch(e){setErr(e.message);} finally{setLoading(false);} };
+  const submit = async() => {
+    setErr(""); setLoading(true);
+    try {
+      const {token,user} = await api.login(email,pw);
+      localStorage.setItem("token",token); onLogin(user);
+    } catch(e) {
+      if (e.message === 'unverified_recent') {
+        setErr("Please verify your email. A message has been sent earlier for you to confirm registration.");
+      } else if (e.message === 'unverified_expired') {
+        setErr("Your verification link has expired. Please register again.");
+      } else {
+        setErr(e.message);
+      }
+    } finally { setLoading(false); }
+  };
   return (
     <AuthLayout>
       <h2 style={{ fontFamily:G.font, fontSize:22, marginBottom:24 }}>Welcome back</h2>
@@ -601,6 +618,7 @@ function SignupPage({ setPage, toast, setLang }) {
   const tl = k => lang==='ru'?(RU[k]||k):k;
   const [form, setForm] = useState({ first_name:"", last_name:"", email:"", phone:"", street_address:"", city:"", zip:"", password:"", is_manufacturer:false, business_name:"" });
   const [errors, setErrors] = useState({}); const [loading, setLoading] = useState(false);
+  const [registered, setRegistered] = useState(false);
   const set = (k,v) => setForm(p=>({...p,[k]:v}));
   const submit = async() => {
     const e = {};
@@ -609,10 +627,23 @@ function SignupPage({ setPage, toast, setLang }) {
     if (form.is_manufacturer&&!form.business_name) e.business_name="Required for manufacturers";
     if (Object.keys(e).length) { setErrors(e); return; }
     setLoading(true);
-    try { await api.register(form); toast("Account created! Check your email."); setPage("login"); }
+    try { await api.register(form); setRegistered(true); }
     catch(err){ if(err.message.includes("already exists")) setErrors({email:err.message}); else toast(err.message,"error"); }
     finally { setLoading(false); }
   };
+  if (registered) return (
+    <AuthLayout>
+      <div style={{ textAlign:"center", padding:"24px 0" }}>
+        <div style={{ fontSize:40, marginBottom:16 }}>📬</div>
+        <h2 style={{ fontFamily:G.font, fontSize:22, marginBottom:16 }}>Check your inbox</h2>
+        <p style={{ color:G.muted, lineHeight:1.7, fontSize:14, marginBottom:24 }}>
+          Please, check your email to find a welcome message. If you haven't received any, please check your spam folder.
+          If nonetheless the message didn't make it to your email, repeat registration making sure you entered a correct email.
+        </p>
+        <Btn variant="ghost" onClick={()=>setPage("login")}>Back to login</Btn>
+      </div>
+    </AuthLayout>
+  );
   return (
     <AuthLayout>
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:24 }}>
@@ -2503,6 +2534,7 @@ function ProcurementPage({
   const [procLinks, setProcLinks] = useState([]);
   const [loading, setLoading]     = useState(true);
   const [showNew, setShowNew]     = useState(false);
+  const [useForecast, setUseForecast] = useState(false);
   const [viewOrder, setViewOrder] = useState(null);  // order being viewed/accepted
   const [sortKey, setSortKey]     = useState("order_id");
   const [sortDir, setSortDir]     = useState("asc");
@@ -2632,10 +2664,27 @@ function ProcurementPage({
   const toggleSort = k => { if(sortKey===k)setSortDir(d=>d==="asc"?"desc":"asc"); else{setSortKey(k);setSortDir("asc");} };
 
   const totals = calcTotals(newRows);
-  const STATUS_COLORS = { New:G.muted, Submitted:"#eab308", Cancelled:G.red, Delivered:"#3b82f6", Accepted:G.green };
+  const STATUS_COLORS = { Draft:"#8b5cf6", New:G.muted, Submitted:"#eab308", Cancelled:G.red, Delivered:"#3b82f6", Accepted:G.green };
 
   return (
-    <Page title={tl("Procurement")} actions={<Btn size="sm" onClick={()=>setShowNew(s=>!s)}>+ New Order</Btn>}>
+    <Page title={tl("Procurement")} actions={
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+        <label style={{display:"flex",alignItems:"center",gap:6,fontSize:13,color:G.muted,cursor:"pointer",userSelect:"none"}}>
+          <input type="checkbox" checked={useForecast} onChange={e=>setUseForecast(e.target.checked)} style={{accentColor:G.caramel,width:14,height:14}}/>
+          use forecast
+        </label>
+        <Btn size="sm" onClick={async()=>{
+          if(useForecast){
+            setSaving(true);
+            try{ await api.createDraftOrders(); await load(); toast("Draft orders created from forecast"); }
+            catch(e){ toast(e.message,"error"); }
+            finally{ setSaving(false); }
+          } else {
+            setShowNew(s=>!s);
+          }
+        }} loading={saving}>+ New Order</Btn>
+      </div>
+    }>
 
       {/* ── NEW ORDER FORM ─────────────────────────────────────────────── */}
       {showNew&&(
@@ -2748,8 +2797,16 @@ function ProcurementPage({
                   return (
                     <tr key={o.soid} style={{ borderBottom:i<paged.length-1?`1px solid ${G.border}`:"none" }}>
                       <td style={{padding:"10px 14px"}}>
-                        {["Submitted"].includes(o.status) ? (
+                        {o.status==="Submitted" ? (
                           <button onClick={()=>openOrder(o.soid)} style={{background:"none",border:"none",cursor:"pointer",fontFamily:G.mono,fontSize:14,color:G.caramel,fontWeight:700,textDecoration:"underline",padding:0}}>{o.order_id}</button>
+                        ) : o.status==="Draft" ? (
+                          <div style={{display:"flex",alignItems:"center",gap:8}}>
+                            <span style={{fontWeight:700,fontSize:14,color:STATUS_COLORS.Draft}}>{o.order_id}</span>
+                            <button onClick={async()=>{
+                              try{ const updated=await api.promoteSupplierOrder(o.soid); setOrders(prev=>prev.map(x=>x.soid===o.soid?{...x,...updated}:x)); toast("Order promoted to New"); }
+                              catch(e){ toast(e.message,"error"); }
+                            }} style={{background:"none",border:`1px solid ${STATUS_COLORS.Draft}`,borderRadius:5,cursor:"pointer",fontSize:11,color:STATUS_COLORS.Draft,fontFamily:G.mono,padding:"2px 7px",fontWeight:600}}>→ New</button>
+                          </div>
                         ) : <span style={{fontWeight:700,fontSize:14}}>{o.order_id}</span>}
                       </td>
                       <td style={{padding:"10px 14px",fontSize:13,color:G.muted}}>{dateStr}</td>
@@ -3038,6 +3095,206 @@ function SupplierForm({
   );
 }
 
+// ─── REPORTS PAGE ─────────────────────────────────────────────────────────────
+function ReportsPage({ toast }) {
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+  const [period, setPeriod]   = useState('week');
+  const [salesData, setSales] = useState([]);
+  const [abcData, setAbc]     = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [tooltip, setTooltip] = useState(null);
+
+  const load = useCallback(async(p) => {
+    const per = p||period;
+    setLoading(true);
+    try {
+      const [sales, abc] = await Promise.all([api.getSalesReport(per), api.getAbcReport()]);
+      setSales(sales||[]); setAbc(abc||null);
+    } catch(e){ toast(e.message,"error"); }
+    finally{ setLoading(false); }
+  },[]);
+  useEffect(()=>{ load('week'); },[]);
+
+  const changePeriod = p => { setPeriod(p); load(p); };
+  const totalRevenue = salesData.reduce((s,d)=>s+Number(d.revenue),0);
+  const abcColor = { A:"#00b894", B:"#fdcb6e", C:"#d63031" };
+
+  // ── Sales bar chart ─────────────────────────────────────────────────────
+  const W=600,H=220,PL=55,PR=20,PT=20,PB=45,cW=W-PL-PR,cH=H-PT-PB;
+  const vals = salesData.map(d=>Number(d.revenue));
+  const maxV = Math.max(...vals,1);
+  const barW = Math.max(4, cW/Math.max(vals.length,1) - 4);
+  const n = vals.length;
+  const xMean=(n-1)/2, yMean=n?vals.reduce((a,b)=>a+b,0)/n:0;
+  const num=vals.reduce((s,v,i)=>s+(i-xMean)*(v-yMean),0);
+  const den=vals.reduce((s,_,i)=>s+(i-xMean)**2,0);
+  const slope=den?num/den:0, intercept=yMean-slope*xMean;
+  const trendY0=PT+cH*(1-Math.max(0,intercept)/maxV);
+  const trendY1=PT+cH*(1-Math.max(0,intercept+slope*(n-1))/maxV);
+  const fmtAMD = v => v>=1000?`${Math.round(v/1000)}k`:String(Math.round(v));
+
+  // ── ABC scatter ─────────────────────────────────────────────────────────
+  const SW=600,SH=300,SPL=60,SPR=20,SPT=20,SPB=40,ScW=SW-SPL-SPR,ScH=SH-SPT-SPB;
+  const items = abcData?.items||[];
+  const maxRev=Math.max(...items.map(i=>i.revenue),1);
+  const maxCv=Math.max(...items.map(i=>i.cv),2);
+  const z05=SPL+(0.5/maxCv)*ScW, z1=SPL+(1/maxCv)*ScW;
+  const xPos=cv=>SPL+(cv/maxCv)*ScW;
+  const yPos=rev=>SPT+ScH-(rev/maxRev)*ScH;
+
+  // ── Association rules ────────────────────────────────────────────────────
+  const rules = abcData?.rules||[];
+  const RW=600,RPL=185,RPR=20,RPT=20,RPB=20,RcW=RW-RPL-RPR;
+
+  return (
+    <Page title={tl("Reports")}>
+      {/* SALES */}
+      <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20 }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
+          <h3 style={{ fontFamily:G.font, fontSize:17 }}>{tl("Sales")}</h3>
+          <div style={{ display:"flex", borderRadius:8, border:`1px solid ${G.border}`, overflow:"hidden" }}>
+            {[["week","Week"],["month","Month"],["year","Year"]].map(([k,l])=>(
+              <button key={k} onClick={()=>changePeriod(k)} style={{
+                padding:"6px 16px",border:"none",cursor:"pointer",fontSize:13,fontFamily:G.mono,
+                background:period===k?G.caramel:G.white,color:period===k?G.white:G.muted,transition:"all 0.15s"
+              }}>{tl(l)}</button>
+            ))}
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:16, marginBottom:16 }}>
+          <div style={{ background:G.sand, borderRadius:10, padding:"12px 20px" }}>
+            <p style={{ fontSize:11, color:G.muted, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:4 }}>{tl("Revenue")}</p>
+            <p style={{ fontFamily:G.font, fontSize:22, fontWeight:700, color:G.caramel }}>{totalRevenue.toLocaleString()} AMD</p>
+          </div>
+          <div style={{ background:G.sand, borderRadius:10, padding:"12px 20px" }}>
+            <p style={{ fontSize:11, color:G.muted, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:4 }}>Days with sales</p>
+            <p style={{ fontFamily:G.font, fontSize:22, fontWeight:700, color:G.dark }}>{salesData.length}</p>
+          </div>
+        </div>
+        {loading?<Spinner/>:!vals.length?(
+          <div style={{padding:60,textAlign:"center",color:G.muted}}>{tl("No data yet.")}</div>
+        ):(
+          <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{maxWidth:W,display:"block",margin:"0 auto"}}>
+            {[0,0.25,0.5,0.75,1].map(t=>{
+              const y=PT+cH*(1-t);
+              return <g key={t}>
+                <line x1={PL} y1={y} x2={PL+cW} y2={y} stroke={G.border} strokeWidth={0.5}/>
+                <text x={PL-6} y={y+4} textAnchor="end" fontSize={10} fill={G.muted}>{fmtAMD(maxV*t)}</text>
+              </g>;
+            })}
+            {vals.map((v,i)=>{
+              const x=PL+i*(cW/n)+cW/(n*2)-barW/2;
+              const bh=Math.max(1,(v/maxV)*cH);
+              const date=new Date(salesData[i].day);
+              const label=`${String(date.getDate()).padStart(2,"0")}/${String(date.getMonth()+1).padStart(2,"0")}`;
+              return <g key={i}>
+                <rect x={x} y={PT+cH-bh} width={barW} height={bh} fill={G.caramel} opacity={0.8} rx={2}/>
+                {i%(Math.ceil(n/8))===0&&<text x={x+barW/2} y={H-8} textAnchor="middle" fontSize={9} fill={G.muted}>{label}</text>}
+              </g>;
+            })}
+            {n>1&&<line x1={PL} y1={Math.min(H-PB,Math.max(PT,trendY0))} x2={PL+cW} y2={Math.min(H-PB,Math.max(PT,trendY1))} stroke={G.red} strokeWidth={1.5} strokeDasharray="4,3"/>}
+            <line x1={PL} y1={PT} x2={PL} y2={PT+cH} stroke={G.border} strokeWidth={1}/>
+            <line x1={PL} y1={PT+cH} x2={PL+cW} y2={PT+cH} stroke={G.border} strokeWidth={1}/>
+            <text x={PL-44} y={PT+cH/2} textAnchor="middle" fontSize={10} fill={G.muted} transform={`rotate(-90,${PL-44},${PT+cH/2})`}>AMD</text>
+          </svg>
+        )}
+      </div>
+
+      {/* ABC/XYZ */}
+      <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, position:"relative" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
+          <h3 style={{ fontFamily:G.font, fontSize:17 }}>{tl("ABC Analysis")}</h3>
+          <div style={{ display:"flex", gap:10 }}>
+            {[["A","#00b894"],["B","#fdcb6e"],["C","#d63031"]].map(([cat,col])=>(
+              <span key={cat} style={{ fontSize:12, display:"flex", alignItems:"center", gap:4 }}>
+                <span style={{ width:10, height:10, borderRadius:"50%", background:col, display:"inline-block" }}/>
+                {cat}
+              </span>
+            ))}
+            <span style={{ fontSize:12, color:G.muted }}>· X(stable) Y(variable) Z(erratic)</span>
+          </div>
+        </div>
+        {loading?<Spinner/>:!items.length?(
+          <div style={{padding:60,textAlign:"center",color:G.muted}}>{tl("No data yet.")}</div>
+        ):(
+          <div style={{position:"relative",display:"inline-block",width:"100%",maxWidth:SW}}>
+            <svg width="100%" viewBox={`0 0 ${SW} ${SH}`} style={{display:"block"}}>
+              <rect x={SPL} y={SPT} width={z05-SPL} height={ScH} fill="#f0fdf4" opacity={0.4}/>
+              <rect x={z05} y={SPT} width={z1-z05} height={ScH} fill="#fefce8" opacity={0.4}/>
+              <rect x={z1}  y={SPT} width={SPL+ScW-z1} height={ScH} fill="#fef2f2" opacity={0.4}/>
+              <text x={SPL+5} y={SPT+14} fontSize={10} fill="#00b894" fontWeight="700">X</text>
+              <text x={z05+5} y={SPT+14} fontSize={10} fill="#fdcb6e" fontWeight="700">Y</text>
+              <text x={z1+5}  y={SPT+14} fontSize={10} fill="#d63031" fontWeight="700">Z</text>
+              {[0,0.25,0.5,0.75,1].map(t=>{
+                const y=SPT+ScH*(1-t);
+                return <g key={t}>
+                  <line x1={SPL} y1={y} x2={SPL+ScW} y2={y} stroke={G.border} strokeWidth={0.5}/>
+                  <text x={SPL-5} y={y+4} textAnchor="end" fontSize={9} fill={G.muted}>{Math.round(maxRev*t/1000)}k</text>
+                </g>;
+              })}
+              <line x1={z05} y1={SPT} x2={z05} y2={SPT+ScH} stroke={G.border} strokeDasharray="3,3" strokeWidth={1}/>
+              <line x1={z1}  y1={SPT} x2={z1}  y2={SPT+ScH} stroke={G.border} strokeDasharray="3,3" strokeWidth={1}/>
+              <line x1={SPL} y1={SPT} x2={SPL} y2={SPT+ScH} stroke={G.border}/>
+              <line x1={SPL} y1={SPT+ScH} x2={SPL+ScW} y2={SPT+ScH} stroke={G.border}/>
+              <text x={SPL+ScW/2} y={SH-5} textAnchor="middle" fontSize={10} fill={G.muted}>Coefficient of variation (volatility →)</text>
+              <text x={14} y={SPT+ScH/2} textAnchor="middle" fontSize={10} fill={G.muted} transform={`rotate(-90,14,${SPT+ScH/2})`}>Revenue →</text>
+              {items.map((it,i)=>(
+                <circle key={i} cx={xPos(it.cv)} cy={yPos(it.revenue)} r={6}
+                  fill={abcColor[it.abc]||G.muted} opacity={0.85} style={{cursor:"pointer"}}
+                  onMouseEnter={e=>setTooltip({...it,px:xPos(it.cv),py:yPos(it.revenue)})}
+                  onMouseLeave={()=>setTooltip(null)}/>
+              ))}
+            </svg>
+            {tooltip&&(
+              <div style={{position:"absolute",left:Math.min(tooltip.px+14,SW-170),top:Math.max(tooltip.py-40,0),
+                background:G.white,border:`1px solid ${G.border}`,borderRadius:8,padding:"8px 12px",fontSize:12,
+                boxShadow:"0 4px 14px rgba(0,0,0,0.12)",pointerEvents:"none",maxWidth:170,zIndex:10,lineHeight:1.6}}>
+                <b style={{color:G.dark,display:"block",marginBottom:2}}>{tooltip.name}</b>
+                <span style={{color:G.muted}}>Revenue: </span>{Math.round(tooltip.revenue).toLocaleString()} AMD<br/>
+                <span style={{color:G.muted}}>Orders: </span>{tooltip.order_count}<br/>
+                <span style={{color:G.muted}}>Class: </span>
+                <span style={{fontWeight:700,color:abcColor[tooltip.abc]}}>{tooltip.abc}</span>
+                <span style={{fontWeight:700,color:tooltip.xyz==='X'?"#00b894":tooltip.xyz==='Y'?"#fdcb6e":"#d63031"}}>{tooltip.xyz}</span>
+                <span style={{color:G.muted}}> CV:{tooltip.cv}</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ASSOCIATION RULES */}
+      <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24 }}>
+        <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:4 }}>{tl("Association Rules")}</h3>
+        <p style={{ fontSize:13, color:G.muted, marginBottom:16 }}>Top 10 item pairs by confidence — bar width = confidence, colour = lift</p>
+        {loading?<Spinner/>:!rules.length?(
+          <div style={{padding:40,textAlign:"center",color:G.muted,fontSize:13}}>Not enough order data for association rules (need ≥5 orders with multiple items).</div>
+        ):(
+          <svg width="100%" viewBox={`0 0 ${RW} ${RPT+RPB+rules.length*34}`} style={{maxWidth:RW,display:"block",margin:"0 auto"}}>
+            {rules.map((r,i)=>{
+              const y=RPT+i*34;
+              const confW=r.confidence*RcW;
+              const liftCol=r.lift>1.5?"#00b894":r.lift>1?"#fdcb6e":"#d63031";
+              const label=`${r.antecedent.slice(0,20)} → ${r.consequent.slice(0,16)}`;
+              return <g key={i}>
+                <text x={RPL-6} y={y+16} textAnchor="end" fontSize={11} fill={G.dark}>{label}</text>
+                <rect x={RPL} y={y+4} width={RcW} height={20} fill={G.sand} rx={4}/>
+                <rect x={RPL} y={y+4} width={confW} height={20} fill={G.caramel} rx={4} opacity={0.85}/>
+                <text x={RPL+confW+6} y={y+18} fontSize={10} fill={G.muted}>
+                  {`conf ${Math.round(r.confidence*100)}%`}
+                </text>
+                <text x={RPL+confW+68} y={y+18} fontSize={10} fill={liftCol} fontWeight="700">
+                  {`lift ${r.lift.toFixed(1)}×`}
+                </text>
+              </g>;
+            })}
+          </svg>
+        )}
+      </div>
+    </Page>
+  );
+}
+
 function SuppliersPage({
  toast }) {
   const lang = useLangContext();
@@ -3152,6 +3409,7 @@ export default function App() {
           {page==="menus"        &&<MenusPage    toast={toast} storeSchedule={storeSchedule} setStoreSchedule={setStoreSchedule}/>}
           {page==="procurement"  &&<ProcurementPage toast={toast}/>}
           {page==="suppliers"    &&<SuppliersPage toast={toast}/>}
+          {page==="reports"      &&<ReportsPage   toast={toast}/>}
           {page==="orders-manuf" &&<OrdersManufPage toast={toast}/>}
           {page==="restaurants"  &&<RestaurantsPage setPage={setPage} setActiveMenu={setActiveMenu}/>}
           {page==="order"        &&<OrderPage menu={activeMenu} user={user} setPage={setPage} toast={toast}/>}

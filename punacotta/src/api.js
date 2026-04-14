@@ -66,7 +66,11 @@ export const api = {
   patchProductExpiry:     (pid,data)   => req('PATCH', `/procurement/${pid}`, data),
   getSupplierOrders:      ()           => req('GET',   '/procurement/orders'),
   getSupplierOrder:       (soid)       => req('GET',   `/procurement/orders/${soid}`),
-  createSupplierOrder:    (data)       => req('POST',  '/procurement/orders', data),
+  createDraftOrders:      ()           => req('POST', '/procurement/orders/draft'),
+  promoteSupplierOrder:   (soid)       => req('POST', `/procurement/orders/${soid}/promote`),
+  // Reports
+  getSalesReport:  (period) => req('GET', `/reports/sales/${period}`),
+  getAbcReport:    ()       => req('GET', '/reports/abc'),
   updateSupplierOrder:    (soid,data)  => req('PATCH', `/procurement/orders/${soid}`, data),
   submitSupplierOrder:    (soid)       => req('POST',  `/procurement/orders/${soid}/submit`),
   cancelSupplierOrder:    (soid)       => req('POST',  `/procurement/orders/${soid}/cancel`),
