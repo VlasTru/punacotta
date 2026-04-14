@@ -67,7 +67,6 @@ export const api = {
   getSupplierOrders:      ()           => req('GET',   '/procurement/orders'),
   getSupplierOrder:       (soid)       => req('GET',   `/procurement/orders/${soid}`),
   createDraftOrders:      ()           => req('POST', '/procurement/orders/draft'),
-  promoteSupplierOrder:   (soid)       => req('POST', `/procurement/orders/${soid}/promote`),
   // Reports
   getSalesReport:  (period) => req('GET', `/reports/sales/${period}`),
   getAbcReport:    ()       => req('GET', '/reports/abc'),
