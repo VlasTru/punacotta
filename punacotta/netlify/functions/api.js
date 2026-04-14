@@ -1064,20 +1064,11 @@ async function route(method, segments, body, headers, event) {
       return [200, await fetchSO(r2)]
     }
 
-    // POST /procurement/orders/:soid/promote — Draft → New
-    if (r1 === 'orders' && r2 && segments[3] === 'promote' && method === 'POST') {
-      const [o] = await dbq('SELECT * FROM supplier_order WHERE soid=$1 AND owner_uid=$2', [r2, user.uid])
-      if (!o) return [404, { error: 'Not found' }]
-      if (o.status !== 'Draft') return [400, { error: 'Only Draft orders can be promoted' }]
-      await dbr(`UPDATE supplier_order SET status='New' WHERE soid=$1`, [r2])
-      return [200, await fetchSO(r2)]
-    }
-
-    // POST /procurement/orders/draft — auto-create draft orders from forecast deficit
+    // POST /procurement/orders/forecast — auto-create New orders from forecast deficit
     if (r1 === 'orders' && r2 === 'draft' && method === 'POST') {
       await syncDraftOrders(user.uid)
       const rows = await dbq(`SELECT so.*, s.name AS supplier_name FROM supplier_order so
-        JOIN supplier s ON s.sid=so.sid WHERE so.owner_uid=$1 AND so.status='Draft' ORDER BY so.soid DESC`, [user.uid])
+        JOIN supplier s ON s.sid=so.sid WHERE so.owner_uid=$1 AND so.status='New' ORDER BY so.soid DESC`, [user.uid])
       return [200, rows]
     }
 
@@ -1107,6 +1098,16 @@ async function route(method, segments, body, headers, event) {
       if (['Accepted','Cancelled'].includes(o.status)) return [400, { error:'Cannot cancel' }]
       await dbr(`UPDATE supplier_order SET status='Cancelled' WHERE soid=$1`, [r2])
       return [200, await fetchSO(r2)]
+    }
+
+    // DELETE /procurement/orders/:soid — hard delete New orders only
+    if (r1 === 'orders' && r2 && !segments[3] && method === 'DELETE') {
+      const [o] = await dbq('SELECT * FROM supplier_order WHERE soid=$1 AND owner_uid=$2', [r2, user.uid])
+      if (!o) return [404, { error:'Not found' }]
+      if (o.status !== 'New') return [400, { error:'Only New orders can be deleted' }]
+      await dbr('DELETE FROM supplier_order_item WHERE soid=$1', [r2])
+      await dbr('DELETE FROM supplier_order WHERE soid=$1', [r2])
+      return [200, { deleted: true }]
     }
 
     // POST /procurement/orders/:soid/accept — accept with reconciliation
@@ -1333,8 +1334,8 @@ async function syncDraftOrders(ownerUid) {
   if (!forecasts.length) {
     // No deficits — delete all existing Draft orders
     await dbr(`DELETE FROM supplier_order_item WHERE soid IN (
-      SELECT soid FROM supplier_order WHERE owner_uid=$1 AND status='Draft')`, [ownerUid])
-    await dbr(`DELETE FROM supplier_order WHERE owner_uid=$1 AND status='Draft'`, [ownerUid])
+      SELECT soid FROM supplier_order WHERE owner_uid=$1 AND status='New')`, [ownerUid])
+    await dbr(`DELETE FROM supplier_order WHERE owner_uid=$1 AND status='New'`, [ownerUid])
     return
   }
 
@@ -1357,7 +1358,7 @@ async function syncDraftOrders(ownerUid) {
   // Get or create a Draft order per supplier
   for (const [sid, items] of Object.entries(supplierGroups)) {
     const [existing] = await dbq(
-      `SELECT soid FROM supplier_order WHERE owner_uid=$1 AND sid=$2 AND status='Draft'`,
+      `SELECT soid FROM supplier_order WHERE owner_uid=$1 AND sid=$2 AND status='New'`,
       [ownerUid, sid])
 
     if (existing) {
@@ -1383,7 +1384,7 @@ async function syncDraftOrders(ownerUid) {
       const orderId = `${seq}-${initials}-${mm}`
       const res = await dbr(`INSERT INTO supplier_order
         (owner_uid,sid,order_id,status,delivery_term,delivery_fee,currency)
-        VALUES ($1,$2,$3,'Draft',$4,0,$5) RETURNING soid`,
+        VALUES ($1,$2,$3,'New',$4,0,$5) RETURNING soid`,
         [ownerUid, sid, orderId, term?.name||null, 'AMD'])
       const soid = res.rows[0].soid
       for (const it of items) {
@@ -1396,7 +1397,7 @@ async function syncDraftOrders(ownerUid) {
   // Delete Draft orders for suppliers that no longer have deficit products
   const activeSids = Object.keys(supplierGroups).map(Number)
   const allDrafts = await dbq(
-    `SELECT soid, sid FROM supplier_order WHERE owner_uid=$1 AND status='Draft'`, [ownerUid])
+    `SELECT soid, sid FROM supplier_order WHERE owner_uid=$1 AND status='New'`, [ownerUid])
   for (const draft of allDrafts) {
     if (!activeSids.includes(Number(draft.sid))) {
       await dbr('DELETE FROM supplier_order_item WHERE soid=$1', [draft.soid])

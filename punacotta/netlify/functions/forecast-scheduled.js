@@ -113,8 +113,8 @@ export const handler = async () => {
 async function syncDraftOrdersScheduled(ownerUid) {
   const forecasts = await dbq(`SELECT pid, tg FROM product_forecast WHERE owner_uid=$1 AND tg < 0`, [ownerUid])
   if (!forecasts.length) {
-    await dbr(`DELETE FROM supplier_order_item WHERE soid IN (SELECT soid FROM supplier_order WHERE owner_uid=$1 AND status='Draft')`, [ownerUid])
-    await dbr(`DELETE FROM supplier_order WHERE owner_uid=$1 AND status='Draft'`, [ownerUid])
+    await dbr(`DELETE FROM supplier_order_item WHERE soid IN (SELECT soid FROM supplier_order WHERE owner_uid=$1 AND status='New')`, [ownerUid])
+    await dbr(`DELETE FROM supplier_order WHERE owner_uid=$1 AND status='New'`, [ownerUid])
     return
   }
   const supplierGroups = {}
@@ -127,7 +127,7 @@ async function syncDraftOrdersScheduled(ownerUid) {
     supplierGroups[sid].push({ pid, qty_needed:qtyNeeded, unit_price:price||0, currency:currency||'AMD' })
   }
   for (const [sid, items] of Object.entries(supplierGroups)) {
-    const [existing] = await dbq(`SELECT soid FROM supplier_order WHERE owner_uid=$1 AND sid=$2 AND status='Draft'`, [ownerUid, sid])
+    const [existing] = await dbq(`SELECT soid FROM supplier_order WHERE owner_uid=$1 AND sid=$2 AND status='New'`, [ownerUid, sid])
     if (existing) {
       await dbr('DELETE FROM supplier_order_item WHERE soid=$1', [existing.soid])
       for (const it of items) await dbr(`INSERT INTO supplier_order_item (soid,pid,qty_ordered,unit_price,currency) VALUES ($1,$2,$3,$4,$5)`, [existing.soid,it.pid,it.qty_needed,it.unit_price,it.currency])
@@ -141,13 +141,13 @@ async function syncDraftOrdersScheduled(ownerUid) {
       const seq = parseInt(count)+1
       const words = sup.name.trim().split(/\s+/)
       const initials = words.length===1 ? sup.name.slice(0,2).toUpperCase() : (words[0][0]+words[1][0]).toUpperCase()
-      const res = await dbr(`INSERT INTO supplier_order (owner_uid,sid,order_id,status,delivery_term,delivery_fee,currency) VALUES ($1,$2,$3,'Draft',$4,0,$5) RETURNING soid`, [ownerUid,sid,`${seq}-${initials}-${mm}`,term?.name||null,'AMD'])
+      const res = await dbr(`INSERT INTO supplier_order (owner_uid,sid,order_id,status,delivery_term,delivery_fee,currency) VALUES ($1,$2,$3,'New',$4,0,$5) RETURNING soid`, [ownerUid,sid,`${seq}-${initials}-${mm}`,term?.name||null,'AMD'])
       const soid = res.rows[0].soid
       for (const it of items) await dbr(`INSERT INTO supplier_order_item (soid,pid,qty_ordered,unit_price,currency) VALUES ($1,$2,$3,$4,$5)`, [soid,it.pid,it.qty_needed,it.unit_price,it.currency])
     }
   }
   const activeSids = Object.keys(supplierGroups).map(Number)
-  const allDrafts = await dbq(`SELECT soid, sid FROM supplier_order WHERE owner_uid=$1 AND status='Draft'`, [ownerUid])
+  const allDrafts = await dbq(`SELECT soid, sid FROM supplier_order WHERE owner_uid=$1 AND status='New'`, [ownerUid])
   for (const draft of allDrafts) {
     if (!activeSids.includes(Number(draft.sid))) {
       await dbr('DELETE FROM supplier_order_item WHERE soid=$1', [draft.soid])

@@ -73,7 +73,8 @@ export const api = {
   getAbcReport:    ()       => req('GET', '/reports/abc'),
   updateSupplierOrder:    (soid,data)  => req('PATCH', `/procurement/orders/${soid}`, data),
   submitSupplierOrder:    (soid)       => req('POST',  `/procurement/orders/${soid}/submit`),
-  cancelSupplierOrder:    (soid)       => req('POST',  `/procurement/orders/${soid}/cancel`),
+  cancelSupplierOrder:    (soid)       => req('POST',   `/procurement/orders/${soid}/cancel`),
+  deleteSupplierOrder:    (soid)       => req('DELETE', `/procurement/orders/${soid}`),
   acceptSupplierOrder:    (soid,data)  => req('POST',  `/procurement/orders/${soid}/accept`, data),
   getSupplierOrderPDF:    (soid,type)  => req('GET',   `/procurement/orders/${soid}/pdf${type==='recon'?'/recon':''}`),
 

@@ -2534,7 +2534,6 @@ function ProcurementPage({
   const [procLinks, setProcLinks] = useState([]);
   const [loading, setLoading]     = useState(true);
   const [showNew, setShowNew]     = useState(false);
-  const [useForecast, setUseForecast] = useState(false);
   const [viewOrder, setViewOrder] = useState(null);  // order being viewed/accepted
   const [sortKey, setSortKey]     = useState("order_id");
   const [sortDir, setSortDir]     = useState("asc");
@@ -2664,25 +2663,18 @@ function ProcurementPage({
   const toggleSort = k => { if(sortKey===k)setSortDir(d=>d==="asc"?"desc":"asc"); else{setSortKey(k);setSortDir("asc");} };
 
   const totals = calcTotals(newRows);
-  const STATUS_COLORS = { Draft:"#8b5cf6", New:G.muted, Submitted:"#eab308", Cancelled:G.red, Delivered:"#3b82f6", Accepted:G.green };
+  const STATUS_COLORS = { New:G.muted, Submitted:"#eab308", Cancelled:G.red, Delivered:"#3b82f6", Accepted:G.green };
 
   return (
     <Page title={tl("Procurement")} actions={
-      <div style={{display:"flex",alignItems:"center",gap:12}}>
-        <label style={{display:"flex",alignItems:"center",gap:6,fontSize:13,color:G.muted,cursor:"pointer",userSelect:"none"}}>
-          <input type="checkbox" checked={useForecast} onChange={e=>setUseForecast(e.target.checked)} style={{accentColor:G.caramel,width:14,height:14}}/>
-          use forecast
-        </label>
-        <Btn size="sm" onClick={async()=>{
-          if(useForecast){
-            setSaving(true);
-            try{ await api.createDraftOrders(); await load(); toast("Draft orders created from forecast"); }
-            catch(e){ toast(e.message,"error"); }
-            finally{ setSaving(false); }
-          } else {
-            setShowNew(s=>!s);
-          }
-        }} loading={saving}>+ New Order</Btn>
+      <div style={{display:"flex",alignItems:"center",gap:8}}>
+        <Btn variant="secondary" size="sm" loading={saving} onClick={async()=>{
+          setSaving(true);
+          try{ await api.createDraftOrders(); await load(); toast("Orders created from forecast"); }
+          catch(e){ toast(e.message,"error"); }
+          finally{ setSaving(false); }
+        }}>From forecast</Btn>
+        <Btn size="sm" onClick={()=>setShowNew(s=>!s)}>+ New Order</Btn>
       </div>
     }>
 
@@ -2707,7 +2699,16 @@ function ProcurementPage({
                 {availTerms.map(t=><option key={t.name} value={t.name}>{t.name} (cut-off {t.cutoff})</option>)}
               </select>
             </div>
-            <Input label="Delivery fee" type="number" value={String(newFee)} onChange={setNewFee} placeholder="0" />
+            <div>
+              <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Delivery fee</label>
+              <input
+                type="number" min="0" value={newFee} placeholder="0"
+                onKeyDown={e=>{ if(e.key==="-"||e.key==="−") e.preventDefault(); }}
+                onChange={e=>{ const v=e.target.value; if(v===''||parseFloat(v)>=0) setNewFee(v); }}
+                onBlur={e=>{ if(parseFloat(e.target.value)<0||e.target.value==='') setNewFee('0'); }}
+                style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}
+              />
+            </div>
             <div>
               <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Currency</label>
               <select value={newCurrency} onChange={e=>setNewCurrency(e.target.value)}
@@ -2799,14 +2800,6 @@ function ProcurementPage({
                       <td style={{padding:"10px 14px"}}>
                         {["New","Submitted"].includes(o.status) ? (
                           <button onClick={()=>openOrder(o.soid)} style={{background:"none",border:"none",cursor:"pointer",fontFamily:G.mono,fontSize:14,color:G.caramel,fontWeight:700,textDecoration:"underline",padding:0}}>{o.order_id}</button>
-                        ) : o.status==="Draft" ? (
-                          <div style={{display:"flex",alignItems:"center",gap:8}}>
-                            <span style={{fontWeight:700,fontSize:14,color:STATUS_COLORS.Draft}}>{o.order_id}</span>
-                            <button onClick={async()=>{
-                              try{ const updated=await api.promoteSupplierOrder(o.soid); setOrders(prev=>prev.map(x=>x.soid===o.soid?{...x,...updated}:x)); toast("Order promoted to New"); }
-                              catch(e){ toast(e.message,"error"); }
-                            }} style={{background:"none",border:`1px solid ${STATUS_COLORS.Draft}`,borderRadius:5,cursor:"pointer",fontSize:11,color:STATUS_COLORS.Draft,fontFamily:G.mono,padding:"2px 7px",fontWeight:600}}>→ New</button>
-                          </div>
                         ) : <span style={{fontWeight:700,fontSize:14}}>{o.order_id}</span>}
                       </td>
                       <td style={{padding:"10px 14px",fontSize:13,color:G.muted}}>{dateStr}</td>
@@ -2966,29 +2959,44 @@ function ProcurementPage({
                 </tbody>
               </table>
             </div>
-            <div style={{ padding:"16px 24px", borderTop:`1px solid ${G.border}`, display:"flex", gap:10, justifyContent:"flex-end" }}>
-              <Btn variant="ghost" onClick={()=>setViewOrder(null)}>Close</Btn>
-              {viewOrder?.status==="New" ? (<>
-                <Btn variant="secondary" loading={saving} onClick={async()=>{
-                  setSaving(true);
-                  try {
-                    const items = acceptItems.filter(it=>it.soiid).map(it=>({soiid:it.soiid,pid:it.pid,qty_ordered:parseFloat(it.qty_actual)||0,unit_price:parseFloat(it.unit_price)||0,currency:it.currency}));
-                    await api.updateSupplierOrder(viewOrder.soid, { items });
-                    toast("Order saved"); await load(); setViewOrder(null);
-                  } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
-                }}>Save</Btn>
-                <Btn loading={saving} onClick={async()=>{
-                  setSaving(true);
-                  try {
-                    const submitted = await api.submitSupplierOrder(viewOrder.soid);
-                    toast(`Order #${submitted.order_id} submitted`);
-                    downloadPDF(submitted.po_pdf_url, submitted.order_id, "purchase_order");
-                    await load(); setViewOrder(null);
-                  } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
-                }}>Submit</Btn>
-              </>) : viewOrder?.status==="Submitted" ? (
-                <Btn onClick={()=>setAcceptDialog(true)}>Accept order</Btn>
-              ) : null}
+            <div style={{ padding:"16px 24px", borderTop:`1px solid ${G.border}`, display:"flex", gap:10, justifyContent:"space-between", alignItems:"center" }}>
+              <div>
+                {viewOrder?.status==="New" && (
+                  <Btn variant="danger" loading={saving} onClick={async()=>{
+                    if(!window.confirm("Delete this order? This cannot be undone.")) return;
+                    setSaving(true);
+                    try {
+                      await api.deleteSupplierOrder(viewOrder.soid);
+                      setOrders(prev=>prev.filter(o=>o.soid!==viewOrder.soid));
+                      toast("Order deleted"); setViewOrder(null);
+                    } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
+                  }}>Delete</Btn>
+                )}
+              </div>
+              <div style={{display:"flex",gap:10}}>
+                <Btn variant="ghost" onClick={()=>setViewOrder(null)}>Close</Btn>
+                {viewOrder?.status==="New" ? (<>
+                  <Btn variant="secondary" loading={saving} onClick={async()=>{
+                    setSaving(true);
+                    try {
+                      const items = acceptItems.filter(it=>it.soiid).map(it=>({soiid:it.soiid,pid:it.pid,qty_ordered:parseFloat(it.qty_actual)||0,unit_price:parseFloat(it.unit_price)||0,currency:it.currency}));
+                      await api.updateSupplierOrder(viewOrder.soid, { items });
+                      toast("Order saved"); await load(); setViewOrder(null);
+                    } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
+                  }}>Save</Btn>
+                  <Btn loading={saving} onClick={async()=>{
+                    setSaving(true);
+                    try {
+                      const submitted = await api.submitSupplierOrder(viewOrder.soid);
+                      toast(`Order #${submitted.order_id} submitted`);
+                      downloadPDF(submitted.po_pdf_url, submitted.order_id, "purchase_order");
+                      await load(); setViewOrder(null);
+                    } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
+                  }}>Submit</Btn>
+                </>) : viewOrder?.status==="Submitted" ? (
+                  <Btn onClick={()=>setAcceptDialog(true)}>Accept order</Btn>
+                ) : null}
+              </div>
             </div>
           </div>
         </div>
