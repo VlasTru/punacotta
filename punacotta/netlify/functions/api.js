@@ -68,8 +68,12 @@ function safe(u) { const { password_hash, ...r } = u; return r }
 const BASE_URL = process.env.URL || 'https://punacotta.netlify.app'
 
 async function sendMail(to, subject, text, html) {
-  // Option 1: Resend API (recommended — set RESEND_API_KEY in Netlify env vars)
+  // Option 1: Resend API — set RESEND_API_KEY in Netlify environment variables
+  // Sign up free at resend.com, create an API key, add it to Netlify env vars.
+  // Without a verified domain, emails can only be sent to your own Resend account email.
+  // To send to any address, verify your domain at resend.com/domains.
   if (process.env.RESEND_API_KEY) {
+    const from = process.env.SMTP_FROM || 'Pun&Cotta <onboarding@resend.dev>'
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
@@ -77,21 +81,21 @@ async function sendMail(to, subject, text, html) {
         'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
       },
       body: JSON.stringify({
-        from: process.env.SMTP_FROM || 'Pun&Cotta <hello@punacotta.netlify.app>',
+        from,
         to: [to],
         subject,
         text,
         html: html || text.replace(/\n/g, '<br>'),
       }),
     })
-    if (!res.ok) {
-      const err = await res.text()
-      throw new Error(`Email failed: ${err}`)
-    }
+    const data = await res.json().catch(()=>({}))
+    if (!res.ok) throw new Error(`Email send failed: ${data.message || res.status}`)
+    console.log(`📧 Sent via Resend to ${to}: ${data.id}`)
     return
   }
 
-  // Option 2: SMTP (Gmail app password, Mailgun SMTP, etc.)
+  // Option 2: SMTP — set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS in Netlify env vars
+  // Works with Gmail app passwords: SMTP_HOST=smtp.gmail.com SMTP_PORT=587
   if (process.env.SMTP_HOST) {
     const t = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
@@ -103,11 +107,12 @@ async function sendMail(to, subject, text, html) {
       from: process.env.SMTP_FROM || process.env.SMTP_USER,
       to, subject, text, html: html || text.replace(/\n/g, '<br>'),
     })
+    console.log(`📧 Sent via SMTP to ${to}`)
     return
   }
 
-  // Fallback: log to console (dev only)
-  console.log(`📧 [DEV] To: ${to}\nSubject: ${subject}\n${text}`)
+  // No mail config — log the link so you can still use it from Netlify function logs
+  console.warn(`📧 [NO MAIL CONFIG] To: ${to} | Subject: ${subject}\n${text}`)
 }
 
 function mailHtml(title, body, cta_url, cta_label) {
@@ -232,14 +237,13 @@ async function route(method, segments, body, headers, event) {
         return [401, { error: 'Invalid email or password' }]
       // Check email verification
       if (!u.email_verified) {
-        // Check if a verify token was sent within the last hour
+        // Check if a verify token is still valid (i.e. sent within the last hour)
         const [recent] = await dbq(
           `SELECT tid FROM auth_token WHERE uid=$1 AND purpose='verify' AND used=false
-           AND created_at > NOW() - INTERVAL '1 hour' ORDER BY created_at DESC LIMIT 1`, [u.uid])
+           AND expires_at > NOW() ORDER BY expires_at DESC LIMIT 1`, [u.uid])
         if (recent) {
           return [403, { error: 'unverified_recent', message: 'Please verify your email. A message has been sent earlier for you to confirm registration.' }]
         }
-        // Token expired — allow re-registration by clearing expired tokens
         return [403, { error: 'unverified_expired', message: 'Your verification link has expired. Please register again.' }]
       }
       return [200, { token: signToken({ uid:u.uid, email:u.email, is_manufacturer:u.is_manufacturer }), user: safe(u) }]
@@ -252,10 +256,10 @@ async function route(method, segments, body, headers, event) {
       const [ex] = await dbq('SELECT uid, email_verified FROM "user" WHERE email = $1', [email.toLowerCase()])
       if (ex) {
         if (ex.email_verified) return [409, { error: 'A username with this email already exists. Please, login.' }]
-        // Unverified — check if a recent token exists (within 1 hour)
+        // Unverified — check if a recent token is still valid (not yet expired)
         const [recent] = await dbq(
           `SELECT tid FROM auth_token WHERE uid=$1 AND purpose='verify' AND used=false
-           AND created_at > NOW() - INTERVAL '1 hour'`, [ex.uid])
+           AND expires_at > NOW()`, [ex.uid])
         if (recent) return [409, { error: 'A verification email was recently sent to this address. Please check your inbox.' }]
         // Token expired — delete old user and allow re-registration
         await dbr('DELETE FROM auth_token WHERE uid=$1', [ex.uid])

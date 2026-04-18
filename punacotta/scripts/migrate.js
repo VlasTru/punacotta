@@ -175,8 +175,11 @@ CREATE TABLE IF NOT EXISTS auth_token (
   token      VARCHAR(64) NOT NULL UNIQUE,
   purpose    VARCHAR(10) NOT NULL,
   expires_at TIMESTAMPTZ NOT NULL,
-  used       BOOLEAN NOT NULL DEFAULT false
+  used       BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE auth_token ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
 -- Seed lookup data (idempotent)
 INSERT INTO units (name) VALUES
