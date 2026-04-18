@@ -683,8 +683,27 @@ function ForgotPage({
  setPage, toast }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
-  const [email, setEmail] = useState(""); const [loading, setLoading] = useState(false);
-  const submit = async() => { setLoading(true); try { await api.forgot(email); toast("Recovery link sent!"); setPage("login"); } catch(e){toast(e.message,"error");} finally{setLoading(false);} };
+  const [email, setEmail] = useState(""); const [loading, setLoading] = useState(false); const [sent, setSent] = useState(false);
+  const submit = async() => {
+    if (!email.trim()) return;
+    setLoading(true);
+    try { await api.forgot(email); setSent(true); }
+    catch(e){ toast(e.message,"error"); }
+    finally{ setLoading(false); }
+  };
+  if (sent) return (
+    <AuthLayout>
+      <div style={{ textAlign:"center", padding:"24px 0" }}>
+        <div style={{ fontSize:40, marginBottom:16 }}>📬</div>
+        <h2 style={{ fontFamily:G.font, fontSize:22, marginBottom:12 }}>Check your inbox</h2>
+        <p style={{ color:G.muted, fontSize:14, lineHeight:1.7, marginBottom:24 }}>
+          If <b>{email}</b> is registered, a password reset link has been sent. It's valid for 1 hour.<br/>
+          Check your spam folder if you don't see it.
+        </p>
+        <Btn variant="ghost" onClick={()=>setPage("login")}>← Back to login</Btn>
+      </div>
+    </AuthLayout>
+  );
   return (
     <AuthLayout>
       <h2 style={{ fontFamily:G.font, fontSize:22, marginBottom:8 }}>Reset password</h2>
@@ -3442,20 +3461,125 @@ function SuppliersPage({
   );
 }
 
+// ─── RESET PASSWORD PAGE ──────────────────────────────────────────────────────
+function ResetPage({ token, setPage, toast, onLogin }) {
+  const [pw, setPw]           = useState("");
+  const [pw2, setPw2]         = useState("");
+  const [loading, setLoading] = useState(false);
+  const [done, setDone]       = useState(false);
+
+  const submit = async () => {
+    if (pw.trim().length < 6) { toast("Password must be at least 6 characters", "error"); return; }
+    if (pw !== pw2) { toast("Passwords do not match", "error"); return; }
+    setLoading(true);
+    try {
+      await api.reset(token, pw.trim());
+      setDone(true);
+    } catch(e) { toast(e.message, "error"); }
+    finally { setLoading(false); }
+  };
+
+  if (done) return (
+    <AuthLayout>
+      <div style={{ textAlign:"center", padding:"24px 0" }}>
+        <div style={{ fontSize:40, marginBottom:16 }}>✅</div>
+        <h2 style={{ fontFamily:G.font, fontSize:22, marginBottom:12 }}>Password updated</h2>
+        <p style={{ color:G.muted, marginBottom:24, lineHeight:1.6 }}>Your password has been changed. You can now log in with your new password.</p>
+        <Btn onClick={()=>{ window.location.hash=""; setPage("login"); }}>Go to login</Btn>
+      </div>
+    </AuthLayout>
+  );
+
+  return (
+    <AuthLayout>
+      <h2 style={{ fontFamily:G.font, fontSize:22, marginBottom:8 }}>Set new password</h2>
+      <p style={{ color:G.muted, fontSize:14, marginBottom:24, lineHeight:1.6 }}>Enter a new password for your account.</p>
+      <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+        <Input label="New password" type="password" value={pw}  onChange={setPw}  placeholder="••••••••" />
+        <Input label="Confirm password" type="password" value={pw2} onChange={setPw2} placeholder="••••••••" />
+        <Btn size="lg" onClick={submit} loading={loading}>Set password</Btn>
+        <button onClick={()=>{ window.location.hash=""; setPage("login"); }}
+          style={{ background:"none", border:"none", color:G.muted, cursor:"pointer", fontSize:13, textAlign:"center" }}>
+          ← Back to login
+        </button>
+      </div>
+    </AuthLayout>
+  );
+}
+
+// ─── VERIFY PAGE ──────────────────────────────────────────────────────────────
+function VerifyPage({ token, setPage, toast, onLogin }) {
+  const [status, setStatus] = useState("loading"); // loading | success | error
+  const [msg, setMsg]       = useState("");
+
+  useEffect(()=>{
+    api.verify(token)
+      .then(({ token: jwt, user }) => {
+        localStorage.setItem("token", jwt);
+        setStatus("success");
+        setTimeout(()=>{ window.location.hash=""; onLogin(user); }, 1500);
+      })
+      .catch(e => { setStatus("error"); setMsg(e.message); });
+  }, [token]);
+
+  return (
+    <AuthLayout>
+      <div style={{ textAlign:"center", padding:"32px 0" }}>
+        {status==="loading" && <><Spinner/><p style={{color:G.muted,marginTop:16}}>Verifying your email…</p></>}
+        {status==="success" && <>
+          <div style={{ fontSize:44, marginBottom:12 }}>🎉</div>
+          <h2 style={{ fontFamily:G.font, fontSize:22, marginBottom:8 }}>Email confirmed!</h2>
+          <p style={{ color:G.muted }}>Logging you in…</p>
+        </>}
+        {status==="error" && <>
+          <div style={{ fontSize:44, marginBottom:12 }}>⚠️</div>
+          <h2 style={{ fontFamily:G.font, fontSize:22, marginBottom:12 }}>Link expired or invalid</h2>
+          <p style={{ color:G.muted, marginBottom:24 }}>{msg || "This verification link has expired. Please register again."}</p>
+          <Btn onClick={()=>{ window.location.hash=""; setPage("signup"); }}>Register again</Btn>
+        </>}
+      </div>
+    </AuthLayout>
+  );
+}
+
 // ─── APP ROOT ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [user, setUser] = useState(()=>{
     try{ const t=localStorage.getItem("token"); if(!t)return null; const p=JSON.parse(atob(t.split(".")[1])); return p.exp*1000>Date.now()?p:null; }catch{return null;}
   });
+
+  // Parse hash-based tokens on load: #reset/TOKEN or #verify/TOKEN
+  const [hashPage, setHashPage] = useState(()=>{
+    const h = window.location.hash;
+    if (h.startsWith("#reset/"))  return { type:"reset",  token:h.slice(7) };
+    if (h.startsWith("#verify/")) return { type:"verify", token:h.slice(8) };
+    return null;
+  });
+
   const [page, setPage] = useState(()=>user?(user.is_manufacturer?"orders-manuf":"restaurants"):"login");
   const [activeMenu, setActiveMenu] = useState(null);
   const [storeSchedule, setStoreSchedule] = useState(DEFAULT_STORE);
   const [lang, setLang] = useLang();
-  // Keep module-level _currentLang in sync
   _currentLang = lang;
   const {toasts,toast,remove} = useToast();
   const logout=()=>{localStorage.removeItem("token");setUser(null);setPage("login");};
-  const onLogin=u=>{setUser(u);setPage(u.is_manufacturer?"orders-manuf":"restaurants");};
+  const onLogin=u=>{setUser(u);setHashPage(null);setPage(u.is_manufacturer?"orders-manuf":"restaurants");};
+
+  // If a hash token is present, show the appropriate page regardless of auth state
+  if (hashPage?.type === "reset") return (
+    <LangContext.Provider value={lang}>
+      <style>{css}</style>
+      <Toast toasts={toasts} remove={remove} />
+      <ResetPage token={hashPage.token} setPage={p=>{setHashPage(null);setPage(p);}} toast={toast} onLogin={onLogin}/>
+    </LangContext.Provider>
+  );
+  if (hashPage?.type === "verify") return (
+    <LangContext.Provider value={lang}>
+      <style>{css}</style>
+      <Toast toasts={toasts} remove={remove} />
+      <VerifyPage token={hashPage.token} setPage={p=>{setHashPage(null);setPage(p);}} toast={toast} onLogin={onLogin}/>
+    </LangContext.Provider>
+  );
   return (
     <LangContext.Provider value={lang}>
       <style>{css}</style>

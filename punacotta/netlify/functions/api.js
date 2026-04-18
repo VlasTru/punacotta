@@ -65,20 +65,58 @@ function getUser(headers) {
 function safe(u) { const { password_hash, ...r } = u; return r }
 
 // ─── MAIL ─────────────────────────────────────────────────────────────────────
-const BASE_URL = process.env.URL || 'http://localhost:8888'
-function mailer() {
+const BASE_URL = process.env.URL || 'https://punacotta.netlify.app'
+
+async function sendMail(to, subject, text, html) {
+  // Option 1: Resend API (recommended — set RESEND_API_KEY in Netlify env vars)
+  if (process.env.RESEND_API_KEY) {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+      },
+      body: JSON.stringify({
+        from: process.env.SMTP_FROM || 'Pun&Cotta <hello@punacotta.netlify.app>',
+        to: [to],
+        subject,
+        text,
+        html: html || text.replace(/\n/g, '<br>'),
+      }),
+    })
+    if (!res.ok) {
+      const err = await res.text()
+      throw new Error(`Email failed: ${err}`)
+    }
+    return
+  }
+
+  // Option 2: SMTP (Gmail app password, Mailgun SMTP, etc.)
   if (process.env.SMTP_HOST) {
-    return nodemailer.createTransport({
-      host: process.env.SMTP_HOST, port: Number(process.env.SMTP_PORT) || 587,
+    const t = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT) || 587,
+      secure: Number(process.env.SMTP_PORT) === 465,
       auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
     })
+    await t.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to, subject, text, html: html || text.replace(/\n/g, '<br>'),
+    })
+    return
   }
-  return nodemailer.createTransport({ jsonTransport: true })
+
+  // Fallback: log to console (dev only)
+  console.log(`📧 [DEV] To: ${to}\nSubject: ${subject}\n${text}`)
 }
-async function sendMail(to, subject, text) {
-  const t = mailer()
-  const info = await t.sendMail({ from: process.env.SMTP_FROM || 'hello@puncotta.com', to, subject, text })
-  if (!process.env.SMTP_HOST) { try { console.log('📧', JSON.parse(info.message).text) } catch {} }
+
+function mailHtml(title, body, cta_url, cta_label) {
+  return `<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:500px;margin:40px auto;color:#2c1810">
+  <h2 style="font-family:Georgia,serif;color:#c8873a">${title}</h2>
+  <p style="line-height:1.6;color:#8b7355">${body}</p>
+  ${cta_url ? `<a href="${cta_url}" style="display:inline-block;margin:20px 0;padding:12px 28px;background:#c8873a;color:#fff;border-radius:8px;text-decoration:none;font-weight:600">${cta_label}</a>` : ''}
+  <p style="font-size:12px;color:#bbb;margin-top:32px">Pun&amp;Cotta · If you didn't request this, ignore this email.</p>
+  </body></html>`
 }
 
 // ─── RECIPE SELECT ────────────────────────────────────────────────────────────
@@ -233,8 +271,17 @@ async function route(method, segments, body, headers, event) {
       const token = randomBytes(32).toString('hex')
       await dbr(`INSERT INTO auth_token (uid,token,purpose,expires_at) VALUES ($1,$2,'verify',$3)`,
         [u.uid, token, new Date(Date.now() + 3_600_000)])
-      await sendMail(u.email, 'Welcome to Pun&Cotta – confirm your email',
-        `Hi, ${u.first_name}\n\nConfirm:\n${BASE_URL}/verify/${token}\n\nValid 1 hour.\n\nPunacotta.`)
+      await sendMail(
+        u.email,
+        'Welcome to Pun&Cotta – confirm your email',
+        `Hi ${u.first_name},\n\nPlease confirm your email:\n${BASE_URL}/#verify/${token}\n\nThis link expires in 1 hour.\n\nPun&Cotta`,
+        mailHtml(
+          'Welcome to Pun&Cotta 🎉',
+          `Hi ${u.first_name}, thanks for signing up! Please confirm your email address to get started.`,
+          `${BASE_URL}/#verify/${token}`,
+          'Confirm my email'
+        )
+      )
       return [201, { message: 'Please check your email to find a welcome message.' }]
     }
     if (r1 === 'forgot' && method === 'POST') {
@@ -243,8 +290,17 @@ async function route(method, segments, body, headers, event) {
         const token = randomBytes(32).toString('hex')
         await dbr(`INSERT INTO auth_token (uid,token,purpose,expires_at) VALUES ($1,$2,'reset',$3)`,
           [u.uid, token, new Date(Date.now() + 3_600_000)])
-        await sendMail(u.email, 'Pun&Cotta – reset your password',
-          `Hi, ${u.first_name}\n\nReset:\n${BASE_URL}/reset/${token}\n\nValid 1 hour.\n\nPunacotta.`)
+        await sendMail(
+          u.email,
+          'Pun&Cotta – reset your password',
+          `Hi ${u.first_name},\n\nReset your password:\n${BASE_URL}/#reset/${token}\n\nThis link expires in 1 hour.\n\nPun&Cotta`,
+          mailHtml(
+            'Reset your password',
+            `Hi ${u.first_name}, we received a request to reset your Pun&amp;Cotta password. Click the button below — the link is valid for 1 hour.`,
+            `${BASE_URL}/#reset/${token}`,
+            'Reset my password'
+          )
+        )
       }
       return [200, { message: 'If that email exists, a reset link has been sent.' }]
     }
