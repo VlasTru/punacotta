@@ -44,7 +44,7 @@ const RU = {
   "NEW":"НОВЫЕ","ACCEPTED":"ПРИНЯТЫЕ","PREPARING":"ГОТОВЯТСЯ","DONE":"ВЫПОЛНЕНЫ",
   "DISPATCHED":"ПЕРЕДАНЫ","DECLINED":"ОТКЛОНЕНЫ","DELIVERED":"ДОСТАВЛЕНЫ",
   // Status action buttons
-  "Accept":"Принять","Start Preparing":"Начать готовить","Mark as Done":"Выполнено",
+  "Accept":"Принять","Start":"Начать","Mark as Done":"Выполнено",
   "Dispatch":"Передать","Confirm as Delivered":"Подтвердить доставку",
   // Fields and labels
   "Search":"Найти","Empty":"Пока пусто","From":"С","To":"по",
@@ -127,9 +127,21 @@ function useLangContext() { return useContext(LangContext); }
 
 const CURRENCIES = ["AMD","RUR","USD","EUR"];
 
+// Unit submultiple config — read-only, not editable by Restaurant
+const UNIT_META = {
+  kilograms: { abbr:"kg", sub:"grams",       sub_abbr:"g",  conv:1000 },
+  litres:    { abbr:"l",  sub:"millilitres",  sub_abbr:"ml", conv:1000 },
+  pounds:    { abbr:"lb", sub:"ounces",       sub_abbr:"oz", conv:16   },
+};
+// Returns abbreviated unit string for a unit name
+function unitAbbr(name) { return UNIT_META[name]?.abbr || name || ""; }
+function subAbbr(name)  { return UNIT_META[name]?.sub_abbr || ""; }
+function conv(name)     { return UNIT_META[name]?.conv || 1; }
+function hasSub(name)   { return !!UNIT_META[name]; }
+
 const STATUS_CONFIG = {
   New:        { color:"#22c55e", bg:"#f0fdf4", next:"Accept",               canDecline:true },
-  Accepted:   { color:"#eab308", bg:"#fefce8", next:"Start Preparing",      canDecline:true },
+  Accepted:   { color:"#eab308", bg:"#fefce8", next:"Start",           canDecline:true },
   Preparing:  { color:"#f97316", bg:"#fff7ed", next:"Mark as Done",         canDecline:true },
   Done:       { color:"#22c55e", bg:"#f0fdf4", next:"Dispatch",             canDecline:true },
   Dispatched: { color:"#15803d", bg:"#dcfce7", next:"Confirm as Delivered", canDecline:true },
@@ -150,6 +162,7 @@ const css = `
   @keyframes slideIn { from{opacity:0;transform:translateX(16px)} to{opacity:1;transform:translateX(0)} }
   @keyframes toastIn { from{opacity:0;transform:translateY(20px) scale(0.96)} to{opacity:1;transform:translateY(0) scale(1)} }
   @keyframes spin { to{transform:rotate(360deg)} }
+  @keyframes slideUp { from{transform:translateY(100%)} to{transform:translateY(0)} }
   .recipe-thumb:hover .zoom-icon { opacity:1 !important; }
   .recipe-link:hover { text-decoration:underline; }
   .drop-zone { border:2px dashed ${G.border}; border-radius:10px; padding:24px; text-align:center; cursor:pointer; transition:all 0.2s; }
@@ -358,6 +371,7 @@ function RecipeForm({
   const [form, setForm] = useState({
     name:"", description:"", unid:"", caid:"", price:"", currency:"AMD",
     available:true, deliverable:true, image_url:null, image_thumb_url:null, cloudinary_id:null,
+    allow_submultiples:false, moq:"",
     ...initial
   });
   const [imageBlob, setImageBlob] = useState(null);
@@ -454,6 +468,13 @@ function RecipeForm({
   );
 
   // ── GENERAL SLIDE ──────────────────────────────────────────────────────────
+  const selectedUnit = lookups.units?.find(u=>String(u.unid)===String(form.unid));
+  const unitName = selectedUnit?.name || "";
+  const unitAbbrStr = unitAbbr(unitName);
+  const priceLabel = form.allow_submultiples && unitAbbrStr
+    ? `${tl("Price per unit")} (${unitAbbrStr})`
+    : tl("Price");
+
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
@@ -461,9 +482,29 @@ function RecipeForm({
         <Input label={tl("Description")} value={form.description||""} onChange={v=>set("description",v)} />
         <Select label={tl("Units")} value={String(form.unid||"")} onChange={v=>set("unid",v)} options={lookups.units.map(u=>({value:String(u.unid),label:u.name}))} placeholder="Select units" />
         <Select label={tl("Category")} value={String(form.caid||"")} onChange={v=>set("caid",v)} options={lookups.categories.map(c=>({value:String(c.caid),label:c.name}))} placeholder="Select category" />
-        <Input label={tl("Price")} type="number" value={String(form.price||"")} onChange={v=>set("price",v)} placeholder="0" />
+        <Input label={priceLabel} type="number" value={String(form.price||"")} onChange={v=>set("price",v)} placeholder="0" />
         <Select label={tl("Currency")} value={form.currency||"AMD"} onChange={v=>set("currency",v)} options={CURRENCIES} />
       </div>
+
+      {/* Submultiples */}
+      {hasSub(unitName) && (
+        <div style={{ background:G.sand, borderRadius:10, padding:14, display:"flex", flexDirection:"column", gap:10 }}>
+          <label style={{ display:"flex", alignItems:"center", gap:8, fontSize:14, cursor:"pointer", fontWeight:600 }}>
+            <input type="checkbox" checked={!!form.allow_submultiples} onChange={e=>set("allow_submultiples",e.target.checked)} style={{accentColor:G.caramel}} />
+            Allow submultiples ({UNIT_META[unitName].sub_abbr})
+          </label>
+          {form.allow_submultiples && (
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <Input label={`MOQ (${UNIT_META[unitName].sub_abbr})`} type="number" value={String(form.moq||"")}
+                onChange={v=>set("moq",v)} placeholder={`e.g. 250`} />
+              <div style={{ fontSize:12, color:G.muted, paddingTop:20, lineHeight:1.5 }}>
+                Customer will add in {UNIT_META[unitName].sub_abbr} increments.<br/>
+                1 {unitName} = {UNIT_META[unitName].conv} {UNIT_META[unitName].sub}.
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <div>
         <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:8 }}>{tl("Image")}</label>
@@ -1070,7 +1111,7 @@ function RecipesPage({
         image_url = null; image_thumb_url = null; cloudinary_id = null;
       }
 
-      const payload = { name:form.name, description:form.description||null, unid:form.unid||null, caid:form.caid||null, price:Number(form.price)||0, currency:form.currency||"AMD", available:form.available!==false, deliverable:form.deliverable!==false, image_url, image_thumb_url, cloudinary_id, contents:(contents||[]).filter(c=>c.pid) };
+      const payload = { name:form.name, description:form.description||null, unid:form.unid||null, caid:form.caid||null, price:Number(form.price)||0, currency:form.currency||"AMD", available:form.available!==false, deliverable:form.deliverable!==false, image_url, image_thumb_url, cloudinary_id, allow_submultiples:!!form.allow_submultiples, moq:form.moq?Number(form.moq):null, contents:(contents||[]).filter(c=>c.pid) };
 
       if (existingRid) {
         const updated = await api.updateRecipe(existingRid, payload);
@@ -1803,6 +1844,91 @@ function NewOrderModal({
   );
 }
 
+// ─── EDIT ORDER MODAL (Restaurant adjusts quantities for Accepted order) ────────
+function EditOrderModal({ order, toast, onClose, onSaved }) {
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+  const [items, setItems] = useState(
+    (order.items||[]).map(it=>({ ...it, qty: it.qty, price: it.price }))
+  );
+  const [saving, setSaving] = useState(false);
+
+  const updateItem = (i, field, val) =>
+    setItems(p=>p.map((x,j)=>j===i?{...x,[field]:val}:x));
+
+  const total = items.reduce((s,it)=>{
+    const qty = parseFloat(it.qty)||0;
+    const price = parseFloat(it.price)||0;
+    return s + qty * price;
+  }, 0);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const updated = await api.updateOrderItems(order.oid,
+        items.map(it=>({ oiid:it.oiid, qty:parseFloat(it.qty)||0, price:parseFloat(it.price)||0 }))
+      );
+      toast(`Order #${order.oid} updated`);
+      onSaved(updated);
+    } catch(e) { toast(e.message,"error"); } finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+      <div style={{ background:G.white, borderRadius:16, width:"100%", maxWidth:640, maxHeight:"90vh", display:"flex", flexDirection:"column", boxShadow:"0 20px 60px rgba(44,24,16,0.2)", animation:"fadeIn 0.2s ease" }}>
+        <div style={{ padding:"20px 24px", borderBottom:`1px solid ${G.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <h3 style={{ fontFamily:G.font, fontSize:18 }}>Order #{order.oid}</h3>
+          <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, cursor:"pointer", color:G.muted }}>×</button>
+        </div>
+        <div style={{ flex:1, overflowY:"auto", padding:24 }}>
+          {order.customer&&(
+            <p style={{ fontSize:13, color:G.muted, marginBottom:16 }}>
+              {order.customer.first_name} {order.customer.last_name}
+              {order.customer.email&&<> · {order.customer.email}</>}
+            </p>
+          )}
+          <table style={{ width:"100%", borderCollapse:"collapse" }}>
+            <thead>
+              <tr style={{ background:G.sand, borderBottom:`1px solid ${G.border}` }}>
+                {["Item","Qty","Price / unit","Total"].map(h=>(
+                  <th key={h} style={{ padding:"8px 12px", textAlign:"left", fontSize:11, fontWeight:700, textTransform:"uppercase", color:G.muted, letterSpacing:"0.04em" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((it,i)=>(
+                <tr key={it.oiid} style={{ borderBottom:`1px solid ${G.border}` }}>
+                  <td style={{ padding:"10px 12px", fontSize:14 }}>{it.name}</td>
+                  <td style={{ padding:"10px 12px" }}>
+                    <input type="number" value={it.qty} min={0} step="any"
+                      onChange={e=>updateItem(i,"qty",e.target.value)}
+                      style={{ width:80, padding:"5px 8px", borderRadius:6, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none", textAlign:"right" }}/>
+                  </td>
+                  <td style={{ padding:"10px 12px" }}>
+                    <input type="number" value={it.price} min={0} step="any"
+                      onChange={e=>updateItem(i,"price",e.target.value)}
+                      style={{ width:90, padding:"5px 8px", borderRadius:6, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none", textAlign:"right" }}/>
+                  </td>
+                  <td style={{ padding:"10px 12px", fontSize:13, fontWeight:600, color:G.caramel, textAlign:"right" }}>
+                    {((parseFloat(it.qty)||0)*(parseFloat(it.price)||0)).toFixed(2)} {it.currency||"AMD"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ padding:"14px 24px", borderTop:`1px solid ${G.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <span style={{ fontFamily:G.font, fontSize:18, fontWeight:700, color:G.caramel }}>{total.toFixed(2)} AMD</span>
+          <div style={{ display:"flex", gap:10 }}>
+            <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+            <Btn onClick={save} loading={saving}>Save</Btn>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function OrdersManufPage({
  toast }) {
   const lang = useLangContext();
@@ -1820,6 +1946,7 @@ function OrdersManufPage({
   const [page, setPage]         = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [showNewOrder, setShowNewOrder] = useState(false);
+  const [editOrder, setEditOrder] = useState(null); // order being edited by restaurant
 
   const load = useCallback(async()=>{
     setLoading(true);
@@ -2013,6 +2140,14 @@ function OrdersManufPage({
           onCreated={order=>setOrders(prev=>[order,...prev])}
         />
       )}
+      {editOrder&&(
+        <EditOrderModal
+          order={editOrder}
+          toast={toast}
+          onClose={()=>setEditOrder(null)}
+          onSaved={updated=>{ setOrders(prev=>prev.map(o=>o.oid===updated.oid?updated:o)); setEditOrder(null); }}
+        />
+      )}
       {loading ? <Spinner/> : view==="kanban" ? (
         // ── KANBAN ────────────────────────────────────────────────────────────
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(240px, 1fr))", gap:14 }}>
@@ -2038,8 +2173,11 @@ function OrdersManufPage({
                         <span style={{ fontSize:11, color:G.muted }}>{o.pickup?tl("Pickup (free)"):tl("Delivery")}</span>
                       </div>
                       {(cfg.next && !(o.status==="Done" && o.allNonDeliverable))&&(
-                        <div style={{ display:"flex", gap:6, marginTop:8 }}>
+                        <div style={{ display:"flex", gap:4, marginTop:8 }}>
                           <Btn size="sm" onClick={()=>advance(o.oid)} style={{flex:1,fontSize:11,padding:"5px 0"}}>{tl(cfg.next)}</Btn>
+                          {o.status==="Accepted"&&(
+                            <Btn size="sm" variant="secondary" onClick={()=>setEditOrder(o)} style={{fontSize:11,padding:"5px 10px"}}>✎</Btn>
+                          )}
                           {cfg.canDecline&&<Btn variant="danger" size="sm" onClick={()=>{setPending(o.oid);setDialog("decline");}} style={{fontSize:11,padding:"5px 10px"}}>✕</Btn>}
                         </div>
                       )}
@@ -2163,12 +2301,13 @@ function OrderPage({
   const tl = k => lang==='ru'?(RU[k]||k):k;
   const [qty, setQty] = useState({}); const [delivery, setDelivery] = useState(null);
   const [savedAddresses, setSavedAddresses] = useState([]);
-  const [selectedAddr, setSelectedAddr] = useState(0); // index into savedAddresses, or -1 = "other"
+  const [selectedAddr, setSelectedAddr] = useState(0);
   const [otherStreet, setOtherStreet] = useState("");
   const [otherCity, setOtherCity]     = useState("");
   const [otherZip, setOtherZip]       = useState("");
   const [submitting, setSubmitting]   = useState(false);
   const [lightbox, setLightbox]       = useState(null);
+  const [viewItem, setViewItem]       = useState(null); // item detail dialog
 
   useEffect(()=>{
     api.getSavedAddresses().then(addrs=>{
@@ -2187,9 +2326,50 @@ function OrderPage({
   const grouped={};
   (menu.recipes||[]).forEach(r=>{if(!grouped[r.category])grouped[r.category]=[];grouped[r.category].push(r);});
 
-  const changeQty=(rid,delta)=>setQty(p=>({...p,[rid]:Math.max(0,Math.min(20,(p[rid]||0)+delta))}));
+  // MOQ-aware qty change: if allow_submultiples, each step = moq (in subunits)
+  // qty stored as number of MOQ steps, effective qty = steps * moq subunits
+  const changeQty=(r, delta)=>setQty(p=>{
+    const step = r.allow_submultiples && r.moq ? 1 : 1;
+    const current = p[r.rid]||0;
+    const next = Math.max(0, Math.min(r.allow_submultiples?9999:20, current+delta*step));
+    return {...p,[r.rid]:next};
+  });
 
-  const cartItems=(menu.recipes||[]).filter(r=>(qty[r.rid]||0)>0).map(r=>({rid:r.rid,name:r.name,qty:qty[r.rid],price:r.price,deliverable:r.deliverable!==false}));
+  // Display qty in appropriate units
+  const displayQty = (r, steps) => {
+    if (!r.allow_submultiples || !r.moq) return steps;
+    const subQty = steps * Number(r.moq);
+    const unitName = r.units||"";
+    const c = conv(unitName);
+    if (subQty >= c) return `${(subQty/c).toFixed(subQty%c===0?0:2)} ${unitAbbr(unitName)}`;
+    return `${subQty} ${subAbbr(unitName)}`;
+  };
+
+  // Price display: per unit with abbr if allow_submultiples, else plain
+  const displayPrice = (r) => {
+    const unitName = r.units||"";
+    if (r.allow_submultiples && unitAbbr(unitName)) return `${r.price} ${r.currency} / ${unitAbbr(unitName)}`;
+    return `${r.price} ${r.currency}`;
+  };
+
+  // Line total: price * (steps * moq / conv) when submultiples, else price * steps
+  const lineTotal = (r, steps) => {
+    if (!steps) return 0;
+    if (r.allow_submultiples && r.moq) {
+      const subQty = steps * Number(r.moq);
+      const fullUnits = subQty / conv(r.units||"");
+      return Math.round(r.price * fullUnits * 100) / 100;
+    }
+    return r.price * steps;
+  };
+
+  const cartItems=(menu.recipes||[]).filter(r=>(qty[r.rid]||0)>0).map(r=>({
+    rid:r.rid, name:r.name, qty:qty[r.rid],
+    price: r.allow_submultiples && r.moq
+      ? Math.round(r.price * (Number(r.moq) / conv(r.units||"")) * 100) / 100  // price per MOQ step
+      : r.price,
+    deliverable:r.deliverable!==false,
+  }));
   const hasUndeliverable=cartItems.some(it=>!it.deliverable);
   const itemTotal=cartItems.reduce((s,it)=>s+it.qty*it.price,0);
   const deliveryFee=delivery==="delivery"?menu.delivery_fee:0;
@@ -2240,16 +2420,18 @@ function OrderPage({
                     {/* Info */}
                     <div style={{ flex:1, minWidth:0 }}>
                       <p style={{ fontWeight:600, fontSize:14, display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
-                        <span style={{ cursor:(r.image_url||r.image_thumb_url)?"pointer":"default" }} onClick={()=>(r.image_url||r.image_thumb_url)&&setLightbox({src:r.image_url||r.image_thumb_url,description:r.description})}>{r.name}</span>
-                        
+                        <button onClick={()=>setViewItem(r)} style={{background:"none",border:"none",cursor:"pointer",fontWeight:600,fontSize:14,color:G.dark,padding:0,textAlign:"left"}}>{r.name}</button>
                       </p>
-                      <p style={{ fontSize:13, color:G.caramel, fontWeight:600 }}>{r.price} {r.currency}</p>
+                      <p style={{ fontSize:13, color:G.caramel, fontWeight:600 }}>{displayPrice(r)}</p>
+                      {r.allow_submultiples && r.moq && (
+                        <p style={{ fontSize:11, color:G.muted }}>min. {r.moq} {subAbbr(r.units||"")} per step</p>
+                      )}
                     </div>
-                    {(qty[r.rid]||0)>0&&<span style={{ fontSize:13, color:G.muted, fontWeight:600, minWidth:70, textAlign:"right" }}>{(qty[r.rid]||0)*r.price} AMD</span>}
+                    {(qty[r.rid]||0)>0&&<span style={{ fontSize:13, color:G.muted, fontWeight:600, minWidth:70, textAlign:"right" }}>{lineTotal(r,qty[r.rid]||0)} AMD</span>}
                     <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                      <button onClick={()=>changeQty(r.rid,-1)} style={{ width:28, height:28, borderRadius:6, border:`1px solid ${G.border}`, background:G.white, cursor:"pointer", fontSize:16, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>−</button>
-                      <span style={{ minWidth:20, textAlign:"center", fontWeight:700, fontSize:14 }}>{qty[r.rid]||0}</span>
-                      <button onClick={()=>changeQty(r.rid,1)} style={{ width:28, height:28, borderRadius:6, border:"none", background:G.caramel, cursor:"pointer", fontSize:16, fontWeight:700, color:G.white, display:"flex", alignItems:"center", justifyContent:"center" }}>+</button>
+                      <button onClick={()=>changeQty(r,-1)} style={{ width:28, height:28, borderRadius:6, border:`1px solid ${G.border}`, background:G.white, cursor:"pointer", fontSize:16, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>−</button>
+                      <span style={{ minWidth:r.allow_submultiples?52:20, textAlign:"center", fontWeight:700, fontSize:13 }}>{displayQty(r,qty[r.rid]||0)}</span>
+                      <button onClick={()=>changeQty(r,1)} style={{ width:28, height:28, borderRadius:6, border:"none", background:G.caramel, cursor:"pointer", fontSize:16, fontWeight:700, color:G.white, display:"flex", alignItems:"center", justifyContent:"center" }}>+</button>
                     </div>
                   </div>
                 ))}
@@ -2330,6 +2512,43 @@ function OrderPage({
         </div>
       </div>
       <Lightbox src={lightbox?.src} description={lightbox?.description} onClose={()=>setLightbox(null)} />
+
+      {/* Item detail dialog */}
+      {viewItem&&(
+        <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.5)", zIndex:1000, display:"flex", alignItems:"flex-end", justifyContent:"center" }}
+          onClick={e=>{ if(e.target===e.currentTarget) setViewItem(null); }}>
+          <div style={{ background:G.white, borderRadius:"20px 20px 0 0", width:"100%", maxWidth:540, maxHeight:"85vh", overflow:"auto", boxShadow:"0 -8px 40px rgba(44,24,16,0.18)" }}>
+            {(viewItem.image_url||viewItem.image_thumb_url)&&(
+              <div style={{ width:"100%", height:200, overflow:"hidden", borderRadius:"20px 20px 0 0" }}>
+                <img src={viewItem.image_url||viewItem.image_thumb_url} alt={viewItem.name}
+                  style={{ width:"100%", height:"100%", objectFit:"cover", cursor:"pointer" }}
+                  onClick={()=>setLightbox({src:viewItem.image_url||viewItem.image_thumb_url})} />
+              </div>
+            )}
+            <div style={{ padding:24 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
+                <h2 style={{ fontFamily:G.font, fontSize:22 }}>{viewItem.name}</h2>
+                <button onClick={()=>setViewItem(null)} style={{ background:"none", border:"none", fontSize:24, cursor:"pointer", color:G.muted, lineHeight:1, marginLeft:12 }}>×</button>
+              </div>
+              <p style={{ fontSize:18, fontWeight:700, color:G.caramel, marginBottom:12 }}>{displayPrice(viewItem)}</p>
+              {viewItem.description&&<p style={{ fontSize:14, color:G.muted, lineHeight:1.6, marginBottom:16 }}>{viewItem.description}</p>}
+              {viewItem.allow_submultiples && viewItem.moq && (
+                <p style={{ fontSize:13, color:G.muted, marginBottom:16 }}>Sold in {viewItem.moq}{subAbbr(viewItem.units||"")} increments</p>
+              )}
+              <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8, border:`1px solid ${G.border}`, borderRadius:10, padding:"6px 10px" }}>
+                  <button onClick={()=>changeQty(viewItem,-1)} style={{ width:32, height:32, borderRadius:7, border:`1px solid ${G.border}`, background:G.white, cursor:"pointer", fontSize:18, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>−</button>
+                  <span style={{ minWidth:viewItem.allow_submultiples?64:28, textAlign:"center", fontWeight:700, fontSize:15 }}>{displayQty(viewItem,qty[viewItem.rid]||0)}</span>
+                  <button onClick={()=>changeQty(viewItem,1)} style={{ width:32, height:32, borderRadius:7, border:"none", background:G.caramel, cursor:"pointer", fontSize:18, fontWeight:700, color:G.white, display:"flex", alignItems:"center", justifyContent:"center" }}>+</button>
+                </div>
+                <Btn onClick={()=>{ if((qty[viewItem.rid]||0)===0) changeQty(viewItem,1); setViewItem(null); }} style={{ flex:1 }}>
+                  {(qty[viewItem.rid]||0)>0 ? `In basket · ${lineTotal(viewItem,qty[viewItem.rid]||0)} AMD` : "Add to basket"}
+                </Btn>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </Page>
   );
 }

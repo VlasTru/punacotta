@@ -128,6 +128,7 @@ function mailHtml(title, body, cta_url, cta_label) {
 const RECIPE_SEL = `
   SELECT r.rid, r.name, r.description, r.price, r.currency, r.available,
          r.deliverable, r.image_url, r.image_thumb_url, r.cloudinary_id,
+         r.allow_submultiples, r.moq,
          u.name AS units, u.unid, c.name AS category, c.caid
   FROM recipe r
   LEFT JOIN units u ON u.unid=r.unid
@@ -471,13 +472,16 @@ async function route(method, segments, body, headers, event) {
     if (r1 && method === 'PUT') {
       if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
       const { name, description, unid, caid, price, currency, available,
-              deliverable, image_url, image_thumb_url, cloudinary_id, contents } = body
+              deliverable, image_url, image_thumb_url, cloudinary_id,
+              allow_submultiples, moq, contents } = body
       if (!name?.trim()) return [400, { error: 'Name required' }]
       await dbr(`UPDATE recipe SET name=$1,description=$2,unid=$3,caid=$4,price=$5,currency=$6,
-                 available=$7,deliverable=$8,image_url=$9,image_thumb_url=$10,cloudinary_id=$11 WHERE rid=$12`,
+                 available=$7,deliverable=$8,image_url=$9,image_thumb_url=$10,cloudinary_id=$11,
+                 allow_submultiples=$12,moq=$13 WHERE rid=$14`,
         [name.trim(), description||null, unid||null, caid||null,
          Number(price)||0, currency||'AMD', available!==false, deliverable!==false,
-         image_url||null, image_thumb_url||null, cloudinary_id||null, r1])
+         image_url||null, image_thumb_url||null, cloudinary_id||null,
+         !!allow_submultiples, moq?Number(moq):null, r1])
       if (Array.isArray(contents)) await saveContents(r1, contents)
       const rows = await dbq(RECIPE_SEL + ' WHERE r.rid=$1', [r1])
       return [200, (await attachContents(rows))[0]]
@@ -499,15 +503,17 @@ async function route(method, segments, body, headers, event) {
     }
     if (method === 'POST') {
       const { name, description, unid, caid, price, currency, available,
-              deliverable, image_url, image_thumb_url, cloudinary_id, contents } = body
+              deliverable, image_url, image_thumb_url, cloudinary_id,
+              allow_submultiples, moq, contents } = body
       if (!name?.trim()) return [400, { error: 'Name required' }]
       const res = await dbr(
         `INSERT INTO recipe (name,description,unid,caid,price,currency,available,deliverable,
-                             image_url,image_thumb_url,cloudinary_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING rid`,
+                             image_url,image_thumb_url,cloudinary_id,allow_submultiples,moq)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING rid`,
         [name.trim(), description||null, unid||null, caid||null,
          Number(price)||0, currency||'AMD', available!==false, deliverable!==false,
-         image_url||null, image_thumb_url||null, cloudinary_id||null])
+         image_url||null, image_thumb_url||null, cloudinary_id||null,
+         !!allow_submultiples, moq?Number(moq):null])
       const rid = res.rows[0].rid
       if (Array.isArray(contents)) await saveContents(rid, contents)
       const rows = await dbq(RECIPE_SEL + ' WHERE r.rid=$1', [rid])
@@ -704,6 +710,19 @@ async function route(method, segments, body, headers, event) {
   if (r0 === 'orders') {
     if (!user) return [401, { error: 'Unauthorized' }]
     if (r1 && r2) {
+      // PATCH /orders/:oid/items — restaurant edits item quantities (Accepted status)
+      if (r2 === 'items' && method === 'PATCH') {
+        if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+        const [o] = await dbq('SELECT * FROM "order" WHERE oid=$1', [r1])
+        if (!o) return [404, { error: 'Not found' }]
+        if (o.status !== 'Accepted') return [400, { error: 'Only Accepted orders can be edited' }]
+        const { items } = body // [{oiid, qty, price}]
+        for (const it of (items||[])) {
+          await dbr('UPDATE order_item SET qty=$1, price=$2 WHERE oiid=$3 AND oid=$4',
+            [Number(it.qty), Number(it.price), it.oiid, r1])
+        }
+        return [200, await fetchOrder(r1)]
+      }
       if (r2 === 'advance') {
         if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
         const [o] = await dbq('SELECT * FROM "order" WHERE oid=$1', [r1])
@@ -1289,9 +1308,12 @@ async function route(method, segments, body, headers, event) {
       const period = segments[2] || 'week'
       const intervals = { week:'7 days', month:'30 days', year:'365 days' }
       const interval = intervals[period] || '7 days'
+      // qty in order_item is stored in MOQ subunits when allow_submultiples=true
+      // Convert back to full units using moq for revenue calc: revenue = price * (qty * moq / conversion)
+      // But price is per full unit. Simple: revenue = oi.price * oi.qty (price was stored per MOQ unit already)
       const rows = await dbq(`
         SELECT DATE(o.created_at) AS day,
-               SUM(oi.qty * oi.price) AS revenue
+               SUM(oi.price * oi.qty) AS revenue
         FROM "order" o
         JOIN order_item oi ON oi.oid = o.oid
         JOIN menu m ON m.mid = o.mid

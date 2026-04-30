@@ -183,9 +183,18 @@ ALTER TABLE auth_token ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL 
 
 -- Seed lookup data (idempotent)
 INSERT INTO units (name) VALUES
-  ('grams'),('litres'),('kilograms'),('sachets'),
-  ('packages'),('bags'),('cartons'),('pcs')
+  ('litres'),('kilograms'),('sachets'),
+  ('packages'),('bags'),('cartons'),('pcs'),('pounds'),('portions')
 ON CONFLICT (name) DO NOTHING;
+DELETE FROM units WHERE name='grams';
+-- Rename items using grams to kilograms
+UPDATE product SET unid=(SELECT unid FROM units WHERE name='kilograms') WHERE unid=(SELECT unid FROM units WHERE name='grams');
+UPDATE recipe  SET unid=(SELECT unid FROM units WHERE name='kilograms') WHERE unid=(SELECT unid FROM units WHERE name='grams');
+
+-- Add submultiple support to recipe
+ALTER TABLE recipe ADD COLUMN IF NOT EXISTS allow_submultiples BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE recipe ADD COLUMN IF NOT EXISTS moq NUMERIC(10,3);
+
 
 INSERT INTO product_category (name) VALUES
   ('vegetables'),('fruit'),('dressing'),('dairy'),
