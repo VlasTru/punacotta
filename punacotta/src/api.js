@@ -64,8 +64,10 @@ export const api = {
   runForecast: () => req('POST', '/forecast'),
   getProcurement:         ()           => req('GET',   '/procurement'),
   patchProductExpiry:     (pid,data)   => req('PATCH', `/procurement/${pid}`, data),
-  updateOrderItems:  (oid, items) => req('PATCH', `/orders/${oid}/items`, { items }),      ()           => req('GET',   '/procurement/orders'),
+  updateOrderItems:       (oid,items)  => req('PATCH', `/orders/${oid}/items`, { items }),
+  getSupplierOrders:      ()           => req('GET',   '/procurement/orders'),
   getSupplierOrder:       (soid)       => req('GET',   `/procurement/orders/${soid}`),
+  createSupplierOrder:    (data)       => req('POST',  '/procurement/orders', data),
   createDraftOrders:      ()           => req('POST', '/procurement/orders/draft'),
   // Reports
   getSalesReport:  (period) => req('GET', `/reports/sales/${period}`),

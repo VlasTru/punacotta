@@ -96,7 +96,6 @@ const RU = {
     "Если не удалить эти блюда, то и продукт тоже удалить нельзя. Хотите удалить продукт и все блюда, куда он входит?",
   "Delete product?":"Удалить продукт?","Failed to fetch":"Не грузится",
   "No items yet.":"Пока нет.",
-  "No products added yet.":"Пока в составе ничего нет.",
   "🕐 Schedule":"🕐 График","↩ Log out":"↩ Выход",
   "No orders yet":"Заказов пока нет","I got my order ✓":"Получил(а) заказ ✓",
   "Cancel order?":"Отменить заказ?",
@@ -109,7 +108,6 @@ const RU = {
   "New Item":"Новое блюдо","Edit Item":"Редактировать блюдо",
   "Delete items?":"Удалить блюда?",
   "Are you sure you wish to delete":"Вы уверены, что хотите удалить",
-  "Save schedule":"Сохранить график",
   "+ Add product":"+ Добавить продукт","Remove":"Убрать",
   "No terms yet.":"Условий пока нет.",
   "New Supplier":"Новый поставщик","Edit Supplier":"Редактировать поставщика",
@@ -2702,7 +2700,7 @@ function SchedulePage({
   const globalMax = allMaxes.length ? allMaxes.reduce((a,b)=>timeToMins(a)<timeToMins(b)?a:b) : "12:00";
 
   return (
-    <Page title="Schedule" actions={<Btn onClick={save} loading={saving}>{tl("Save schedule")}</Btn>}>
+    <Page title={tl("Schedule")} actions={<Btn onClick={save} loading={saving}>{tl("Save schedule")}</Btn>}>
       <div style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, padding:24, marginBottom:16 }}>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20, alignItems:"end" }}>
           <Select label="Time zone" value={timezone} onChange={setTimezone}
