@@ -1510,6 +1510,37 @@ function MenusPage({
         }} onCancel={()=>setDialog(null)}>
           This will permanently delete the menu and remove all items from it. Orders are not affected. This cannot be undone.
         </Dialog>
+      {showSidebar&&(
+        <div style={{ position:"fixed", inset:0, zIndex:200 }} onClick={()=>setShowSidebar(false)}>
+          <div onClick={e=>e.stopPropagation()} style={{ position:"fixed", right:0, top:0, bottom:0, width:340, background:G.white, boxShadow:"-8px 0 40px rgba(44,24,16,0.12)", padding:24, display:"flex", flexDirection:"column", animation:"slideIn 0.25s ease" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
+              <h3 style={{ fontFamily:G.font, fontSize:18 }}>Items</h3>
+              <button onClick={()=>setShowSidebar(false)} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:G.muted}}>×</button>
+            </div>
+            <Select label="Category" value={sidebarCat} onChange={setSidebarCat} options={sidebarCats} placeholder="All categories" />
+            <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:6, marginTop:16 }}>
+              {sidebarRecs.map(r=>{
+                const inMenu = (menus.find(m=>m.mid===viewMid)?.recipes||[]).some(x=>x.rid===r.rid);
+                const toggle = async () => {
+                  try {
+                    const u = inMenu
+                      ? await api.removeMenuRecipes(viewMid, [r.rid])
+                      : await api.addMenuRecipes(viewMid, [r.rid]);
+                    setMenus(prev=>prev.map(m=>m.mid===viewMid?u:m));
+                  } catch(e){ toast(e.message,"error"); }
+                };
+                return (
+                  <label key={r.rid} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:8, cursor:"pointer", background:inMenu?"#fef9f4":"transparent", border:`1px solid ${inMenu?G.caramel:"transparent"}` }}>
+                    <input type="checkbox" checked={inMenu} onChange={toggle} style={{accentColor:G.caramel}} />
+                    <span style={{flex:1,fontSize:14}}>{r.name}</span>
+                    <span style={{fontSize:12,color:G.muted}}>{r.price} {r.currency}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
       </Page>
     );
   }
@@ -1551,33 +1582,15 @@ function MenusPage({
             </div>
             <Select label="Category" value={sidebarCat} onChange={setSidebarCat} options={sidebarCats} placeholder="All categories" />
             <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:6, marginTop:16 }}>
-              {sidebarRecs.map(r=>{
-                const inMenu = viewMid
-                  ? (menus.find(m=>m.mid===viewMid)?.recipes||[]).some(x=>x.rid===r.rid)
-                  : form.recipe_ids.includes(r.rid);
-                const toggle = async () => {
-                  if (viewMid) {
-                    try {
-                      const u = inMenu
-                        ? await api.removeMenuRecipes(viewMid, [r.rid])
-                        : await api.addMenuRecipes(viewMid, [r.rid]);
-                      setMenus(prev=>prev.map(m=>m.mid===viewMid?u:m));
-                    } catch(e){ toast(e.message,"error"); }
-                  } else {
-                    setForm(p=>({...p, recipe_ids: inMenu
-                      ? p.recipe_ids.filter(x=>x!==r.rid)
-                      : [...p.recipe_ids, r.rid]
-                    }));
-                  }
-                };
-                return (
-                  <label key={r.rid} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:8, cursor:"pointer", background:inMenu?"#fef9f4":"transparent", border:`1px solid ${inMenu?G.caramel:"transparent"}` }}>
-                    <input type="checkbox" checked={inMenu} onChange={toggle} style={{accentColor:G.caramel}} />
-                    <span style={{flex:1,fontSize:14}}>{r.name}</span>
-                    <span style={{fontSize:12,color:G.muted}}>{r.price} {r.currency}</span>
-                  </label>
-                );
-              })}
+              {sidebarRecs.map(r=>(
+                <label key={r.rid} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:8, cursor:"pointer", background:form.recipe_ids.includes(r.rid)?"#fef9f4":"transparent", border:`1px solid ${form.recipe_ids.includes(r.rid)?G.caramel:"transparent"}` }}>
+                  <input type="checkbox" checked={form.recipe_ids.includes(r.rid)}
+                    onChange={()=>setForm(p=>({...p,recipe_ids:p.recipe_ids.includes(r.rid)?p.recipe_ids.filter(x=>x!==r.rid):[...p.recipe_ids,r.rid]}))}
+                    style={{accentColor:G.caramel}} />
+                  <span style={{flex:1,fontSize:14}}>{r.name}</span>
+                  <span style={{fontSize:12,color:G.muted}}>{r.price} {r.currency}</span>
+                </label>
+              ))}
             </div>
           </div>
         </div>
