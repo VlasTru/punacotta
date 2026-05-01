@@ -1277,7 +1277,129 @@ async function route(method, segments, body, headers, event) {
     }
   }
 
-  // ── STOCK ────────────────────────────────────────────────────────────────
+  // ── EMBED SETTINGS (authenticated, manufacturer only) ───────────────────────
+  if (r0 === 'embed' && r1 === 'settings') {
+    if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+    if (method === 'GET') {
+      const [s] = await dbq('SELECT * FROM embed_settings WHERE uid=$1', [user.uid])
+      if (!s) {
+        // Auto-create on first access
+        const [created] = await dbq(
+          `INSERT INTO embed_settings (uid) VALUES ($1) RETURNING *`, [user.uid])
+        return [200, created]
+      }
+      return [200, s]
+    }
+    if (method === 'PATCH') {
+      const { enabled, allow_order, checkout_mode, allowed_domains } = body
+      await dbq(`INSERT INTO embed_settings (uid) VALUES ($1) ON CONFLICT (uid) DO NOTHING`, [user.uid])
+      const sets = [], vals = []
+      if (enabled       !== undefined) { sets.push(`enabled=$${vals.length+2}`);       vals.push(!!enabled) }
+      if (allow_order   !== undefined) { sets.push(`allow_order=$${vals.length+2}`);   vals.push(!!allow_order) }
+      if (checkout_mode !== undefined) { sets.push(`checkout_mode=$${vals.length+2}`); vals.push(checkout_mode) }
+      if (allowed_domains !== undefined) { sets.push(`allowed_domains=$${vals.length+2}`); vals.push(allowed_domains) }
+      if (sets.length) {
+        sets.push(`updated_at=NOW()`)
+        await dbq(`UPDATE embed_settings SET ${sets.join(',')} WHERE uid=$1`, [user.uid, ...vals])
+      }
+      const [s] = await dbq('SELECT * FROM embed_settings WHERE uid=$1', [user.uid])
+      return [200, s]
+    }
+    if (method === 'POST' && r2 === 'rotate-key') {
+      await dbq(`INSERT INTO embed_settings (uid) VALUES ($1) ON CONFLICT (uid) DO NOTHING`, [user.uid])
+      const [s] = await dbq(
+        `UPDATE embed_settings SET api_key=encode(gen_random_bytes(32),'hex'), updated_at=NOW()
+         WHERE uid=$1 RETURNING *`, [user.uid])
+      return [200, s]
+    }
+    if (method === 'POST' && r2 === 'test') {
+      // Connectivity test — just return OK with embed endpoint URL
+      const [s] = await dbq('SELECT * FROM embed_settings WHERE uid=$1', [user.uid])
+      return [200, { ok: true, enabled: s?.enabled, endpoint: `${BASE_URL}/api/embed/menu` }]
+    }
+  }
+
+  // ── PUBLIC EMBED API (no auth, CORS-open, checks api_key param) ─────────────
+  if (r0 === 'embed' && r1 !== 'settings') {
+    // All embed routes require ?key=API_KEY
+    const apiKey = event?.queryStringParameters?.key
+    if (!apiKey) return [401, { error: 'API key required (?key=...)' }]
+    const [settings] = await dbq(
+      `SELECT es.*, u.first_name, u.last_name, u.business_name
+       FROM embed_settings es JOIN "user" u ON u.uid=es.uid
+       WHERE es.api_key=$1`, [apiKey])
+    if (!settings) return [401, { error: 'Invalid API key' }]
+    if (!settings.enabled) return [403, { error: 'Embedded menu is disabled' }]
+
+    // Check origin against allowed_domains
+    const origin = event?.headers?.origin || event?.headers?.referer || ''
+    if (settings.allowed_domains && settings.allowed_domains.length > 0) {
+      const allowed = settings.allowed_domains.some(d => origin.includes(d))
+      if (!allowed) return [403, { error: `Origin not allowed: ${origin}` }]
+    }
+
+    const ownerUid = settings.uid
+
+    // GET /embed/menu — list available menus
+    if (r1 === 'menu' && !r2 && method === 'GET') {
+      const { from, to } = event?.queryStringParameters || {}
+      let query = `SELECT mid, name, available, delivery_fee, currency, hours_from, hours_until, hours_days FROM menu WHERE owner_uid=$1 AND available=true`
+      const params = [ownerUid]
+      const menus = await dbq(query, params)
+      return [200, { menus, settings: { allow_order: settings.allow_order, checkout_mode: settings.checkout_mode, owner_name: settings.business_name || `${settings.first_name} ${settings.last_name}` } }]
+    }
+
+    // GET /embed/menu/:mid — full menu with recipes
+    if (r1 === 'menu' && r2 && method === 'GET') {
+      const menu = await fetchMenu(r2)
+      if (!menu || menu.owner_uid !== ownerUid) return [404, { error: 'Menu not found' }]
+      return [200, { menu, settings: { allow_order: settings.allow_order, checkout_mode: settings.checkout_mode } }]
+    }
+
+    // GET /embed/item/:rid — single item
+    if (r1 === 'item' && r2 && method === 'GET') {
+      const rows = await dbq(RECIPE_SEL + ' WHERE r.rid=$1 AND r.deleted=false', [r2])
+      if (!rows.length) return [404, { error: 'Item not found' }]
+      return [200, { item: rows[0], settings: { allow_order: settings.allow_order, checkout_mode: settings.checkout_mode } }]
+    }
+
+    // POST /embed/orders — place guest order
+    if (r1 === 'orders' && method === 'POST') {
+      if (!settings.allow_order) return [403, { error: 'Ordering is disabled for this embed' }]
+      const { mid, items, guest_name, guest_email, guest_phone, pickup, delivery_address } = body
+      if (!mid || !items?.length) return [400, { error: 'mid and items required' }]
+      if (!guest_name) return [400, { error: 'guest_name required' }]
+      // Validate menu belongs to owner
+      const [menu] = await dbq('SELECT * FROM menu WHERE mid=$1 AND owner_uid=$2', [mid, ownerUid])
+      if (!menu) return [404, { error: 'Menu not found' }]
+      // Create order
+      const res = await dbr(
+        `INSERT INTO "order" (owner_uid, mid, pickup, walkin_name, delivery_street, delivery_city, delivery_zip, source, status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'embed','New') RETURNING oid`,
+        [ownerUid, mid, !!pickup,
+         `${guest_name}${guest_email?' <'+guest_email+'>':''}${guest_phone?' '+guest_phone:''}`,
+         delivery_address?.street||null, delivery_address?.city||null, delivery_address?.zip||null])
+      const oid = res.rows[0].oid
+      for (const it of items) {
+        const [recipe] = await dbq('SELECT price FROM recipe WHERE rid=$1', [it.rid])
+        if (!recipe) continue
+        await dbr('INSERT INTO order_item (oid, rid, qty, price) VALUES ($1,$2,$3,$4)',
+          [oid, it.rid, it.qty, recipe.price])
+      }
+      return [201, { oid, message: 'Order placed successfully' }]
+    }
+
+    // GET /embed/orders/:oid — check order status (for guest tracking)
+    if (r1 === 'orders' && r2 && method === 'GET') {
+      const [order] = await dbq(
+        `SELECT o.oid, o.status, o.created_at, o.walkin_name FROM "order" o WHERE o.oid=$1 AND o.owner_uid=$2`,
+        [r2, ownerUid])
+      if (!order) return [404, { error: 'Order not found' }]
+      return [200, order]
+    }
+  }
+
+
   if (r0 === 'stock') {
     if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
     if (method === 'GET') {

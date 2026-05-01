@@ -569,6 +569,10 @@ function Nav({ user, page, setPage, logout, lang, setLang }) {
                   onMouseEnter={e=>e.currentTarget.style.background=G.sand} onMouseLeave={e=>e.currentTarget.style.background="none"}>
                   {tl("🕐 Schedule")}
                 </button>
+                <button onClick={()=>navigate("embed")} style={{ width:"100%", textAlign:"left", padding:"11px 16px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.dark, display:"block" }}
+                  onMouseEnter={e=>e.currentTarget.style.background=G.sand} onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                  🔗 Embedded Menu
+                </button>
                 <div style={{ height:1, background:G.border }} />
               </>)}
               <button onClick={()=>{logout();setDropOpen(false);}} style={{ width:"100%", textAlign:"left", padding:"11px 16px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.red, display:"block" }}
@@ -2465,7 +2469,7 @@ function OrderPage({
                       </p>
                       <p style={{ fontSize:13, color:G.caramel, fontWeight:600 }}>{displayPrice(r)}</p>
                       {r.allow_submultiples && r.moq && (
-                        <p style={{ fontSize:11, color:G.muted }}>min. {r.moq} {subAbbr(r.units||"")} per step</p>
+                        <p style={{ fontSize:11, color:G.muted }}>min. {Number(r.moq) % 1 === 0 ? Number(r.moq) : Number(r.moq).toFixed(1)} {subAbbr(r.units||"")}</p>
                       )}
                     </div>
                     {(qty[r.rid]||0)>0&&<span style={{ fontSize:13, color:G.muted, fontWeight:600, minWidth:70, textAlign:"right" }}>{lineTotal(r,qty[r.rid]||0)} AMD</span>}
@@ -2574,7 +2578,7 @@ function OrderPage({
               <p style={{ fontSize:18, fontWeight:700, color:G.caramel, marginBottom:12 }}>{displayPrice(viewItem)}</p>
               {viewItem.description&&<p style={{ fontSize:14, color:G.muted, lineHeight:1.6, marginBottom:16 }}>{viewItem.description}</p>}
               {viewItem.allow_submultiples && viewItem.moq && (
-                <p style={{ fontSize:13, color:G.muted, marginBottom:16 }}>Sold in {viewItem.moq}{subAbbr(viewItem.units||"")} increments</p>
+                <p style={{ fontSize:13, color:G.muted, marginBottom:16 }}>min. {Number(viewItem.moq) % 1 === 0 ? Number(viewItem.moq) : Number(viewItem.moq).toFixed(1)} {subAbbr(viewItem.units||"")}</p>
               )}
               <div style={{ display:"flex", alignItems:"center", gap:12 }}>
                 <div style={{ display:"flex", alignItems:"center", gap:8, border:`1px solid ${G.border}`, borderRadius:10, padding:"6px 10px" }}>
@@ -3802,6 +3806,177 @@ function VerifyPage({ token, setPage, toast, onLogin }) {
   );
 }
 
+// ─── EMBED MENU PAGE ──────────────────────────────────────────────────────────
+function EmbedMenuPage({ toast }) {
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+  const [settings, setSettings] = useState(null);
+  const [loading, setLoading]   = useState(true);
+  const [saving, setSaving]     = useState(false);
+  const [testing, setTesting]   = useState(false);
+  const [testResult, setTestResult] = useState(null);
+  const [domainInput, setDomainInput] = useState("");
+  const [menus, setMenus] = useState([]);
+
+  useEffect(()=>{
+    Promise.all([api.getEmbedSettings(), api.getMenus()])
+      .then(([s,m])=>{ setSettings(s); setMenus(m||[]); })
+      .catch(e=>toast(e.message,"error"))
+      .finally(()=>setLoading(false));
+  },[]);
+
+  const save = async (patch) => {
+    setSaving(true);
+    try { const s = await api.updateEmbedSettings(patch); setSettings(s); toast("Saved"); }
+    catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
+  };
+
+  const rotateKey = async () => {
+    if (!window.confirm("Rotate the API key? Your existing embed snippets will stop working until updated.")) return;
+    try { const s = await api.rotateEmbedKey(); setSettings(s); toast("API key rotated"); }
+    catch(e){ toast(e.message,"error"); }
+  };
+
+  const testConnect = async () => {
+    setTesting(true); setTestResult(null);
+    try { const r = await api.testEmbedConnect(); setTestResult({ ok:true, msg:`Connected — ${r.endpoint}` }); }
+    catch(e){ setTestResult({ ok:false, msg:e.message }); } finally{ setTesting(false); }
+  };
+
+  const addDomain = () => {
+    const d = domainInput.trim().replace(/^https?:\/\//, "").replace(/\/$/, "");
+    if (!d) return;
+    const current = settings.allowed_domains || [];
+    if (!current.includes(d)) save({ allowed_domains: [...current, d] });
+    setDomainInput("");
+  };
+  const removeDomain = (d) => save({ allowed_domains: (settings.allowed_domains||[]).filter(x=>x!==d) });
+
+  const BASE = typeof window !== "undefined" ? window.location.origin : "https://punacotta.netlify.app";
+  const snippet = (type, params="") =>
+    `<script src="${BASE}/embed.js"></script>\n<${type} api-key="${settings?.api_key||"YOUR_KEY"}"${params}></${type}>`;
+
+  if (loading) return <Page title="Embedded Menu"><Spinner/></Page>;
+
+  const S = settings || {};
+
+  return (
+    <Page title="Embedded Menu">
+      {/* Enable toggle */}
+      <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20 }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <div>
+            <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:4 }}>Embedded menu</h3>
+            <p style={{ fontSize:13, color:G.muted }}>Allow your menu to be embedded on external websites</p>
+          </div>
+          <label style={{ display:"flex", alignItems:"center", gap:10, cursor:"pointer" }}>
+            <span style={{ fontSize:13, color:G.muted }}>{S.enabled?"Enabled":"Disabled"}</span>
+            <div onClick={()=>save({enabled:!S.enabled})} style={{ width:44, height:24, borderRadius:12, background:S.enabled?G.caramel:G.border, cursor:"pointer", position:"relative", transition:"background 0.2s" }}>
+              <div style={{ position:"absolute", top:2, left:S.enabled?22:2, width:20, height:20, borderRadius:10, background:G.white, transition:"left 0.2s", boxShadow:"0 1px 4px rgba(0,0,0,0.2)" }}/>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      {S.enabled && (<>
+        {/* Order settings */}
+        <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20 }}>
+          <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>Order settings</h3>
+          <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+            <label style={{ display:"flex", alignItems:"center", gap:10, cursor:"pointer", fontSize:14 }}>
+              <input type="checkbox" checked={!!S.allow_order} onChange={e=>save({allow_order:e.target.checked})} style={{accentColor:G.caramel,width:16,height:16}}/>
+              Allow ordering through embedded widget
+            </label>
+            {S.allow_order && (
+              <div>
+                <p style={{ fontSize:13, color:G.muted, marginBottom:10 }}>Checkout mode</p>
+                <div style={{ display:"flex", gap:10 }}>
+                  {[["inline","Inline (complete order in widget)"],["redirect","Redirect to tanelu.com"]].map(([v,l])=>(
+                    <label key={v} style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontSize:13,
+                      padding:"10px 16px", borderRadius:8, border:`1px solid ${S.checkout_mode===v?G.caramel:G.border}`,
+                      background:S.checkout_mode===v?"#fef9f4":G.white }}>
+                      <input type="radio" checked={S.checkout_mode===v} onChange={()=>save({checkout_mode:v})} style={{accentColor:G.caramel}}/>
+                      {l}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Domain allowlist */}
+        <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20 }}>
+          <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:4 }}>Allowed domains</h3>
+          <p style={{ fontSize:13, color:G.muted, marginBottom:16 }}>Leave empty to allow all domains, or add specific domains to restrict access</p>
+          <div style={{ display:"flex", gap:10, marginBottom:12 }}>
+            <input value={domainInput} onChange={e=>setDomainInput(e.target.value)}
+              onKeyDown={e=>e.key==="Enter"&&addDomain()}
+              placeholder="e.g. myrestaurant.com"
+              style={{ flex:1, padding:"9px 12px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:14, fontFamily:G.mono, outline:"none" }}/>
+            <Btn size="sm" onClick={addDomain}>Add</Btn>
+          </div>
+          {(S.allowed_domains||[]).length===0 ? (
+            <p style={{ fontSize:13, color:G.muted, fontStyle:"italic" }}>All domains allowed</p>
+          ) : (
+            <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+              {(S.allowed_domains||[]).map(d=>(
+                <span key={d} style={{ display:"flex", alignItems:"center", gap:6, padding:"5px 12px", background:G.sand, borderRadius:20, fontSize:13, fontFamily:G.mono }}>
+                  {d}
+                  <button onClick={()=>removeDomain(d)} style={{ background:"none", border:"none", cursor:"pointer", color:G.muted, fontSize:14, lineHeight:1, padding:0 }}>×</button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* API Key */}
+        <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20 }}>
+          <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>API key</h3>
+          <div style={{ display:"flex", gap:10, alignItems:"center", marginBottom:10 }}>
+            <code style={{ flex:1, padding:"10px 14px", background:G.sand, borderRadius:8, fontSize:13, fontFamily:G.mono, wordBreak:"break-all" }}>{S.api_key}</code>
+            <Btn variant="secondary" size="sm" onClick={()=>{ navigator.clipboard.writeText(S.api_key); toast("Copied!"); }}>Copy</Btn>
+            <Btn variant="ghost" size="sm" onClick={rotateKey}>Rotate</Btn>
+          </div>
+          <p style={{ fontSize:12, color:G.muted }}>Keep this key secret. Include it as <code>api-key</code> attribute in all embed tags.</p>
+          {/* Connectivity test */}
+          <div style={{ marginTop:16, display:"flex", alignItems:"center", gap:12 }}>
+            <Btn variant="secondary" size="sm" onClick={testConnect} loading={testing}>Test connectivity</Btn>
+            {testResult&&(
+              <span style={{ fontSize:13, color:testResult.ok?G.green:G.red, fontWeight:600 }}>
+                {testResult.ok?"✓":"✗"} {testResult.msg}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Embed snippets */}
+        <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24 }}>
+          <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>Embed snippets</h3>
+          {[
+            ["Single item", "puncotta-item", ` rid="ITEM_ID"`],
+            ["Menu (carousel)", "puncotta-menu", ` mid="${menus[0]?.mid||"MENU_ID"}" view="carousel"`],
+            ["Menu (table)", "puncotta-menu", ` mid="${menus[0]?.mid||"MENU_ID"}" view="table"`],
+            ["All active menus", "puncotta-menu", ` view="carousel"`],
+            ["Floating cart", "puncotta-cart", ` float="bottom-right"`],
+          ].map(([label, tag, params])=>(
+            <div key={label} style={{ marginBottom:20 }}>
+              <p style={{ fontSize:13, fontWeight:600, color:G.dark, marginBottom:8 }}>{label}</p>
+              <div style={{ position:"relative" }}>
+                <pre style={{ background:G.sand, borderRadius:8, padding:"12px 14px", fontSize:12, fontFamily:G.mono, overflowX:"auto", margin:0, whiteSpace:"pre-wrap", wordBreak:"break-all", color:G.dark }}>{snippet(tag,params)}</pre>
+                <button onClick={()=>{ navigator.clipboard.writeText(snippet(tag,params)); toast("Copied!"); }}
+                  style={{ position:"absolute", top:8, right:8, background:G.white, border:`1px solid ${G.border}`, borderRadius:6, cursor:"pointer", fontSize:11, fontFamily:G.mono, padding:"3px 8px", color:G.muted }}>
+                  Copy
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </>)}
+    </Page>
+  );
+}
+
 // ─── APP ROOT ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [user, setUser] = useState(()=>{
@@ -3861,6 +4036,7 @@ export default function App() {
           {page==="procurement"  &&<ProcurementPage toast={toast}/>}
           {page==="suppliers"    &&<SuppliersPage toast={toast}/>}
           {page==="reports"      &&<ReportsPage   toast={toast}/>}
+          {page==="embed"        &&<EmbedMenuPage toast={toast}/>}
           {page==="orders-manuf" &&<OrdersManufPage toast={toast}/>}
           {page==="restaurants"  &&<RestaurantsPage setPage={setPage} setActiveMenu={setActiveMenu}/>}
           {page==="order"        &&<OrderPage menu={activeMenu} user={user} setPage={setPage} toast={toast}/>}

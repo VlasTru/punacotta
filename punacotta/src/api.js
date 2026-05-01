@@ -58,7 +58,11 @@ export const api = {
   linkSupplierProduct:   (sid, data) => req('POST',   `/suppliers/${sid}/products`, data),
   unlinkSupplierProduct: (sid, psid) => req('DELETE', `/suppliers/${sid}/products/${psid}`),
 
-  // Stock & Forecast
+  // Embed settings
+  getEmbedSettings:    ()     => req('GET',   '/embed/settings'),
+  updateEmbedSettings: (data) => req('PATCH', '/embed/settings', data),
+  rotateEmbedKey:      ()     => req('POST',  '/embed/settings/rotate-key'),
+  testEmbedConnect:    ()     => req('POST',  '/embed/settings/test'),
   getStock:    () => req('GET',  '/stock'),
   getForecast: () => req('GET',  '/forecast'),
   runForecast: () => req('POST', '/forecast'),

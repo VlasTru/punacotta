@@ -179,7 +179,10 @@ CREATE TABLE IF NOT EXISTS auth_token (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-ALTER TABLE auth_token ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE "order" ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'app';
+ALTER TABLE "order" ADD COLUMN IF NOT EXISTS delivery_street TEXT;
+ALTER TABLE "order" ADD COLUMN IF NOT EXISTS delivery_city TEXT;
+ALTER TABLE "order" ADD COLUMN IF NOT EXISTS delivery_zip TEXT;
 
 -- Seed lookup data (idempotent)
 INSERT INTO units (name) VALUES
@@ -262,6 +265,17 @@ CREATE TABLE IF NOT EXISTS supplier_order_item (
   qty_actual    NUMERIC(10,3),
   unit_price    NUMERIC(10,2) NOT NULL DEFAULT 0,
   currency      VARCHAR(3)    DEFAULT 'AMD'
+);
+
+CREATE TABLE IF NOT EXISTS embed_settings (
+  esid            SERIAL PRIMARY KEY,
+  uid             INTEGER NOT NULL UNIQUE REFERENCES "user"(uid),
+  enabled         BOOLEAN NOT NULL DEFAULT false,
+  allow_order     BOOLEAN NOT NULL DEFAULT false,
+  checkout_mode   VARCHAR(10) NOT NULL DEFAULT 'inline',
+  allowed_domains TEXT[],
+  api_key         VARCHAR(64) NOT NULL DEFAULT encode(gen_random_bytes(32),'hex'),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 `
 
