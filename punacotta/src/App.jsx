@@ -1909,7 +1909,7 @@ function EditOrderModal({ order, toast, onClose, onSaved }) {
     setSaving(true);
     try {
       const updated = await api.updateOrderItems(order.oid,
-        items.map(it=>({ oiid:it.oiid, qty:parseFloat(it.qty)||0, price:parseFloat(it.price)||0 }))
+        items.map(it=>({ oiid:it.oiid, qty:parseFloat(it.qty)||0 }))
       );
       toast(`Order #${order.oid} updated`);
       onSaved(updated);
@@ -1947,10 +1947,8 @@ function EditOrderModal({ order, toast, onClose, onSaved }) {
                       onChange={e=>updateItem(i,"qty",e.target.value)}
                       style={{ width:80, padding:"5px 8px", borderRadius:6, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none", textAlign:"right" }}/>
                   </td>
-                  <td style={{ padding:"10px 12px" }}>
-                    <input type="number" value={it.price} min={0} step="any"
-                      onChange={e=>updateItem(i,"price",e.target.value)}
-                      style={{ width:90, padding:"5px 8px", borderRadius:6, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none", textAlign:"right" }}/>
+                  <td style={{ padding:"10px 12px", fontSize:13, color:G.muted }}>
+                    {it.price} {it.currency||"AMD"}
                   </td>
                   <td style={{ padding:"10px 12px", fontSize:13, fontWeight:600, color:G.caramel, textAlign:"right" }}>
                     {((parseFloat(it.qty)||0)*(parseFloat(it.price)||0)).toFixed(2)} {it.currency||"AMD"}

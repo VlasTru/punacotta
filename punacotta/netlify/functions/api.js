@@ -159,10 +159,14 @@ async function fetchMenu(mid) {
   if (!menu) return null
   const recipes = await dbq(`
     SELECT r.rid, r.name, r.description, r.price, r.currency,
-           r.deliverable, r.image_url, r.image_thumb_url, c.name AS category
+           r.deliverable, r.image_url, r.image_thumb_url,
+           r.allow_submultiples, r.moq,
+           u.name AS units, u.unid,
+           c.name AS category
     FROM menu_recipe mr
     JOIN recipe r ON r.rid = mr.rid
     LEFT JOIN recipe_category c ON c.caid = r.caid
+    LEFT JOIN units u ON u.unid = r.unid
     WHERE mr.mid = $1 ORDER BY c.name, r.name`, [mid])
   return { ...menu, recipes }
 }
@@ -726,8 +730,8 @@ async function route(method, segments, body, headers, event) {
         if (o.status !== 'Accepted') return [400, { error: 'Only Accepted orders can be edited' }]
         const { items } = body // [{oiid, qty, price}]
         for (const it of (items||[])) {
-          await dbr('UPDATE order_item SET qty=$1, price=$2 WHERE oiid=$3 AND oid=$4',
-            [Number(it.qty), Number(it.price), it.oiid, r1])
+          await dbr('UPDATE order_item SET qty=$1 WHERE oiid=$2 AND oid=$3',
+            [Number(it.qty), it.oiid, r1])
         }
         return [200, await fetchOrder(r1)]
       }
