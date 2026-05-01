@@ -98,7 +98,7 @@ export const api = {
   createMenu:        (data)      => req('POST',   '/menus', data),
   patchMenu:         (mid, data) => req('PATCH',  `/menus/${mid}`, data),
   duplicateMenu:     (mid)       => req('POST',   `/menus/${mid}/duplicate`),
-  addMenuRecipes:    (mid, ids)  => req('POST',   `/menus/${mid}/recipes`, { recipe_ids: ids }),
+  deleteMenu:        (mid)       => req('DELETE', `/menus/${mid}`),
   removeMenuRecipes: (mid, ids)  => req('DELETE', `/menus/${mid}/recipes`, { recipe_ids: ids }),
 
   // Schedule

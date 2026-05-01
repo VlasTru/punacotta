@@ -615,6 +615,14 @@ async function route(method, segments, body, headers, event) {
         if (hours_days !== undefined) await dbr('UPDATE menu SET hours_days=$1 WHERE mid=$2', [hours_days||[], r1])
         return [200, await fetchMenu(r1)]
       }
+      if (method === 'DELETE') {
+        if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+        const [m] = await dbq('SELECT mid FROM menu WHERE mid=$1 AND owner_uid=$2', [r1, user.uid])
+        if (!m) return [404, { error: 'Menu not found' }]
+        await dbr('DELETE FROM menu_recipe WHERE mid=$1', [r1])
+        await dbr('DELETE FROM menu WHERE mid=$1', [r1])
+        return [200, { deleted: Number(r1) }]
+      }
     }
     if (method === 'GET') {
       const rows = user.is_manufacturer
