@@ -58,8 +58,7 @@ export const api = {
   linkSupplierProduct:   (sid, data) => req('POST',   `/suppliers/${sid}/products`, data),
   unlinkSupplierProduct: (sid, psid) => req('DELETE', `/suppliers/${sid}/products/${psid}`),
 
-  // Staff
-  getStaff:       ()          => req('GET',    '/staff'),
+  lookupUserByEmail: (email) => req('GET', `/staff/lookup?email=${encodeURIComponent(email)}`),       ()          => req('GET',    '/staff'),
   createEmployee: (data)      => req('POST',   '/staff', data),
   updateEmployee: (uid, data) => req('PATCH',  `/staff/${uid}`, data),
   deleteEmployees:(ids)       => req('DELETE', '/staff', { ids }),
@@ -71,7 +70,13 @@ export const api = {
   // Skills
   getSkills:      ()          => req('GET',    '/skills'),
   createSkill:    (data)      => req('POST',   '/skills', data),
+  updateSkill:    (skid,data) => req('PATCH',  `/skills/${skid}`, data),
   deleteSkills:   (ids)       => req('DELETE', '/skills', { ids }),
+  // Processes
+  getProcesses:   ()          => req('GET',    '/processes'),
+  createProcess:  (data)      => req('POST',   '/processes', data),
+  updateProcess:  (id,data)   => req('PATCH',  `/processes/${id}`, data),
+  deleteProcess:  (id)        => req('DELETE', `/processes/${id}`),
   // Embed settings
   getEmbedSettings:    ()     => req('GET',   '/embed/settings'),
   updateEmbedSettings: (data) => req('PATCH', '/embed/settings', data),

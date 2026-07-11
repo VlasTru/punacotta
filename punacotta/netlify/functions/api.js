@@ -1289,6 +1289,16 @@ async function route(method, segments, body, headers, event) {
       return { ...emp, roles, skills }
     }
 
+    // GET /staff/lookup?email=... — check if a Tanelu user exists with this email
+    if (r1 === 'lookup' && method === 'GET') {
+      const email = event?.queryStringParameters?.email
+      if (!email) return [400, { error: 'email required' }]
+      const [found] = await dbq(
+        `SELECT uid, first_name, last_name, email, phone, street_address, city, zip, email_verified
+         FROM "user" WHERE email=$1 AND employer_uid IS NULL`, [email.toLowerCase()])
+      return [200, found || null]
+    }
+
     if (!r1 && method === 'GET') {
       const emps = await dbq(`SELECT uid, first_name, last_name, email, is_employee, employee_seq FROM "user" WHERE employer_uid=$1 ORDER BY first_name, last_name`, [user.uid])
       const result = []
@@ -1305,11 +1315,26 @@ async function route(method, segments, body, headers, event) {
       if (!first_name || !last_name) return [400, { error: 'First and last name required' }]
       const [{ max }] = await dbq(`SELECT COALESCE(MAX(employee_seq),0) AS max FROM "user" WHERE employer_uid=$1`, [user.uid])
       const seq = Number(max) + 1
-      const res = await dbr(
-        `INSERT INTO "user" (first_name,last_name,email,phone,street_address,city,zip,is_employee,employer_uid,employee_seq,password_hash,email_verified)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'$2b$10$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',false) RETURNING uid`,
-        [first_name, last_name, email||null, phone||null, street_address||null, city||null, zip||null, !!isEmp, user.uid, seq])
-      const newUid = res.rows[0].uid
+
+      let newUid
+      if (isEmp && email) {
+        // Check if a verified Tanelu user already exists with this email
+        const [existing] = await dbq(`SELECT uid FROM "user" WHERE email=$1`, [email.toLowerCase()])
+        if (existing) {
+          // Link the existing user as an employee — just set employer_uid and seq
+          await dbr(`UPDATE "user" SET employer_uid=$1, employee_seq=$2, is_employee=true WHERE uid=$3`,
+            [user.uid, seq, existing.uid])
+          newUid = existing.uid
+        }
+      }
+      if (!newUid) {
+        // Create a new user record (non-login employee or unknown email)
+        const res = await dbr(
+          `INSERT INTO "user" (first_name,last_name,email,phone,street_address,city,zip,is_employee,employer_uid,employee_seq,password_hash,email_verified)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'$2b$10$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',false) RETURNING uid`,
+          [first_name, last_name, email||null, phone||null, street_address||null, city||null, zip||null, !!isEmp, user.uid, seq])
+        newUid = res.rows[0].uid
+      }
       for (const rid  of (role_ids  ||[])) await dbr('INSERT INTO employee_role  (uid,rid)  VALUES ($1,$2) ON CONFLICT DO NOTHING', [newUid, rid])
       for (const skid of (skill_ids ||[])) await dbr('INSERT INTO employee_skill (uid,skid) VALUES ($1,$2) ON CONFLICT DO NOTHING', [newUid, skid])
       return [201, await fetchEmployee(newUid)]
@@ -1353,48 +1378,55 @@ async function route(method, segments, body, headers, event) {
   // ── ROLES ──────────────────────────────────────────────────────────────────
   if (r0 === 'roles') {
     if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
-
+    const PALETTE = ['#7c3aed','#0891b2','#059669','#dc2626','#d97706','#db2777','#2563eb','#65a30d']
     const fetchRole = async (rid) => {
       const [role] = await dbq('SELECT * FROM role WHERE rid=$1', [rid])
       if (!role) return null
-      const skills = await dbq(`SELECT s.skid, s.name FROM role_skill rs JOIN skill s ON s.skid=rs.skid WHERE rs.rid=$1 ORDER BY s.name`, [rid])
+      const skills = await dbq(`SELECT s.skid, s.name, s.duration, s.duration_unit, s.dep_type, s.dep_skid, s.color FROM role_skill rs JOIN skill s ON s.skid=rs.skid WHERE rs.rid=$1 ORDER BY s.name`, [rid])
       return { ...role, skills }
     }
-
     if (method === 'GET') {
       const roles = await dbq('SELECT * FROM role WHERE owner_uid=$1 ORDER BY name', [user.uid])
       const result = []
       for (const ro of roles) {
-        const skills = await dbq(`SELECT s.skid, s.name FROM role_skill rs JOIN skill s ON s.skid=rs.skid WHERE rs.rid=$1 ORDER BY s.name`, [ro.rid])
+        const skills = await dbq(`SELECT s.skid, s.name, s.duration, s.duration_unit, s.dep_type, s.dep_skid, s.color FROM role_skill rs JOIN skill s ON s.skid=rs.skid WHERE rs.rid=$1 ORDER BY s.name`, [ro.rid])
         result.push({ ...ro, skills })
       }
       return [200, result]
     }
-
     if (!r1 && method === 'POST') {
       const { name, skill_ids } = body
       if (!name?.trim()) return [400, { error: 'Role name required' }]
-      const res = await dbr('INSERT INTO role (owner_uid,name) VALUES ($1,$2) ON CONFLICT (owner_uid,name) DO UPDATE SET name=EXCLUDED.name RETURNING rid', [user.uid, name.trim()])
+      // Auto-assign color from palette
+      const existing = await dbq('SELECT color FROM role WHERE owner_uid=$1', [user.uid])
+      const usedColors = existing.map(r=>r.color)
+      const color = PALETTE.find(c=>!usedColors.includes(c)) || PALETTE[existing.length % PALETTE.length]
+      const res = await dbr('INSERT INTO role (owner_uid,name,color) VALUES ($1,$2,$3) ON CONFLICT (owner_uid,name) DO UPDATE SET name=EXCLUDED.name RETURNING rid', [user.uid, name.trim(), color])
       const rid = res.rows[0].rid
       if (Array.isArray(skill_ids)) {
         await dbr('DELETE FROM role_skill WHERE rid=$1', [rid])
-        for (const skid of skill_ids) await dbr('INSERT INTO role_skill (rid,skid) VALUES ($1,$2) ON CONFLICT DO NOTHING', [rid, skid])
+        for (const skid of skill_ids) {
+          await dbr('INSERT INTO role_skill (rid,skid) VALUES ($1,$2) ON CONFLICT DO NOTHING', [rid, skid])
+          // Assign role color to skill if skill has no color yet
+          await dbr('UPDATE skill SET color=$1 WHERE skid=$2 AND color IS NULL', [color, skid])
+        }
       }
       return [201, await fetchRole(rid)]
     }
-
     if (r1 && method === 'PATCH') {
       const { name, skill_ids } = body
-      const [role] = await dbq('SELECT rid FROM role WHERE rid=$1 AND owner_uid=$2', [r1, user.uid])
+      const [role] = await dbq('SELECT * FROM role WHERE rid=$1 AND owner_uid=$2', [r1, user.uid])
       if (!role) return [404, { error: 'Role not found' }]
       if (name !== undefined) await dbr('UPDATE role SET name=$1 WHERE rid=$2', [name.trim(), r1])
       if (Array.isArray(skill_ids)) {
         await dbr('DELETE FROM role_skill WHERE rid=$1', [r1])
-        for (const skid of skill_ids) await dbr('INSERT INTO role_skill (rid,skid) VALUES ($1,$2) ON CONFLICT DO NOTHING', [r1, skid])
+        for (const skid of skill_ids) {
+          await dbr('INSERT INTO role_skill (rid,skid) VALUES ($1,$2) ON CONFLICT DO NOTHING', [r1, skid])
+          await dbr('UPDATE skill SET color=$1 WHERE skid=$2 AND color IS NULL', [role.color, skid])
+        }
       }
       return [200, await fetchRole(r1)]
     }
-
     if (method === 'DELETE') {
       const { ids } = body
       if (!Array.isArray(ids)||!ids.length) return [400, { error: 'ids required' }]
@@ -1415,10 +1447,26 @@ async function route(method, segments, body, headers, event) {
       return [200, await dbq('SELECT * FROM skill WHERE owner_uid=$1 ORDER BY name', [user.uid])]
     }
     if (method === 'POST') {
-      const { name } = body
+      const { name, duration, duration_unit, dep_type, dep_skid } = body
       if (!name?.trim()) return [400, { error: 'Skill name required' }]
-      const res = await dbr('INSERT INTO skill (owner_uid,name) VALUES ($1,$2) ON CONFLICT (owner_uid,name) DO UPDATE SET name=EXCLUDED.name RETURNING *', [user.uid, name.trim()])
+      const res = await dbr(
+        `INSERT INTO skill (owner_uid,name,duration,duration_unit,dep_type,dep_skid)
+         VALUES ($1,$2,$3,$4,$5,$6)
+         ON CONFLICT (owner_uid,name) DO UPDATE SET name=EXCLUDED.name RETURNING *`,
+        [user.uid, name.trim(), duration||null, duration_unit||'minutes', dep_type||null, dep_skid||null])
       return [201, res.rows[0]]
+    }
+    if (r1 && method === 'PATCH') {
+      const { name, duration, duration_unit, dep_type, dep_skid } = body
+      const sets = [], vals = [r1]
+      if (name          !== undefined) { sets.push(`name=$${vals.length+1}`);          vals.push(name.trim()) }
+      if (duration      !== undefined) { sets.push(`duration=$${vals.length+1}`);      vals.push(duration||null) }
+      if (duration_unit !== undefined) { sets.push(`duration_unit=$${vals.length+1}`); vals.push(duration_unit) }
+      if (dep_type      !== undefined) { sets.push(`dep_type=$${vals.length+1}`);      vals.push(dep_type||null) }
+      if (dep_skid      !== undefined) { sets.push(`dep_skid=$${vals.length+1}`);      vals.push(dep_skid||null) }
+      if (sets.length) await dbr(`UPDATE skill SET ${sets.join(',')} WHERE skid=$1`, vals)
+      const [s] = await dbq('SELECT * FROM skill WHERE skid=$1', [r1])
+      return [200, s]
     }
     if (method === 'DELETE') {
       const { ids } = body
@@ -1429,6 +1477,57 @@ async function route(method, segments, body, headers, event) {
         await dbr('DELETE FROM skill WHERE skid=$1 AND owner_uid=$2', [skid, user.uid])
       }
       return [200, { deleted: ids }]
+    }
+  }
+
+  // ── PROCESSES (v12) ────────────────────────────────────────────────────────
+  if (r0 === 'processes') {
+    if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+    const fetchProcess = async (procid) => {
+      const [proc] = await dbq('SELECT * FROM process WHERE procid=$1', [procid])
+      if (!proc) return null
+      const skills = await dbq(
+        `SELECT ps.psid, ps.seq, ps.duration, ps.duration_unit,
+                s.skid, s.name, s.color
+         FROM process_skill ps JOIN skill s ON s.skid=ps.skid
+         WHERE ps.procid=$1 ORDER BY ps.seq`, [procid])
+      return { ...proc, skills }
+    }
+    if (!r1 && method === 'GET') {
+      const procs = await dbq('SELECT * FROM process WHERE owner_uid=$1 ORDER BY name', [user.uid])
+      const result = []
+      for (const p of procs) {
+        const skills = await dbq(
+          `SELECT ps.psid, ps.seq, ps.duration, ps.duration_unit, s.skid, s.name, s.color
+           FROM process_skill ps JOIN skill s ON s.skid=ps.skid WHERE ps.procid=$1 ORDER BY ps.seq`, [p.procid])
+        result.push({ ...p, skills })
+      }
+      return [200, result]
+    }
+    if (!r1 && method === 'POST') {
+      const { name } = body
+      if (!name?.trim()) return [400, { error: 'Name required' }]
+      const res = await dbr('INSERT INTO process (owner_uid,name) VALUES ($1,$2) RETURNING *', [user.uid, name.trim()])
+      return [201, await fetchProcess(res.rows[0].procid)]
+    }
+    if (r1 && method === 'PATCH') {
+      const { name, skills } = body
+      const [proc] = await dbq('SELECT * FROM process WHERE procid=$1 AND owner_uid=$2', [r1, user.uid])
+      if (!proc) return [404, { error: 'Not found' }]
+      if (name !== undefined) await dbr('UPDATE process SET name=$1 WHERE procid=$2', [name.trim(), r1])
+      if (Array.isArray(skills)) {
+        await dbr('DELETE FROM process_skill WHERE procid=$1', [r1])
+        for (const [i, s] of skills.entries()) {
+          await dbr('INSERT INTO process_skill (procid,skid,seq,duration,duration_unit) VALUES ($1,$2,$3,$4,$5)',
+            [r1, s.skid, i+1, s.duration||null, s.duration_unit||'minutes'])
+        }
+      }
+      return [200, await fetchProcess(r1)]
+    }
+    if (r1 && method === 'DELETE') {
+      await dbr('DELETE FROM process_skill WHERE procid=$1', [r1])
+      await dbr('DELETE FROM process WHERE procid=$1 AND owner_uid=$2', [r1, user.uid])
+      return [200, { deleted: Number(r1) }]
     }
   }
 

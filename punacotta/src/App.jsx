@@ -232,13 +232,14 @@ function Btn({ children, onClick, variant="primary", disabled, size="md", style:
   return <button title={title} onClick={disabled||loading?undefined:onClick} style={{...base,...variants[variant],...s}}>{loading?"…":children}</button>;
 }
 
-function Input({ label, type="text", value, onChange, placeholder, required, hint, error, style:s, disabled }) {
+function Input({ label, type="text", value, onChange, placeholder, required, hint, error, style:s, disabled, onBlur }) {
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
       {label&&<label style={{ fontSize:13, fontWeight:600, color:G.dark }}>{label}{required&&<span style={{color:G.caramel}}> *</span>}</label>}
       <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} disabled={disabled}
         style={{ padding:"10px 14px", borderRadius:8, border:`1px solid ${error?G.red:G.border}`, background:disabled?G.sand:G.white, fontSize:14, color:G.dark, outline:"none", width:"100%", ...s }}
-        onFocus={e=>e.target.style.borderColor=G.caramel} onBlur={e=>e.target.style.borderColor=error?G.red:G.border}
+        onFocus={e=>e.target.style.borderColor=G.caramel}
+        onBlur={e=>{ e.target.style.borderColor=error?G.red:G.border; onBlur&&onBlur(e); }}
       />
       {hint&&<span style={{ fontSize:12, color:G.muted }}>{hint}</span>}
       {error&&<span style={{ fontSize:12, color:G.red }}>{error}</span>}
@@ -539,7 +540,7 @@ function Nav({ user, page, setPage, logout, lang, setLang }) {
   const [dropOpen, setDropOpen] = useState(false);
   const tl = k => lang==='ru' ? (RU[k]||k) : k;
   const links = isM
-    ? [{key:"orders-manuf",label:tl("Orders")},{key:"products",label:tl("Products")},{key:"items",label:tl("Items")},{key:"menus",label:tl("Menus")},{key:"procurement",label:tl("Procurement")},{key:"suppliers",label:tl("Suppliers")},{key:"reports",label:tl("Reports")},{key:"staff",label:"Staff"}]
+    ? [{key:"orders-manuf",label:tl("Orders")},{key:"products",label:tl("Products")},{key:"items",label:tl("Items")},{key:"menus",label:tl("Menus")},{key:"procurement",label:tl("Procurement")},{key:"suppliers",label:tl("Suppliers")},{key:"reports",label:tl("Reports")},{key:"staff",label:"Staff"},{key:"processes",label:"Processes"}]
     : [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")}];
   const navigate = key => { setPage(key); setDropOpen(false); };
   return (
@@ -3806,60 +3807,83 @@ function VerifyPage({ token, setPage, toast, onLogin }) {
   );
 }
 
+// ─── CONSTANTS ────────────────────────────────────────────────────────────────
+const ROLE_PALETTE = ['#7c3aed','#0891b2','#059669','#dc2626','#d97706','#db2777','#2563eb','#65a30d'];
+const DEP_TYPES = [
+  { value:'FS', label:'Finish-to-Start (FS)' },
+  { value:'SS', label:'Start-to-Start (SS)' },
+  { value:'FF', label:'Finish-to-Finish (FF)' },
+  { value:'SF', label:'Start-to-Finish (SF)' },
+];
+const DUR_UNITS = ['seconds','minutes','hours'];
+
 // ─── SKILL COMBO ──────────────────────────────────────────────────────────────
-// Reusable tag-input component: shows selected skills as pills, type to search/add
-function SkillCombo({ allSkills, selected, onChange, onCreateSkill }) {
+function SkillCombo({ allSkills, selected, excluded=[], onChange, onCreateSkill, onClickPill, pillColor }) {
   const [input, setInput] = useState("");
   const [open, setOpen]   = useState(false);
   const ref = useRef(null);
 
-  const filteredSkills = allSkills.filter(s =>
-    !selected.find(x=>x.skid===s.skid) &&
+  // Filter: not already selected, not in excluded list, matches input
+  const available = allSkills.filter(s =>
+    !selected.find(x=>(x.skid||x.rid)===s.skid) &&
+    !excluded.find(x=>x===s.skid) &&
     s.name.toLowerCase().includes(input.toLowerCase())
   );
-  const canCreate = input.trim() && !allSkills.find(s=>s.name.toLowerCase()===input.trim().toLowerCase());
+  const canCreate = onCreateSkill && input.trim() &&
+    !allSkills.find(s=>s.name.toLowerCase()===input.trim().toLowerCase());
 
-  const add = (skill) => { onChange([...selected, skill]); setInput(""); setOpen(false); };
-  const remove = (skid) => onChange(selected.filter(s=>s.skid!==skid));
+  const add    = s => { onChange([...selected, s]); setInput(""); setOpen(false); };
+  const remove = id => onChange(selected.filter(s=>(s.skid||s.rid)!==id));
 
-  const handleKey = async (e) => {
-    if (e.key==="Backspace" && !input && selected.length) remove(selected[selected.length-1].skid);
+  const handleKey = async e => {
+    if (e.key==="Backspace" && !input && selected.length) {
+      const last = selected[selected.length-1]; remove(last.skid||last.rid);
+    }
     if (e.key==="Enter" && input.trim()) {
       e.preventDefault();
-      if (canCreate && onCreateSkill) {
-        const newSkill = await onCreateSkill(input.trim());
-        if (newSkill) add(newSkill);
-      } else if (filteredSkills.length) add(filteredSkills[0]);
+      if (canCreate) { const n=await onCreateSkill(input.trim()); if(n) add(n); }
+      else if (available.length) add(available[0]);
     }
     if (e.key==="Escape") setOpen(false);
   };
+
+  const getColor = s => pillColor || s.color || G.caramel;
 
   return (
     <div style={{ position:"relative" }} ref={ref}>
       <div onClick={()=>{ setOpen(true); ref.current.querySelector("input")?.focus(); }}
         style={{ display:"flex", flexWrap:"wrap", gap:6, padding:"8px 10px", borderRadius:8, border:`1px solid ${G.border}`, minHeight:40, cursor:"text", background:G.white }}>
-        {selected.map(s=>(
-          <span key={s.skid} style={{ display:"flex", alignItems:"center", gap:4, background:G.sand, borderRadius:20, padding:"3px 10px", fontSize:12, fontWeight:500, color:G.dark }}>
-            {s.name}
-            <button onClick={e=>{ e.stopPropagation(); remove(s.skid); }} style={{ background:"none", border:"none", cursor:"pointer", color:G.muted, fontSize:13, lineHeight:1, padding:0 }}>×</button>
-          </span>
-        ))}
+        {selected.map(s=>{
+          const id = s.skid||s.rid;
+          const col = getColor(s);
+          return (
+            <span key={id} style={{ display:"flex", alignItems:"center", gap:4, background:`${col}18`, border:`1px solid ${col}40`, borderRadius:20, padding:"3px 10px", fontSize:12, fontWeight:500, color:col }}>
+              {onClickPill ? (
+                <button onClick={e=>{ e.stopPropagation(); onClickPill(s); }}
+                  style={{ background:"none", border:"none", cursor:"pointer", color:col, fontSize:12, fontWeight:600, padding:0, textDecoration:"underline dotted" }}>
+                  {s.name}
+                </button>
+              ) : s.name}
+              <button onClick={e=>{ e.stopPropagation(); remove(id); }} style={{ background:"none", border:"none", cursor:"pointer", color:col, fontSize:13, lineHeight:1, padding:0, opacity:0.7 }}>×</button>
+            </span>
+          );
+        })}
         <input value={input} onChange={e=>{ setInput(e.target.value); setOpen(true); }}
           onFocus={()=>setOpen(true)} onBlur={()=>setTimeout(()=>setOpen(false),150)}
           onKeyDown={handleKey}
           placeholder={selected.length?"":"Type to search or add…"}
           style={{ border:"none", outline:"none", fontSize:13, fontFamily:G.mono, minWidth:140, flex:1, background:"transparent" }}/>
       </div>
-      {open&&(filteredSkills.length>0||canCreate)&&(
-        <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, background:G.white, border:`1px solid ${G.border}`, borderRadius:8, boxShadow:"0 4px 16px rgba(44,24,16,0.12)", zIndex:500, maxHeight:200, overflowY:"auto" }}>
+      {open&&(available.length>0||canCreate)&&(
+        <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, background:G.white, border:`1px solid ${G.border}`, borderRadius:8, boxShadow:"0 4px 16px rgba(44,24,16,0.12)", zIndex:500, maxHeight:220, overflowY:"auto" }}>
           {canCreate&&(
-            <button onMouseDown={async()=>{ if(onCreateSkill){ const s=await onCreateSkill(input.trim()); if(s) add(s); } }}
+            <button onMouseDown={async()=>{ if(onCreateSkill){const s=await onCreateSkill(input.trim()); if(s)add(s);} }}
               style={{ width:"100%", textAlign:"left", padding:"9px 14px", background:"none", border:"none", cursor:"pointer", fontSize:13, fontFamily:G.mono, color:G.caramel, fontWeight:600, borderBottom:`1px solid ${G.border}` }}>
               + Add "{input.trim()}"
             </button>
           )}
-          {filteredSkills.map(s=>(
-            <button key={s.skid} onMouseDown={()=>add(s)}
+          {available.map(s=>(
+            <button key={s.skid||s.rid} onMouseDown={()=>add(s)}
               style={{ width:"100%", textAlign:"left", padding:"9px 14px", background:"none", border:"none", cursor:"pointer", fontSize:13, fontFamily:G.mono, color:G.dark, display:"block" }}
               onMouseEnter={e=>e.currentTarget.style.background=G.sand}
               onMouseLeave={e=>e.currentTarget.style.background="none"}>
@@ -3868,6 +3892,119 @@ function SkillCombo({ allSkills, selected, onChange, onCreateSkill }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── SKILL EDIT DIALOG ────────────────────────────────────────────────────────
+function SkillEditDialog({ skill, allSkills, onSave, onClose }) {
+  const [form, setForm] = useState({
+    name: skill.name,
+    duration: skill.duration||"",
+    duration_unit: skill.duration_unit||"minutes",
+    dep_type: skill.dep_type||"",
+    dep_skid: skill.dep_skid||"",
+  });
+  const [saving, setSaving] = useState(false);
+  const set = (k,v) => setForm(p=>({...p,[k]:v}));
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const updated = await api.updateSkill(skill.skid, {
+        name: form.name.trim(),
+        duration: form.duration ? Number(form.duration) : null,
+        duration_unit: form.duration_unit,
+        dep_type: form.dep_type||null,
+        dep_skid: form.dep_skid ? Number(form.dep_skid) : null,
+      });
+      onSave(updated);
+    } catch(e){ alert(e.message); } finally{ setSaving(false); }
+  };
+
+  const otherSkills = allSkills.filter(s=>s.skid!==skill.skid);
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1100, display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <div style={{ background:G.white, borderRadius:16, padding:28, maxWidth:440, width:"90%", boxShadow:"0 20px 60px rgba(44,24,16,0.2)", animation:"fadeIn 0.2s ease" }}>
+        <h3 style={{ fontFamily:G.font, fontSize:18, marginBottom:18 }}>Edit skill: {skill.name}</h3>
+        <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+          <Input label="Name" value={form.name} onChange={v=>set("name",v)} required />
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+            <Input label="Duration" type="number" value={String(form.duration)} onChange={v=>set("duration",v)} placeholder="e.g. 30" />
+            <div>
+              <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Unit</label>
+              <select value={form.duration_unit} onChange={e=>set("duration_unit",e.target.value)}
+                style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}>
+                {DUR_UNITS.map(u=><option key={u}>{u}</option>)}
+              </select>
+            </div>
+          </div>
+          <div style={{ borderTop:`1px solid ${G.border}`, paddingTop:12 }}>
+            <p style={{fontSize:13,fontWeight:600,color:G.dark,marginBottom:8}}>Dependency</p>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+              <div>
+                <label style={{fontSize:12,color:G.muted,display:"block",marginBottom:4}}>Type</label>
+                <select value={form.dep_type} onChange={e=>set("dep_type",e.target.value)}
+                  style={{width:"100%",padding:"8px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}>
+                  <option value="">None</option>
+                  {DEP_TYPES.map(d=><option key={d.value} value={d.value}>{d.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{fontSize:12,color:G.muted,display:"block",marginBottom:4}}>Depends on</label>
+                <select value={form.dep_skid} onChange={e=>set("dep_skid",e.target.value)}
+                  disabled={!form.dep_type}
+                  style={{width:"100%",padding:"8px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",background:!form.dep_type?G.sand:G.white}}>
+                  <option value="">Select skill…</option>
+                  {otherSkills.map(s=><option key={s.skid} value={s.skid}>{s.name}</option>)}
+                </select>
+              </div>
+            </div>
+            {form.dep_type&&(
+              <p style={{fontSize:11,color:G.muted,marginTop:6}}>{DEP_TYPES.find(d=>d.value===form.dep_type)?.label}</p>
+            )}
+          </div>
+        </div>
+        <div style={{display:"flex",gap:10,marginTop:20}}>
+          <Btn size="sm" onClick={save} loading={saving}>Save</Btn>
+          <Btn variant="ghost" size="sm" onClick={onClose}>Cancel</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── ROLE EDIT DIALOG ─────────────────────────────────────────────────────────
+function RoleEditDialog({ role, allSkills, onSave, onClose, createSkill }) {
+  const [name, setName]       = useState(role.name);
+  const [selSkills, setSelSkills] = useState(role.skills||[]);
+  const [saving, setSaving]   = useState(false);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const updated = await api.updateRole(role.rid, { name:name.trim(), skill_ids: selSkills.map(s=>s.skid) });
+      onSave(updated);
+    } catch(e){ alert(e.message); } finally{ setSaving(false); }
+  };
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1100, display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <div style={{ background:G.white, borderRadius:16, padding:28, maxWidth:480, width:"90%", boxShadow:"0 20px 60px rgba(44,24,16,0.2)", animation:"fadeIn 0.2s ease" }}>
+        <h3 style={{ fontFamily:G.font, fontSize:18, marginBottom:18 }}>Edit role</h3>
+        <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+          <Input label="Role name" value={name} onChange={setName} required />
+          <div>
+            <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:6}}>Skills</label>
+            <SkillCombo allSkills={allSkills} selected={selSkills} onChange={setSelSkills} onCreateSkill={createSkill} pillColor={role.color}/>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:10,marginTop:20}}>
+          <Btn size="sm" onClick={save} loading={saving}>Save</Btn>
+          <Btn variant="ghost" size="sm" onClick={onClose}>Cancel</Btn>
+        </div>
+      </div>
     </div>
   );
 }
@@ -3883,6 +4020,8 @@ function StaffPage({ toast }) {
   const [showNew,   setShowNew]   = useState(false);
   const [showRoles, setShowRoles] = useState(false);
   const [saving,    setSaving]    = useState(false);
+  const [editSkill, setEditSkill] = useState(null);
+  const [editRole,  setEditRole]  = useState(null);
 
   const load = useCallback(async()=>{
     setLoading(true);
@@ -3902,27 +4041,81 @@ function StaffPage({ toast }) {
     catch(e){ toast(e.message,"error"); }
   };
 
-  const createSkill = async (name) => {
+  const createSkill = async name => {
     try { const s = await api.createSkill({name}); setSkills(p=>[...p,s].sort((a,b)=>a.name.localeCompare(b.name))); return s; }
     catch(e){ toast(e.message,"error"); return null; }
   };
 
   // Employee form state
-  const emptyForm = {first_name:"",last_name:"",email:"",phone:"",street_address:"",city:"",zip:"",is_employee:false,role_ids:[],skill_ids:[]};
-  const [form, setForm] = useState(emptyForm);
-  const [formRoles,  setFormRoles]  = useState([]); // [{rid,name}]
-  const [formSkills, setFormSkills] = useState([]); // [{skid,name}]
+  const emptyForm = {first_name:"",last_name:"",email:"",phone:"",street_address:"",city:"",zip:"",is_employee:false};
+  const [form, setForm]       = useState(emptyForm);
+  const [formRoles,  setFormRoles]  = useState([]);
+  const [formSkills, setFormSkills] = useState([]);
+  const [linkedUser, setLinkedUser] = useState(null);
+  const [lookingUp,  setLookingUp]  = useState(false);
 
-  const openEdit = (emp) => {
-    setEditEmp(emp);
-    setForm({ first_name:emp.first_name, last_name:emp.last_name, email:emp.email||"", phone:emp.phone||"", street_address:emp.street_address||"", city:emp.city||"", zip:emp.zip||"", is_employee:emp.is_employee||false, role_ids:[], skill_ids:[] });
+  // Skills that come from selected roles (excluded from manual Skills combo)
+  const roleSkillIds = formRoles.flatMap(r => {
+    const fullRole = roles.find(x=>x.rid===r.rid);
+    return (fullRole?.skills||[]).map(s=>s.skid);
+  });
+  // Auto-merge role skills into formSkills when roles change
+  const handleRolesChange = newRoles => {
+    setFormRoles(newRoles);
+    // Add skills from newly added roles (avoid duplicates)
+    const addedRids = newRoles.map(r=>r.rid);
+    const removedRids = formRoles.filter(r=>!addedRids.includes(r.rid)).map(r=>r.rid);
+    // Skills to add from new roles
+    const toAdd = newRoles.flatMap(r => {
+      const fullRole = roles.find(x=>x.rid===r.rid);
+      return (fullRole?.skills||[]).filter(s=>!formSkills.find(x=>x.skid===s.skid));
+    });
+    // Skills to remove (belonged to removed roles, not in other selected roles)
+    const remainingRoleSkillIds = newRoles.flatMap(r=>(roles.find(x=>x.rid===r.rid)?.skills||[]).map(s=>s.skid));
+    const removedRoleSkillIds = removedRids.flatMap(rid=>(roles.find(x=>x.rid===rid)?.skills||[]).map(s=>s.skid))
+      .filter(skid=>!remainingRoleSkillIds.includes(skid));
+    setFormSkills(p => [...p.filter(s=>!removedRoleSkillIds.includes(s.skid)), ...toAdd]);
+  };
+
+  const handleIsEmployeeToggle = async checked => {
+    if (!checked) { setLinkedUser(null); setForm(p=>({...p,is_employee:false})); return; }
+    setForm(p=>({...p,is_employee:true}));
+    const email = form.email.trim();
+    if (!email) return;
+    setLookingUp(true);
+    try {
+      const found = await api.lookupUserByEmail(email);
+      if (found) {
+        setLinkedUser(found);
+        setForm(p=>({...p,first_name:found.first_name,last_name:found.last_name,email:found.email,phone:found.phone||"",street_address:found.street_address||"",city:found.city||"",zip:found.zip||"",is_employee:true}));
+        toast(`Linked to existing account: ${found.first_name} ${found.last_name}`);
+      } else { toast("No Tanelu account found with this email — a new record will be created.","info"); }
+    } catch(e){ toast(e.message,"error"); } finally{ setLookingUp(false); }
+  };
+
+  const handleEmailBlur = async () => {
+    if (!form.is_employee || !form.email.trim() || linkedUser) return;
+    setLookingUp(true);
+    try {
+      const found = await api.lookupUserByEmail(form.email.trim());
+      if (found) {
+        setLinkedUser(found);
+        setForm(p=>({...p,first_name:found.first_name,last_name:found.last_name,phone:found.phone||"",street_address:found.street_address||"",city:found.city||"",zip:found.zip||""}));
+        toast(`Linked to existing account: ${found.first_name} ${found.last_name}`);
+      }
+    } catch(e){ toast(e.message,"error"); } finally{ setLookingUp(false); }
+  };
+
+  const openEdit = emp => {
+    setEditEmp(emp); setLinkedUser(null);
+    setForm({first_name:emp.first_name,last_name:emp.last_name,email:emp.email||"",phone:emp.phone||"",street_address:emp.street_address||"",city:emp.city||"",zip:emp.zip||"",is_employee:emp.is_employee||false});
     setFormRoles(roles.filter(r=>emp.roles?.includes(r.name)));
     setFormSkills(skills.filter(s=>emp.skills?.includes(s.name)));
     setShowNew(false);
   };
 
   const openNew = () => {
-    setEditEmp(null); setForm(emptyForm); setFormRoles([]); setFormSkills([]); setShowNew(true);
+    setEditEmp(null); setLinkedUser(null); setForm(emptyForm); setFormRoles([]); setFormSkills([]); setShowNew(true);
   };
 
   const saveEmployee = async () => {
@@ -3931,19 +4124,22 @@ function StaffPage({ toast }) {
     try {
       const payload = { ...form, role_ids: formRoles.map(r=>r.rid), skill_ids: formSkills.map(s=>s.skid) };
       if (editEmp) {
-        const updated = await api.updateEmployee(editEmp.uid, payload);
-        setEmployees(p=>p.map(e=>e.uid===updated.uid?{...e,first_name:updated.first_name,last_name:updated.last_name,email:updated.email,roles:updated.roles?.map(r=>r.name),skills:updated.skills?.map(s=>s.name)}:e));
-        toast(`${updated.first_name} ${updated.last_name} saved`);
+        const u = await api.updateEmployee(editEmp.uid, payload);
+        setEmployees(p=>p.map(e=>e.uid===u.uid?{...e,first_name:u.first_name,last_name:u.last_name,email:u.email,roles:u.roles?.map(r=>r.name)||[],skills:u.skills?.map(s=>s.name)||[]}:e));
+        toast(`${u.first_name} ${u.last_name} saved`);
       } else {
-        const created = await api.createEmployee(payload);
-        setEmployees(p=>[...p,{...created,roles:created.roles?.map(r=>r.name)||[],skills:created.skills?.map(s=>s.name)||[]}].sort((a,b)=>a.first_name.localeCompare(b.first_name)));
-        toast(`${created.first_name} ${created.last_name} added`);
+        const c = await api.createEmployee(payload);
+        setEmployees(p=>[...p,{...c,roles:c.roles?.map(r=>r.name)||[],skills:c.skills?.map(s=>s.name)||[]}].sort((a,b)=>a.first_name.localeCompare(b.first_name)));
+        toast(`${c.first_name} ${c.last_name} added`);
       }
       setEditEmp(null); setShowNew(false);
     } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
   };
 
-  const pillStyle = (color="#c8873a") => ({ display:"inline-flex", alignItems:"center", padding:"2px 10px", borderRadius:20, fontSize:12, fontWeight:500, background:`${color}18`, color, marginRight:4, marginBottom:2 });
+  // Find role color for a role name
+  const roleColor = name => roles.find(r=>r.name===name)?.color || G.caramel;
+  // Find skill color
+  const skillColor = name => skills.find(s=>s.name===name)?.color || G.muted;
 
   if (showRoles) return <RolesPage roles={roles} skills={skills} setRoles={setRoles} setSkills={setSkills} createSkill={createSkill} toast={toast} onBack={()=>setShowRoles(false)} />;
 
@@ -3955,33 +4151,54 @@ function StaffPage({ toast }) {
         <Btn size="sm" onClick={openNew}>+ Employee</Btn>
       </div>
     }>
-      {/* New / Edit employee form */}
+      {/* Form */}
       {(showNew||editEmp)&&(
         <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
           <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>{editEmp?`${editEmp.first_name} ${editEmp.last_name}`:"New employee"}</h3>
+          {linkedUser&&(
+            <div style={{ background:"#f0fdf4", border:"1px solid #86efac", borderRadius:8, padding:"10px 14px", marginBottom:14, fontSize:13, color:"#166534" }}>
+              ✓ Linked to existing Tanelu account — personal fields are read-only.
+            </div>
+          )}
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
-            <Input label="First name" value={form.first_name} onChange={v=>setForm(p=>({...p,first_name:v}))} required />
-            <Input label="Last name"  value={form.last_name}  onChange={v=>setForm(p=>({...p,last_name:v}))}  required />
-            <Input label="Email"      value={form.email}      onChange={v=>setForm(p=>({...p,email:v}))}      type="email" />
-            <Input label="Phone"      value={form.phone}      onChange={v=>setForm(p=>({...p,phone:v}))} />
-            <Input label="Street address" value={form.street_address} onChange={v=>setForm(p=>({...p,street_address:v}))} />
-            <Input label="City"       value={form.city}       onChange={v=>setForm(p=>({...p,city:v}))} />
-            <Input label="ZIP"        value={form.zip}        onChange={v=>setForm(p=>({...p,zip:v}))} />
+            <Input label="First name" value={form.first_name} onChange={v=>setForm(p=>({...p,first_name:v}))} required disabled={!!linkedUser}/>
+            <Input label="Last name"  value={form.last_name}  onChange={v=>setForm(p=>({...p,last_name:v}))}  required disabled={!!linkedUser}/>
+            <div>
+              <Input label="Email" value={form.email} onChange={v=>setForm(p=>({...p,email:v}))} type="email" onBlur={handleEmailBlur} disabled={!!linkedUser}/>
+              {lookingUp&&<span style={{fontSize:11,color:G.muted}}>Looking up…</span>}
+            </div>
+            <Input label="Phone" value={form.phone} onChange={v=>setForm(p=>({...p,phone:v}))} disabled={!!linkedUser}/>
+            <Input label="Street address" value={form.street_address} onChange={v=>setForm(p=>({...p,street_address:v}))} disabled={!!linkedUser}/>
+            <Input label="City" value={form.city} onChange={v=>setForm(p=>({...p,city:v}))} disabled={!!linkedUser}/>
+            <Input label="ZIP"  value={form.zip}  onChange={v=>setForm(p=>({...p,zip:v}))}  disabled={!!linkedUser}/>
             <div style={{display:"flex",alignItems:"center",gap:10,paddingTop:28}}>
               <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:14}}>
-                <input type="checkbox" checked={!!form.is_employee} onChange={e=>setForm(p=>({...p,is_employee:e.target.checked}))} style={{accentColor:G.caramel}}/>
+                <input type="checkbox" checked={!!form.is_employee} onChange={e=>handleIsEmployeeToggle(e.target.checked)} style={{accentColor:G.caramel}}/>
                 Has Tanelu account
               </label>
             </div>
           </div>
           <div style={{ marginBottom:14 }}>
             <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:6}}>Roles</label>
-            <SkillCombo allSkills={roles.map(r=>({skid:r.rid,name:r.name}))} selected={formRoles.map(r=>({skid:r.rid,name:r.name}))}
-              onChange={sel=>setFormRoles(sel.map(s=>({rid:s.skid,name:s.name})))} />
+            <SkillCombo
+              allSkills={roles.map(r=>({...r,skid:r.rid}))}
+              selected={formRoles.map(r=>({...r,skid:r.rid}))}
+              onChange={sel=>handleRolesChange(sel.map(s=>({...s,rid:s.rid||s.skid})))}
+              onClickPill={r=>setEditRole(roles.find(x=>x.rid===(r.rid||r.skid)))}
+              pillColor={null}
+            />
           </div>
           <div style={{ marginBottom:20 }}>
             <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:6}}>Skills</label>
-            <SkillCombo allSkills={skills} selected={formSkills} onChange={setFormSkills} onCreateSkill={createSkill} />
+            <SkillCombo
+              allSkills={skills}
+              selected={formSkills}
+              excluded={roleSkillIds}
+              onChange={setFormSkills}
+              onCreateSkill={createSkill}
+              onClickPill={s=>setEditSkill(s)}
+            />
+            {roleSkillIds.length>0&&<p style={{fontSize:11,color:G.muted,marginTop:4}}>Skills from assigned roles are shown automatically and excluded from manual selection.</p>}
           </div>
           <div style={{ display:"flex", gap:10 }}>
             <Btn size="sm" onClick={saveEmployee} loading={saving}>Save</Btn>
@@ -3990,7 +4207,7 @@ function StaffPage({ toast }) {
         </div>
       )}
 
-      {/* Employee table */}
+      {/* Table */}
       {loading?<Spinner/>:(
         <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, overflow:"hidden" }}>
           <table style={{ width:"100%", borderCollapse:"collapse" }}>
@@ -4004,22 +4221,24 @@ function StaffPage({ toast }) {
             </thead>
             <tbody>
               {employees.length===0?(
-                <tr><td colSpan={6} style={{padding:40,textAlign:"center",color:G.muted}}>No employees yet. Click "+ Employee" to add one.</td></tr>
+                <tr><td colSpan={6} style={{padding:40,textAlign:"center",color:G.muted}}>No employees yet.</td></tr>
               ):employees.map((e,i)=>(
                 <tr key={e.uid} style={{ borderBottom:i<employees.length-1?`1px solid ${G.border}`:"none", background:selected.includes(e.uid)?`${G.caramel}08`:"transparent" }}>
-                  <td style={{padding:"10px 14px"}}>
-                    <input type="checkbox" checked={selected.includes(e.uid)} onChange={()=>toggleSel(e.uid)} style={{accentColor:G.caramel}}/>
-                  </td>
+                  <td style={{padding:"10px 14px"}}><input type="checkbox" checked={selected.includes(e.uid)} onChange={()=>toggleSel(e.uid)} style={{accentColor:G.caramel}}/></td>
                   <td style={{padding:"10px 14px",fontSize:13,color:G.muted,fontFamily:G.mono}}>{e.employee_seq}</td>
                   <td style={{padding:"10px 14px"}}>
                     <button onClick={()=>openEdit(e)} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:G.dark,fontWeight:600,padding:0,textDecoration:"underline dotted",textUnderlineOffset:3}}>{e.first_name}</button>
                   </td>
                   <td style={{padding:"10px 14px",fontSize:14}}>{e.last_name}</td>
                   <td style={{padding:"10px 14px"}}>
-                    {(e.roles||[]).map(r=><span key={r} style={pillStyle("#8b5cf6")}>{r}</span>)}
+                    {(e.roles||[]).map(r=>{const c=roleColor(r);return(
+                      <span key={r} onClick={()=>setEditRole(roles.find(x=>x.name===r))} style={{display:"inline-flex",alignItems:"center",gap:4,background:`${c}18`,border:`1px solid ${c}40`,borderRadius:20,padding:"2px 10px",fontSize:12,fontWeight:500,color:c,marginRight:4,marginBottom:2,cursor:"pointer"}}>{r}</span>
+                    );})}
                   </td>
                   <td style={{padding:"10px 14px"}}>
-                    {(e.skills||[]).map(s=><span key={s} style={pillStyle(G.caramel)}>{s}</span>)}
+                    {(e.skills||[]).map(s=>{const c=skillColor(s);return(
+                      <span key={s} onClick={()=>setEditSkill(skills.find(x=>x.name===s))} style={{display:"inline-flex",alignItems:"center",gap:4,background:`${c}18`,border:`1px solid ${c}40`,borderRadius:20,padding:"2px 10px",fontSize:12,fontWeight:500,color:c,marginRight:4,marginBottom:2,cursor:"pointer"}}>{s}</span>
+                    );})}
                   </td>
                 </tr>
               ))}
@@ -4027,49 +4246,49 @@ function StaffPage({ toast }) {
           </table>
         </div>
       )}
+
+      {editSkill&&<SkillEditDialog skill={editSkill} allSkills={skills}
+        onSave={s=>{ setSkills(p=>p.map(x=>x.skid===s.skid?s:x)); setEditSkill(null); toast(`"${s.name}" saved`); }}
+        onClose={()=>setEditSkill(null)} />}
+      {editRole&&<RoleEditDialog role={editRole} allSkills={skills} createSkill={createSkill}
+        onSave={r=>{ setRoles(p=>p.map(x=>x.rid===r.rid?r:x)); setEditRole(null); toast(`"${r.name}" saved`); }}
+        onClose={()=>setEditRole(null)} />}
     </Page>
   );
 }
 
 // ─── ROLES PAGE ────────────────────────────────────────────────────────────────
 function RolesPage({ roles, skills, setRoles, setSkills, createSkill, toast, onBack }) {
-  const [selected, setSelected] = useState([]);
-  const [saving, setSaving]     = useState(false);
-  // Local editable role state
-  const [localRoles, setLocalRoles] = useState(roles.map(r=>({ ...r, _skills: r.skills||[], _name: r.name })));
-  useEffect(()=>{ setLocalRoles(roles.map(r=>({ ...r, _skills: r.skills||[], _name: r.name }))); },[roles]);
+  const [selected,   setSelected]   = useState([]);
+  const [saving,     setSaving]     = useState(false);
+  const [localRoles, setLocalRoles] = useState(roles.map(r=>({...r,_skills:r.skills||[],_name:r.name})));
+  useEffect(()=>setLocalRoles(roles.map(r=>({...r,_skills:r.skills||[],_name:r.name}))),[roles]);
 
   const toggleSel = rid => setSelected(p=>p.includes(rid)?p.filter(x=>x!==rid):[...p,rid]);
 
   const addRole = async () => {
     const name = window.prompt("Role name:");
     if (!name?.trim()) return;
-    try {
-      const r = await api.createRole({name:name.trim(),skill_ids:[]});
-      setRoles(p=>[...p,r].sort((a,b)=>a.name.localeCompare(b.name)));
-    } catch(e){ toast(e.message,"error"); }
+    try { const r = await api.createRole({name:name.trim(),skill_ids:[]}); setRoles(p=>[...p,r].sort((a,b)=>a.name.localeCompare(b.name))); }
+    catch(e){ toast(e.message,"error"); }
   };
 
   const deleteSelected = async () => {
     if (!window.confirm(`Delete ${selected.length} role(s)?`)) return;
-    try {
-      await api.deleteRoles(selected);
-      setRoles(p=>p.filter(r=>!selected.includes(r.rid)));
-      setSelected([]);
-      toast("Deleted");
-    } catch(e){ toast(e.message,"error"); }
+    try { await api.deleteRoles(selected); setRoles(p=>p.filter(r=>!selected.includes(r.rid))); setSelected([]); toast("Deleted"); }
+    catch(e){ toast(e.message,"error"); }
   };
 
-  const saveRole = async (local) => {
+  const saveRole = async local => {
     setSaving(true);
     try {
-      const updated = await api.updateRole(local.rid, { name:local._name, skill_ids: local._skills.map(s=>s.skid) });
+      const updated = await api.updateRole(local.rid, { name:local._name, skill_ids:local._skills.map(s=>s.skid) });
       setRoles(p=>p.map(r=>r.rid===updated.rid?updated:r));
       toast(`"${updated.name}" saved`);
     } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
   };
 
-  const updateLocal = (rid, patch) => setLocalRoles(p=>p.map(r=>r.rid===rid?{...r,...patch}:r));
+  const updateLocal = (rid,patch) => setLocalRoles(p=>p.map(r=>r.rid===rid?{...r,...patch}:r));
 
   return (
     <Page title="Roles & Skills" actions={
@@ -4084,28 +4303,27 @@ function RolesPage({ roles, skills, setRoles, setSkills, createSkill, toast, onB
           <thead>
             <tr style={{ background:G.sand, borderBottom:`1px solid ${G.border}` }}>
               <th style={{ width:40, padding:"10px 14px" }}></th>
-              <th style={{ padding:"10px 14px", textAlign:"left", fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:G.muted, width:"35%" }}>Role</th>
+              <th style={{ padding:"10px 14px", textAlign:"left", fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:G.muted, width:"30%" }}>Role</th>
               <th style={{ padding:"10px 14px", textAlign:"left", fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:G.muted }}>Skills</th>
               <th style={{ width:80 }}></th>
             </tr>
           </thead>
           <tbody>
             {localRoles.length===0?(
-              <tr><td colSpan={4} style={{padding:40,textAlign:"center",color:G.muted}}>No roles yet. Click "+ Role" to create one.</td></tr>
+              <tr><td colSpan={4} style={{padding:40,textAlign:"center",color:G.muted}}>No roles yet. Click "+ Role".</td></tr>
             ):localRoles.map((r,i)=>(
               <tr key={r.rid} style={{ borderBottom:i<localRoles.length-1?`1px solid ${G.border}`:"none", verticalAlign:"top" }}>
+                <td style={{padding:"12px 14px"}}><input type="checkbox" checked={selected.includes(r.rid)} onChange={()=>toggleSel(r.rid)} style={{accentColor:G.caramel}}/></td>
                 <td style={{padding:"12px 14px"}}>
-                  <input type="checkbox" checked={selected.includes(r.rid)} onChange={()=>toggleSel(r.rid)} style={{accentColor:G.caramel}}/>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <div style={{width:10,height:10,borderRadius:"50%",background:r.color,flexShrink:0}}/>
+                    <input value={r._name} onChange={e=>updateLocal(r.rid,{_name:e.target.value})}
+                      onBlur={()=>r._name!==r.name&&saveRole(r)}
+                      style={{border:"none",outline:"none",fontSize:14,fontFamily:G.mono,fontWeight:600,color:r.color,width:"100%",background:"transparent",borderBottom:`1px dashed ${G.border}`,paddingBottom:3}}/>
+                  </div>
                 </td>
                 <td style={{padding:"12px 14px"}}>
-                  <input value={r._name} onChange={e=>updateLocal(r.rid,{_name:e.target.value})}
-                    onBlur={()=>r._name!==r.name&&saveRole(r)}
-                    style={{ border:"none", outline:"none", fontSize:14, fontFamily:G.mono, fontWeight:600, color:G.dark, width:"100%", background:"transparent", borderBottom:`1px dashed ${G.border}`, paddingBottom:3 }}/>
-                </td>
-                <td style={{padding:"12px 14px"}}>
-                  <SkillCombo allSkills={skills} selected={r._skills}
-                    onChange={sel=>updateLocal(r.rid,{_skills:sel})}
-                    onCreateSkill={createSkill} />
+                  <SkillCombo allSkills={skills} selected={r._skills} onChange={sel=>updateLocal(r.rid,{_skills:sel})} onCreateSkill={createSkill} pillColor={r.color}/>
                 </td>
                 <td style={{padding:"12px 14px"}}>
                   <Btn size="sm" onClick={()=>saveRole(r)} loading={saving}>Save</Btn>
@@ -4118,6 +4336,224 @@ function RolesPage({ roles, skills, setRoles, setSkills, createSkill, toast, onB
     </Page>
   );
 }
+
+// ─── PROCESSES PAGE (v12) ──────────────────────────────────────────────────────
+function ProcessesPage({ toast }) {
+  const [processes, setProcesses] = useState([]);
+  const [skills,    setSkills]    = useState([]);
+  const [roles,     setRoles]     = useState([]);
+  const [loading,   setLoading]   = useState(true);
+  const [showNew,   setShowNew]   = useState(false);
+  const [newName,   setNewName]   = useState("");
+  const [newSkills, setNewSkills] = useState([]); // [{skid,name,color,duration,duration_unit}]
+  const [saving,    setSaving]    = useState(false);
+  const [schedule,  setSchedule]  = useState(null);
+
+  const load = useCallback(async()=>{
+    setLoading(true);
+    try {
+      const [p,s,r] = await Promise.all([api.getProcesses(), api.getSkills(), api.getRoles()]);
+      setProcesses(p||[]); setSkills(s||[]); setRoles(r||[]);
+    } catch(e){ toast(e.message,"error"); } finally{ setLoading(false); }
+  },[]);
+  useEffect(()=>{ load(); },[]);
+
+  const createSkill = async name => {
+    try { const s=await api.createSkill({name}); setSkills(p=>[...p,s].sort((a,b)=>a.name.localeCompare(b.name))); return s; }
+    catch(e){ toast(e.message,"error"); return null; }
+  };
+
+  // Add a role or skill pill to the process
+  const addToProcess = item => {
+    if (item.rid) {
+      // It's a role — expand to its skills
+      const fullRole = roles.find(r=>r.rid===item.rid);
+      const roleSkills = (fullRole?.skills||[]).map(s=>({...s, duration:s.duration||null, duration_unit:s.duration_unit||"minutes"}));
+      setNewSkills(p=>{
+        const existing = new Set(p.map(x=>x.skid));
+        return [...p, ...roleSkills.filter(s=>!existing.has(s.skid))];
+      });
+    } else {
+      setNewSkills(p=>p.find(x=>x.skid===item.skid)?p:[...p,{...item,duration:item.duration||null,duration_unit:item.duration_unit||"minutes"}]);
+    }
+  };
+
+  const saveProcess = async () => {
+    if (!newName.trim()) { toast("Process name required","error"); return; }
+    setSaving(true);
+    try {
+      const p = await api.createProcess({ name:newName.trim() });
+      const updated = await api.updateProcess(p.procid, { skills: newSkills.map((s,i)=>({skid:s.skid,seq:i+1,duration:s.duration,duration_unit:s.duration_unit})) });
+      setProcesses(prev=>[...prev,updated].sort((a,b)=>a.name.localeCompare(b.name)));
+      setShowNew(false); setNewName(""); setNewSkills([]);
+      toast(`"${updated.name}" created`);
+    } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
+  };
+
+  const deleteProcess = async id => {
+    if (!window.confirm("Delete this process?")) return;
+    try { await api.deleteProcess(id); setProcesses(p=>p.filter(x=>x.procid!==id)); toast("Deleted"); }
+    catch(e){ toast(e.message,"error"); }
+  };
+
+  const updateSkillRow = (i,k,v) => setNewSkills(p=>p.map((s,j)=>j===i?{...s,[k]:v}:s));
+  const moveRow = (i,dir) => {
+    if ((dir<0&&i===0)||(dir>0&&i===newSkills.length-1)) return;
+    const arr=[...newSkills]; [arr[i],arr[i+dir]]=[arr[i+dir],arr[i]]; setNewSkills(arr);
+  };
+  const removeRow = i => setNewSkills(p=>p.filter((_,j)=>j!==i));
+
+  const toMinutes = (dur,unit) => {
+    if (!dur) return 0;
+    if (unit==="seconds") return Number(dur)/60;
+    if (unit==="hours")   return Number(dur)*60;
+    return Number(dur);
+  };
+  const totalMins = newSkills.reduce((s,sk)=>s+toMinutes(sk.duration,sk.duration_unit),0);
+
+  // ── PERT chart ─────────────────────────────────────────────────────────────
+  const PertChart = () => {
+    if (!processes.length) return <div style={{padding:40,textAlign:"center",color:G.muted}}>No processes yet. Click "+ Process" to create one.</div>;
+    const barH = 48, gap = 12, rowH = barH+gap;
+    const svgH = processes.length*rowH+40;
+    // Working day: 8am–6pm = 600 min
+    const dayMins = 600, labelW = 160;
+    const W = 800;
+    const chartW = W-labelW-20;
+    const minToX = m => (m/dayMins)*chartW;
+    // Colour hour grid
+    const hours = Array.from({length:11},(_,i)=>i*60);
+    return (
+      <div style={{ overflowX:"auto", marginBottom:24, background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:16 }}>
+        <svg width={W} height={svgH}>
+          {/* Hour grid */}
+          {hours.map(m=>(
+            <g key={m}>
+              <line x1={labelW+minToX(m)} y1={20} x2={labelW+minToX(m)} y2={svgH} stroke={G.border} strokeWidth={1}/>
+              <text x={labelW+minToX(m)+3} y={14} fontSize={10} fill={G.muted}>{`${8+m/60}:00`}</text>
+            </g>
+          ))}
+          {/* Process bars */}
+          {processes.map((proc,pi)=>{
+            const y = 24+pi*rowH;
+            let x = labelW;
+            return (
+              <g key={proc.procid}>
+                <text x={0} y={y+barH/2+4} fontSize={12} fontWeight="600" fill={G.dark} dominantBaseline="middle">{proc.name.slice(0,18)}</text>
+                {(proc.skills||[]).map((sk,si)=>{
+                  const w = Math.max(4,minToX(toMinutes(sk.duration,sk.duration_unit)));
+                  const color = sk.color||G.muted;
+                  const rx = x;
+                  x += w;
+                  return (
+                    <g key={sk.psid}>
+                      <rect x={rx} y={y} width={w} height={barH} fill={`${color}30`} stroke={color} strokeWidth={1} rx={4}/>
+                      {w>30&&<text x={rx+4} y={y+14} fontSize={10} fill={color} fontWeight="600">{sk.name}</text>}
+                      {w>40&&sk.duration&&<text x={rx+4} y={y+28} fontSize={9} fill={G.muted}>{sk.duration}{sk.duration_unit?.[0]}</text>}
+                    </g>
+                  );
+                })}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+    );
+  };
+
+  // All pill sources (both roles and skills)
+  const allItems = [
+    ...roles.map(r=>({...r,skid:r.rid,_isRole:true})),
+    ...skills,
+  ];
+
+  return (
+    <Page title="Processes" actions={<Btn size="sm" onClick={()=>setShowNew(s=>!s)}>+ Process</Btn>}>
+      <PertChart/>
+
+      {showNew&&(
+        <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
+          <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Process name…"
+            style={{ border:"none", borderBottom:`2px solid ${G.caramel}`, outline:"none", fontSize:20, fontFamily:G.font, fontWeight:700, color:G.dark, width:"100%", marginBottom:18, paddingBottom:6, background:"transparent" }}/>
+
+          <div style={{ marginBottom:16 }}>
+            <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:6}}>Add roles / skills</label>
+            <SkillCombo allSkills={allItems} selected={[]} onChange={sel=>sel.length&&addToProcess(sel[sel.length-1])} onCreateSkill={createSkill}/>
+          </div>
+
+          {newSkills.length>0&&(
+            <div style={{ border:`1px solid ${G.border}`, borderRadius:10, overflow:"hidden", marginBottom:16 }}>
+              <table style={{ width:"100%", borderCollapse:"collapse" }}>
+                <thead>
+                  <tr style={{ background:G.sand }}>
+                    {["#","Skill","Duration","",""].map(h=><th key={h} style={{padding:"8px 12px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted}}>{h}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {newSkills.map((sk,i)=>(
+                    <tr key={sk.skid} style={{ borderTop:`1px solid ${G.border}` }}>
+                      <td style={{padding:"8px 12px",fontSize:13,color:G.muted,fontFamily:G.mono,fontWeight:700}}>{i+1}</td>
+                      <td style={{padding:"8px 12px"}}>
+                        <span style={{fontSize:13,fontWeight:600,color:sk.color||G.dark}}>{sk.name}</span>
+                      </td>
+                      <td style={{padding:"8px 12px"}}>
+                        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                          <input type="number" value={sk.duration||""} onChange={e=>updateSkillRow(i,"duration",e.target.value)} placeholder="0"
+                            style={{width:70,padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}/>
+                          <select value={sk.duration_unit||"minutes"} onChange={e=>updateSkillRow(i,"duration_unit",e.target.value)}
+                            style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
+                            {DUR_UNITS.map(u=><option key={u}>{u}</option>)}
+                          </select>
+                        </div>
+                      </td>
+                      <td style={{padding:"8px 12px"}}>
+                        <div style={{display:"flex",gap:4}}>
+                          <button onClick={()=>moveRow(i,-1)} disabled={i===0} style={{background:"none",border:"none",cursor:"pointer",fontSize:16,color:G.muted,padding:"2px 6px",opacity:i===0?0.3:1}}>↑</button>
+                          <button onClick={()=>moveRow(i,1)} disabled={i===newSkills.length-1} style={{background:"none",border:"none",cursor:"pointer",fontSize:16,color:G.muted,padding:"2px 6px",opacity:i===newSkills.length-1?0.3:1}}>↓</button>
+                        </div>
+                      </td>
+                      <td style={{padding:"8px 12px"}}>
+                        <button onClick={()=>removeRow(i)} style={{background:"none",border:"none",cursor:"pointer",color:G.red,fontSize:16}}>×</button>
+                      </td>
+                    </tr>
+                  ))}
+                  <tr style={{ borderTop:`2px solid ${G.border}`, background:G.sand }}>
+                    <td colSpan={2} style={{padding:"8px 12px",fontSize:13,fontWeight:700}}>Total</td>
+                    <td style={{padding:"8px 12px",fontSize:13,fontWeight:700,color:G.caramel}}>{totalMins.toFixed(1)} min</td>
+                    <td colSpan={2}/>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div style={{display:"flex",gap:10}}>
+            <Btn onClick={saveProcess} loading={saving}>Save process</Btn>
+            <Btn variant="ghost" onClick={()=>{setShowNew(false);setNewName("");setNewSkills([]);}}>Cancel</Btn>
+          </div>
+        </div>
+      )}
+
+      {/* Saved processes list */}
+      {processes.map(proc=>(
+        <div key={proc.procid} style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:12, padding:"14px 18px", marginBottom:10, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <div>
+            <p style={{ fontWeight:700, fontSize:15, color:G.dark, marginBottom:4 }}>{proc.name}</p>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:4 }}>
+              {(proc.skills||[]).map(sk=>(
+                <span key={sk.psid} style={{ fontSize:12, padding:"2px 10px", borderRadius:20, background:`${sk.color||G.muted}18`, color:sk.color||G.muted, border:`1px solid ${sk.color||G.muted}40` }}>
+                  {sk.name}{sk.duration?` · ${sk.duration}${(sk.duration_unit||"m")[0]}`:""}
+                </span>
+              ))}
+            </div>
+          </div>
+          <button onClick={()=>deleteProcess(proc.procid)} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:18,padding:"4px 8px"}}>×</button>
+        </div>
+      ))}
+    </Page>
+  );
+}
+
 
 // ─── EMBED MENU PAGE ──────────────────────────────────────────────────────────
 function EmbedMenuPage({ toast }) {
@@ -4349,7 +4785,8 @@ export default function App() {
           {page==="procurement"  &&<ProcurementPage toast={toast}/>}
           {page==="suppliers"    &&<SuppliersPage toast={toast}/>}
           {page==="reports"      &&<ReportsPage   toast={toast}/>}
-          {page==="staff"        &&<StaffPage     toast={toast}/>}
+          {page==="staff"        &&<StaffPage      toast={toast}/>}
+          {page==="processes"    &&<ProcessesPage  toast={toast}/>}
           {page==="embed"        &&<EmbedMenuPage toast={toast}/>}
           {page==="orders-manuf" &&<OrdersManufPage toast={toast}/>}
           {page==="restaurants"  &&<RestaurantsPage setPage={setPage} setActiveMenu={setActiveMenu}/>}

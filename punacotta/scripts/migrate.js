@@ -287,15 +287,21 @@ CREATE TABLE IF NOT EXISTS role (
   rid         SERIAL PRIMARY KEY,
   owner_uid   INTEGER NOT NULL REFERENCES "user"(uid),
   name        VARCHAR(100) NOT NULL,
+  color       VARCHAR(7) DEFAULT '#c8873a',
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(owner_uid, name)
 );
 
 CREATE TABLE IF NOT EXISTS skill (
-  skid        SERIAL PRIMARY KEY,
-  owner_uid   INTEGER NOT NULL REFERENCES "user"(uid),
-  name        VARCHAR(100) NOT NULL,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  skid          SERIAL PRIMARY KEY,
+  owner_uid     INTEGER NOT NULL REFERENCES "user"(uid),
+  name          VARCHAR(100) NOT NULL,
+  duration      NUMERIC(10,2),
+  duration_unit VARCHAR(10) DEFAULT 'minutes',
+  dep_type      VARCHAR(2),
+  dep_skid      INTEGER,
+  color         VARCHAR(7),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(owner_uid, name)
 );
 
@@ -315,6 +321,32 @@ CREATE TABLE IF NOT EXISTS employee_skill (
   uid   INTEGER NOT NULL REFERENCES "user"(uid) ON DELETE CASCADE,
   skid  INTEGER NOT NULL REFERENCES skill(skid) ON DELETE CASCADE,
   PRIMARY KEY(uid, skid)
+);
+
+-- Alter existing tables to add new columns if missing (safe re-run)
+ALTER TABLE role  ADD COLUMN IF NOT EXISTS color VARCHAR(7) DEFAULT '#c8873a';
+ALTER TABLE skill ADD COLUMN IF NOT EXISTS duration NUMERIC(10,2);
+ALTER TABLE skill ADD COLUMN IF NOT EXISTS duration_unit VARCHAR(10) DEFAULT 'minutes';
+ALTER TABLE skill ADD COLUMN IF NOT EXISTS dep_type VARCHAR(2);
+ALTER TABLE skill ADD COLUMN IF NOT EXISTS dep_skid INTEGER;
+ALTER TABLE skill ADD COLUMN IF NOT EXISTS color VARCHAR(7);
+
+-- Processes (v12)
+CREATE TABLE IF NOT EXISTS process (
+  procid     SERIAL PRIMARY KEY,
+  owner_uid  INTEGER NOT NULL REFERENCES "user"(uid),
+  name       VARCHAR(200) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(owner_uid, name)
+);
+
+CREATE TABLE IF NOT EXISTS process_skill (
+  psid     SERIAL PRIMARY KEY,
+  procid   INTEGER NOT NULL REFERENCES process(procid) ON DELETE CASCADE,
+  skid     INTEGER NOT NULL REFERENCES skill(skid) ON DELETE CASCADE,
+  seq      INTEGER NOT NULL DEFAULT 1,
+  duration NUMERIC(10,2),
+  duration_unit VARCHAR(10) DEFAULT 'minutes'
 );
 `
 
