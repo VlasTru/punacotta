@@ -1487,7 +1487,7 @@ async function route(method, segments, body, headers, event) {
       const [proc] = await dbq('SELECT * FROM process WHERE procid=$1', [procid])
       if (!proc) return null
       const skills = await dbq(
-        `SELECT ps.psid, ps.seq, ps.duration, ps.duration_unit,
+        `SELECT ps.psid, ps.seq, ps.duration, ps.duration_unit, ps.dep_type, ps.dep_psid,
                 s.skid, s.name, s.color
          FROM process_skill ps JOIN skill s ON s.skid=ps.skid
          WHERE ps.procid=$1 ORDER BY ps.seq`, [procid])
@@ -1498,7 +1498,8 @@ async function route(method, segments, body, headers, event) {
       const result = []
       for (const p of procs) {
         const skills = await dbq(
-          `SELECT ps.psid, ps.seq, ps.duration, ps.duration_unit, s.skid, s.name, s.color
+          `SELECT ps.psid, ps.seq, ps.duration, ps.duration_unit, ps.dep_type, ps.dep_psid,
+                  s.skid, s.name, s.color
            FROM process_skill ps JOIN skill s ON s.skid=ps.skid WHERE ps.procid=$1 ORDER BY ps.seq`, [p.procid])
         result.push({ ...p, skills })
       }
@@ -1517,9 +1518,23 @@ async function route(method, segments, body, headers, event) {
       if (name !== undefined) await dbr('UPDATE process SET name=$1 WHERE procid=$2', [name.trim(), r1])
       if (Array.isArray(skills)) {
         await dbr('DELETE FROM process_skill WHERE procid=$1', [r1])
+        // First pass: insert all rows to get psids
+        const inserted = []
         for (const [i, s] of skills.entries()) {
-          await dbr('INSERT INTO process_skill (procid,skid,seq,duration,duration_unit) VALUES ($1,$2,$3,$4,$5)',
+          const res = await dbr(
+            `INSERT INTO process_skill (procid,skid,seq,duration,duration_unit) VALUES ($1,$2,$3,$4,$5) RETURNING psid`,
             [r1, s.skid, i+1, s.duration||null, s.duration_unit||'minutes'])
+          inserted.push({ ...s, psid: res.rows[0].psid, idx: i })
+        }
+        // Second pass: set dep_psid by matching dep_seq reference
+        for (const [i, s] of skills.entries()) {
+          if (s.dep_type && s.dep_seq != null) {
+            const depRow = inserted.find(x=>x.idx===Number(s.dep_seq)-1)
+            if (depRow) {
+              await dbr('UPDATE process_skill SET dep_type=$1, dep_psid=$2 WHERE psid=$3',
+                [s.dep_type, depRow.psid, inserted[i].psid])
+            }
+          }
         }
       }
       return [200, await fetchProcess(r1)]

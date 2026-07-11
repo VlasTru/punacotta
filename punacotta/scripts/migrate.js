@@ -341,13 +341,18 @@ CREATE TABLE IF NOT EXISTS process (
 );
 
 CREATE TABLE IF NOT EXISTS process_skill (
-  psid     SERIAL PRIMARY KEY,
-  procid   INTEGER NOT NULL REFERENCES process(procid) ON DELETE CASCADE,
-  skid     INTEGER NOT NULL REFERENCES skill(skid) ON DELETE CASCADE,
-  seq      INTEGER NOT NULL DEFAULT 1,
-  duration NUMERIC(10,2),
-  duration_unit VARCHAR(10) DEFAULT 'minutes'
+  psid          SERIAL PRIMARY KEY,
+  procid        INTEGER NOT NULL REFERENCES process(procid) ON DELETE CASCADE,
+  skid          INTEGER NOT NULL REFERENCES skill(skid) ON DELETE CASCADE,
+  seq           INTEGER NOT NULL DEFAULT 1,
+  duration      NUMERIC(10,2),
+  duration_unit VARCHAR(10) DEFAULT 'minutes',
+  dep_type      VARCHAR(2),
+  dep_psid      INTEGER REFERENCES process_skill(psid) ON DELETE SET NULL
 );
+
+ALTER TABLE process_skill ADD COLUMN IF NOT EXISTS dep_type VARCHAR(2);
+ALTER TABLE process_skill ADD COLUMN IF NOT EXISTS dep_psid INTEGER;
 `
 
 await client.connect()

@@ -4383,7 +4383,7 @@ function ProcessesPage({ toast }) {
     setSaving(true);
     try {
       const p = await api.createProcess({ name:newName.trim() });
-      const updated = await api.updateProcess(p.procid, { skills: newSkills.map((s,i)=>({skid:s.skid,seq:i+1,duration:s.duration,duration_unit:s.duration_unit})) });
+      const updated = await api.updateProcess(p.procid, { skills: newSkills.map((s,i)=>({skid:s.skid,seq:i+1,duration:s.duration,duration_unit:s.duration_unit,dep_type:s.dep_type||null,dep_seq:s.dep_seq||null})) });
       setProcesses(prev=>[...prev,updated].sort((a,b)=>a.name.localeCompare(b.name)));
       setShowNew(false); setNewName(""); setNewSkills([]);
       toast(`"${updated.name}" created`);
@@ -4486,7 +4486,9 @@ function ProcessesPage({ toast }) {
               <table style={{ width:"100%", borderCollapse:"collapse" }}>
                 <thead>
                   <tr style={{ background:G.sand }}>
-                    {["#","Skill","Duration","",""].map(h=><th key={h} style={{padding:"8px 12px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted}}>{h}</th>)}
+                    {["#","Skill","Duration","Dependency type","Depends on",""].map(h=>(
+                      <th key={h} style={{padding:"8px 12px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted}}>{h}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
@@ -4499,7 +4501,7 @@ function ProcessesPage({ toast }) {
                       <td style={{padding:"8px 12px"}}>
                         <div style={{display:"flex",gap:6,alignItems:"center"}}>
                           <input type="number" value={sk.duration||""} onChange={e=>updateSkillRow(i,"duration",e.target.value)} placeholder="0"
-                            style={{width:70,padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}/>
+                            style={{width:60,padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}/>
                           <select value={sk.duration_unit||"minutes"} onChange={e=>updateSkillRow(i,"duration_unit",e.target.value)}
                             style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
                             {DUR_UNITS.map(u=><option key={u}>{u}</option>)}
@@ -4507,20 +4509,41 @@ function ProcessesPage({ toast }) {
                         </div>
                       </td>
                       <td style={{padding:"8px 12px"}}>
-                        <div style={{display:"flex",gap:4}}>
-                          <button onClick={()=>moveRow(i,-1)} disabled={i===0} style={{background:"none",border:"none",cursor:"pointer",fontSize:16,color:G.muted,padding:"2px 6px",opacity:i===0?0.3:1}}>↑</button>
-                          <button onClick={()=>moveRow(i,1)} disabled={i===newSkills.length-1} style={{background:"none",border:"none",cursor:"pointer",fontSize:16,color:G.muted,padding:"2px 6px",opacity:i===newSkills.length-1?0.3:1}}>↓</button>
-                        </div>
+                        <select value={sk.dep_type||""} onChange={e=>updateSkillRow(i,"dep_type",e.target.value)}
+                          style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none",minWidth:60}}>
+                          <option value="">—</option>
+                          {DEP_TYPES.map(d=><option key={d.value} value={d.value} title={d.label}>{d.value}</option>)}
+                        </select>
+                        {sk.dep_type&&(
+                          <div style={{fontSize:10,color:G.muted,marginTop:2,maxWidth:110}}>
+                            {DEP_TYPES.find(d=>d.value===sk.dep_type)?.label}
+                          </div>
+                        )}
                       </td>
                       <td style={{padding:"8px 12px"}}>
-                        <button onClick={()=>removeRow(i)} style={{background:"none",border:"none",cursor:"pointer",color:G.red,fontSize:16}}>×</button>
+                        <select value={sk.dep_seq||""} onChange={e=>updateSkillRow(i,"dep_seq",e.target.value)}
+                          disabled={!sk.dep_type}
+                          style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none",background:!sk.dep_type?G.sand:G.white,minWidth:110}}>
+                          <option value="">Select skill…</option>
+                          {newSkills.filter((_,j)=>j!==i).map((other,j)=>{
+                            const actualIdx = newSkills.indexOf(other);
+                            return <option key={other.skid} value={actualIdx+1}>{actualIdx+1}. {other.name}</option>;
+                          })}
+                        </select>
+                      </td>
+                      <td style={{padding:"8px 12px"}}>
+                        <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                          <button onClick={()=>moveRow(i,-1)} disabled={i===0} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:G.muted,opacity:i===0?0.3:1,padding:"2px 4px"}}>↑</button>
+                          <button onClick={()=>moveRow(i,1)} disabled={i===newSkills.length-1} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:G.muted,opacity:i===newSkills.length-1?0.3:1,padding:"2px 4px"}}>↓</button>
+                          <button onClick={()=>removeRow(i)} style={{background:"none",border:"none",cursor:"pointer",color:G.red,fontSize:16,padding:"2px 4px"}}>×</button>
+                        </div>
                       </td>
                     </tr>
                   ))}
                   <tr style={{ borderTop:`2px solid ${G.border}`, background:G.sand }}>
                     <td colSpan={2} style={{padding:"8px 12px",fontSize:13,fontWeight:700}}>Total</td>
                     <td style={{padding:"8px 12px",fontSize:13,fontWeight:700,color:G.caramel}}>{totalMins.toFixed(1)} min</td>
-                    <td colSpan={2}/>
+                    <td colSpan={3}/>
                   </tr>
                 </tbody>
               </table>
