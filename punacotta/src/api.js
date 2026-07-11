@@ -58,7 +58,9 @@ export const api = {
   linkSupplierProduct:   (sid, data) => req('POST',   `/suppliers/${sid}/products`, data),
   unlinkSupplierProduct: (sid, psid) => req('DELETE', `/suppliers/${sid}/products/${psid}`),
 
-  lookupUserByEmail: (email) => req('GET', `/staff/lookup?email=${encodeURIComponent(email)}`),       ()          => req('GET',    '/staff'),
+  lookupUserByEmail: (email) => req('GET', `/staff/lookup?email=${encodeURIComponent(email)}`),
+  // Staff
+  getStaff:       ()          => req('GET',    '/staff'),
   createEmployee: (data)      => req('POST',   '/staff', data),
   updateEmployee: (uid, data) => req('PATCH',  `/staff/${uid}`, data),
   deleteEmployees:(ids)       => req('DELETE', '/staff', { ids }),
