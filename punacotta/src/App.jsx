@@ -4053,6 +4053,7 @@ function StaffPage({ toast }) {
   const [formSkills, setFormSkills] = useState([]);
   const [linkedUser, setLinkedUser] = useState(null);
   const [lookingUp,  setLookingUp]  = useState(false);
+  const [dupeUser,   setDupeUser]   = useState(null); // existing user found without is_employee checked
 
   // Skills that come from selected roles (excluded from manual Skills combo)
   const roleSkillIds = formRoles.flatMap(r => {
@@ -4094,20 +4095,25 @@ function StaffPage({ toast }) {
   };
 
   const handleEmailBlur = async () => {
-    if (!form.is_employee || !form.email.trim() || linkedUser) return;
-    setLookingUp(true);
+    if (!form.email.trim() || linkedUser) return;
+    // Always look up — warn even if is_employee not checked
     try {
       const found = await api.lookupUserByEmail(form.email.trim());
-      if (found) {
+      if (found && !form.is_employee) {
+        setDupeUser(found); // show warning banner
+      } else if (found && form.is_employee) {
         setLinkedUser(found);
+        setDupeUser(null);
         setForm(p=>({...p,first_name:found.first_name,last_name:found.last_name,phone:found.phone||"",street_address:found.street_address||"",city:found.city||"",zip:found.zip||""}));
         toast(`Linked to existing account: ${found.first_name} ${found.last_name}`);
+      } else {
+        setDupeUser(null);
       }
-    } catch(e){ toast(e.message,"error"); } finally{ setLookingUp(false); }
+    } catch(e){ /* ignore lookup errors */ }
   };
 
   const openEdit = emp => {
-    setEditEmp(emp); setLinkedUser(null);
+    setEditEmp(emp); setLinkedUser(null); setDupeUser(null);
     setForm({first_name:emp.first_name,last_name:emp.last_name,email:emp.email||"",phone:emp.phone||"",street_address:emp.street_address||"",city:emp.city||"",zip:emp.zip||"",is_employee:emp.is_employee||false});
     setFormRoles(roles.filter(r=>emp.roles?.includes(r.name)));
     setFormSkills(skills.filter(s=>emp.skills?.includes(s.name)));
@@ -4115,7 +4121,7 @@ function StaffPage({ toast }) {
   };
 
   const openNew = () => {
-    setEditEmp(null); setLinkedUser(null); setForm(emptyForm); setFormRoles([]); setFormSkills([]); setShowNew(true);
+    setEditEmp(null); setLinkedUser(null); setDupeUser(null); setForm(emptyForm); setFormRoles([]); setFormSkills([]); setShowNew(true);
   };
 
   const saveEmployee = async () => {
@@ -4158,6 +4164,20 @@ function StaffPage({ toast }) {
           {linkedUser&&(
             <div style={{ background:"#f0fdf4", border:"1px solid #86efac", borderRadius:8, padding:"10px 14px", marginBottom:14, fontSize:13, color:"#166534" }}>
               ✓ Linked to existing Tanelu account — personal fields are read-only.
+            </div>
+          )}
+          {dupeUser&&!linkedUser&&(
+            <div style={{ background:"#fef3c7", border:"1px solid #fcd34d", borderRadius:8, padding:"12px 14px", marginBottom:14, fontSize:13, color:"#92400e" }}>
+              <p style={{fontWeight:600,marginBottom:6}}>A user with this email already exists ({dupeUser.first_name} {dupeUser.last_name}).</p>
+              <p style={{marginBottom:10}}>Would you like to update the existing account or edit the email?</p>
+              <div style={{display:"flex",gap:8}}>
+                <Btn size="sm" onClick={()=>{
+                  setLinkedUser(dupeUser); setDupeUser(null);
+                  setForm(p=>({...p,first_name:dupeUser.first_name,last_name:dupeUser.last_name,phone:dupeUser.phone||"",street_address:dupeUser.street_address||"",city:dupeUser.city||"",zip:dupeUser.zip||"",is_employee:true}));
+                  toast(`Linked to ${dupeUser.first_name} ${dupeUser.last_name}`);
+                }}>Update</Btn>
+                <Btn variant="ghost" size="sm" onClick={()=>{ setDupeUser(null); setForm(p=>({...p,email:""})); setTimeout(()=>document.querySelector('input[type="email"]')?.focus(),50); }}>Edit</Btn>
+              </div>
             </div>
           )}
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
@@ -4343,11 +4363,12 @@ function ProcessesPage({ toast }) {
   const [skills,    setSkills]    = useState([]);
   const [roles,     setRoles]     = useState([]);
   const [loading,   setLoading]   = useState(true);
-  const [showNew,   setShowNew]   = useState(false);
-  const [newName,   setNewName]   = useState("");
-  const [newSkills, setNewSkills] = useState([]); // [{skid,name,color,duration,duration_unit}]
+  const [showForm,  setShowForm]  = useState(false);
+  const [editProc,  setEditProc]  = useState(null); // null=new, else existing process
+  const [formName,  setFormName]  = useState("");
+  const [formSkills,setFormSkills]= useState([]);
   const [saving,    setSaving]    = useState(false);
-  const [schedule,  setSchedule]  = useState(null);
+  const [nameError, setNameError] = useState("");
 
   const load = useCallback(async()=>{
     setLoading(true);
@@ -4363,30 +4384,60 @@ function ProcessesPage({ toast }) {
     catch(e){ toast(e.message,"error"); return null; }
   };
 
-  // Add a role or skill pill to the process
-  const addToProcess = item => {
-    if (item.rid) {
-      // It's a role — expand to its skills
+  const openNew = () => {
+    setEditProc(null); setFormName(""); setFormSkills([]); setNameError(""); setShowForm(true);
+  };
+
+  const openEdit = proc => {
+    setEditProc(proc);
+    setFormName(proc.name);
+    setFormSkills((proc.skills||[]).map(sk=>({
+      skid:sk.skid, name:sk.name, color:sk.color,
+      duration:sk.duration, duration_unit:sk.duration_unit||"minutes",
+      dep_type:sk.dep_type||"", dep_seq:sk.dep_psid?"":""
+    })));
+    setNameError("");
+    setShowForm(true);
+  };
+
+  const addToForm = item => {
+    if (item._isRole) {
       const fullRole = roles.find(r=>r.rid===item.rid);
-      const roleSkills = (fullRole?.skills||[]).map(s=>({...s, duration:s.duration||null, duration_unit:s.duration_unit||"minutes"}));
-      setNewSkills(p=>{
-        const existing = new Set(p.map(x=>x.skid));
-        return [...p, ...roleSkills.filter(s=>!existing.has(s.skid))];
-      });
+      const roleSkills = (fullRole?.skills||[]).map(s=>({...s,duration:s.duration||null,duration_unit:s.duration_unit||"minutes",dep_type:"",dep_seq:""}));
+      setFormSkills(p=>{ const ex=new Set(p.map(x=>x.skid)); return [...p,...roleSkills.filter(s=>!ex.has(s.skid))]; });
     } else {
-      setNewSkills(p=>p.find(x=>x.skid===item.skid)?p:[...p,{...item,duration:item.duration||null,duration_unit:item.duration_unit||"minutes"}]);
+      setFormSkills(p=>p.find(x=>x.skid===item.skid)?p:[...p,{...item,duration:item.duration||null,duration_unit:item.duration_unit||"minutes",dep_type:"",dep_seq:""}]);
     }
   };
 
-  const saveProcess = async () => {
-    if (!newName.trim()) { toast("Process name required","error"); return; }
+  const saveForm = async () => {
+    const name = formName.trim();
+    if (!name) { setNameError("Process name is required."); return; }
+    // Duplicate name check
+    const dupe = processes.find(p=>p.name.toLowerCase()===name.toLowerCase() && p.procid!==editProc?.procid);
+    if (dupe) {
+      setNameError("A process with the similar name already exists. Modify the name of the process that you are editing or cancel and edit the existing process.");
+      return;
+    }
+    setNameError("");
     setSaving(true);
     try {
-      const p = await api.createProcess({ name:newName.trim() });
-      const updated = await api.updateProcess(p.procid, { skills: newSkills.map((s,i)=>({skid:s.skid,seq:i+1,duration:s.duration,duration_unit:s.duration_unit,dep_type:s.dep_type||null,dep_seq:s.dep_seq||null})) });
-      setProcesses(prev=>[...prev,updated].sort((a,b)=>a.name.localeCompare(b.name)));
-      setShowNew(false); setNewName(""); setNewSkills([]);
-      toast(`"${updated.name}" created`);
+      const skillPayload = formSkills.map((s,i)=>({
+        skid:s.skid, seq:i+1,
+        duration:s.duration||null, duration_unit:s.duration_unit||"minutes",
+        dep_type:s.dep_type||null, dep_seq:s.dep_seq||null,
+      }));
+      if (editProc) {
+        const updated = await api.updateProcess(editProc.procid, { name, skills: skillPayload });
+        setProcesses(p=>p.map(x=>x.procid===updated.procid?updated:x).sort((a,b)=>a.name.localeCompare(b.name)));
+        toast(`"${updated.name}" updated`);
+      } else {
+        const p = await api.createProcess({ name });
+        const updated = await api.updateProcess(p.procid, { skills: skillPayload });
+        setProcesses(prev=>[...prev,updated].sort((a,b)=>a.name.localeCompare(b.name)));
+        toast(`"${updated.name}" created`);
+      }
+      setShowForm(false); setEditProc(null); setFormName(""); setFormSkills([]);
     } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
   };
 
@@ -4396,36 +4447,131 @@ function ProcessesPage({ toast }) {
     catch(e){ toast(e.message,"error"); }
   };
 
-  const updateSkillRow = (i,k,v) => setNewSkills(p=>p.map((s,j)=>j===i?{...s,[k]:v}:s));
+  const updateRow = (i,k,v) => setFormSkills(p=>p.map((s,j)=>j===i?{...s,[k]:v}:s));
   const moveRow = (i,dir) => {
-    if ((dir<0&&i===0)||(dir>0&&i===newSkills.length-1)) return;
-    const arr=[...newSkills]; [arr[i],arr[i+dir]]=[arr[i+dir],arr[i]]; setNewSkills(arr);
+    if ((dir<0&&i===0)||(dir>0&&i===formSkills.length-1)) return;
+    const arr=[...formSkills]; [arr[i],arr[i+dir]]=[arr[i+dir],arr[i]]; setFormSkills(arr);
   };
-  const removeRow = i => setNewSkills(p=>p.filter((_,j)=>j!==i));
+  const removeRow = i => setFormSkills(p=>p.filter((_,j)=>j!==i));
 
-  const toMinutes = (dur,unit) => {
+  const toMins = (dur,unit) => {
     if (!dur) return 0;
     if (unit==="seconds") return Number(dur)/60;
     if (unit==="hours")   return Number(dur)*60;
     return Number(dur);
   };
-  const totalMins = newSkills.reduce((s,sk)=>s+toMinutes(sk.duration,sk.duration_unit),0);
+  const totalMins = formSkills.reduce((s,sk)=>s+toMins(sk.duration,sk.duration_unit),0);
 
-  // ── PERT chart ─────────────────────────────────────────────────────────────
+  // ── PERT chart with D3 dependency arrows ────────────────────────────────────
   const PertChart = () => {
-    if (!processes.length) return <div style={{padding:40,textAlign:"center",color:G.muted}}>No processes yet. Click "+ Process" to create one.</div>;
-    const barH = 48, gap = 12, rowH = barH+gap;
-    const svgH = processes.length*rowH+40;
-    // Working day: 8am–6pm = 600 min
-    const dayMins = 600, labelW = 160;
-    const W = 800;
-    const chartW = W-labelW-20;
+    const svgRef = useRef(null);
+    const barH=44, gap=16, rowH=barH+gap, dayMins=600, labelW=170, W=900, chartW=W-labelW-20;
+    const svgH = Math.max(120, processes.length*rowH+50);
     const minToX = m => (m/dayMins)*chartW;
-    // Colour hour grid
+
+    const DEP_COLORS = { FS:"#059669", SS:"#2563eb", FF:"#d97706", SF:"#dc2626" };
+
+    useEffect(()=>{
+      if (!svgRef.current || !processes.length) return;
+      // D3 is available as window.d3 if imported, else use inline SVG
+      // We build the arrow layer using direct DOM manipulation for compatibility
+      const svg = svgRef.current;
+      // Remove previous arrow layer
+      const old = svg.querySelector('.arrow-layer');
+      if (old) old.remove();
+
+      const ns = "http://www.w3.org/2000/svg";
+      const defs = svg.querySelector('defs') || svg.insertBefore(document.createElementNS(ns,"defs"), svg.firstChild);
+
+      // Add arrowhead markers per dep type
+      Object.entries(DEP_COLORS).forEach(([type, color]) => {
+        const markerId = `arrow-${type}`;
+        if (!defs.querySelector(`#${markerId}`)) {
+          const marker = document.createElementNS(ns,"marker");
+          marker.setAttribute("id", markerId);
+          marker.setAttribute("viewBox","0 -4 8 8");
+          marker.setAttribute("refX","7"); marker.setAttribute("refY","0");
+          marker.setAttribute("markerWidth","6"); marker.setAttribute("markerHeight","6");
+          marker.setAttribute("orient","auto");
+          const path = document.createElementNS(ns,"path");
+          path.setAttribute("d","M0,-4L8,0L0,4"); path.setAttribute("fill",color);
+          marker.appendChild(path); defs.appendChild(marker);
+        }
+      });
+
+      const layer = document.createElementNS(ns,"g");
+      layer.setAttribute("class","arrow-layer");
+
+      // Build a map of psid → {x,y,w} for each rendered block
+      const blockMap = {};
+      processes.forEach((proc,pi)=>{
+        const y = 28+pi*rowH;
+        let x = labelW;
+        (proc.skills||[]).forEach(sk=>{
+          const w = Math.max(8, minToX(toMins(sk.duration,sk.duration_unit)));
+          blockMap[sk.psid] = {x, y, w, barH, procid:proc.procid};
+          x += w;
+        });
+      });
+
+      // Draw arrows for dependencies
+      processes.forEach(proc=>{
+        (proc.skills||[]).forEach(sk=>{
+          if (!sk.dep_type || !sk.dep_psid) return;
+          const src = blockMap[sk.dep_psid];
+          const tgt = blockMap[sk.psid];
+          if (!src || !tgt) return;
+          const type = sk.dep_type;
+          const color = DEP_COLORS[type] || "#999";
+
+          // Source point: FS→right-mid, SS→left-mid, FF→right-mid, SF→left-mid
+          const x1 = (type==="FS"||type==="FF") ? src.x+src.w : src.x;
+          const y1 = src.y + src.barH/2;
+          // Target point: FS→left-mid, SS→left-mid, FF→right-mid, SF→right-mid
+          const x2 = (type==="FS"||type==="SS") ? tgt.x : tgt.x+tgt.w;
+          const y2 = tgt.y + tgt.barH/2;
+
+          const cx = (x1+x2)/2;
+          const d = `M${x1},${y1} C${cx},${y1} ${cx},${y2} ${x2},${y2}`;
+
+          const path = document.createElementNS(ns,"path");
+          path.setAttribute("d",d); path.setAttribute("fill","none");
+          path.setAttribute("stroke",color); path.setAttribute("stroke-width","1.5");
+          path.setAttribute("stroke-dasharray","5,3");
+          path.setAttribute("marker-end",`url(#arrow-${type})`);
+
+          // Label
+          const midX=(x1+x2)/2, midY=(y1+y2)/2-8;
+          const label = document.createElementNS(ns,"text");
+          label.setAttribute("x",String(midX)); label.setAttribute("y",String(midY));
+          label.setAttribute("font-size","9"); label.setAttribute("fill",color);
+          label.setAttribute("text-anchor","middle"); label.setAttribute("font-weight","700");
+          label.textContent = type;
+
+          layer.appendChild(path); layer.appendChild(label);
+        });
+      });
+
+      svg.appendChild(layer);
+    },[processes]);
+
+    if (!processes.length) return (
+      <div style={{padding:60,textAlign:"center",color:G.muted}}>No processes yet. Click "+ Process" to create one.</div>
+    );
+
     const hours = Array.from({length:11},(_,i)=>i*60);
     return (
       <div style={{ overflowX:"auto", marginBottom:24, background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:16 }}>
-        <svg width={W} height={svgH}>
+        {/* Legend */}
+        <div style={{display:"flex",gap:16,marginBottom:12,flexWrap:"wrap"}}>
+          {Object.entries(DEP_COLORS).map(([type,col])=>(
+            <span key={type} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:col}}>
+              <svg width="28" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke={col} strokeWidth="1.5" strokeDasharray="4,2"/><polygon points="20,2 28,5 20,8" fill={col}/></svg>
+              {DEP_TYPES.find(d=>d.value===type)?.label||type}
+            </span>
+          ))}
+        </div>
+        <svg ref={svgRef} width={W} height={svgH}>
           {/* Hour grid */}
           {hours.map(m=>(
             <g key={m}>
@@ -4435,21 +4581,22 @@ function ProcessesPage({ toast }) {
           ))}
           {/* Process bars */}
           {processes.map((proc,pi)=>{
-            const y = 24+pi*rowH;
+            const y = 28+pi*rowH;
             let x = labelW;
             return (
               <g key={proc.procid}>
-                <text x={0} y={y+barH/2+4} fontSize={12} fontWeight="600" fill={G.dark} dominantBaseline="middle">{proc.name.slice(0,18)}</text>
-                {(proc.skills||[]).map((sk,si)=>{
-                  const w = Math.max(4,minToX(toMinutes(sk.duration,sk.duration_unit)));
+                <text x={labelW-6} y={y+barH/2+4} fontSize={12} fontWeight="600" fill={G.dark} textAnchor="end" dominantBaseline="middle">
+                  {proc.name.slice(0,20)}
+                </text>
+                {(proc.skills||[]).map(sk=>{
+                  const w = Math.max(8,minToX(toMins(sk.duration,sk.duration_unit)));
                   const color = sk.color||G.muted;
-                  const rx = x;
-                  x += w;
+                  const rx = x; x += w;
                   return (
                     <g key={sk.psid}>
-                      <rect x={rx} y={y} width={w} height={barH} fill={`${color}30`} stroke={color} strokeWidth={1} rx={4}/>
-                      {w>30&&<text x={rx+4} y={y+14} fontSize={10} fill={color} fontWeight="600">{sk.name}</text>}
-                      {w>40&&sk.duration&&<text x={rx+4} y={y+28} fontSize={9} fill={G.muted}>{sk.duration}{sk.duration_unit?.[0]}</text>}
+                      <rect x={rx} y={y} width={w} height={barH} fill={`${color}28`} stroke={color} strokeWidth={1.5} rx={5}/>
+                      {w>28&&<text x={rx+5} y={y+15} fontSize={10} fill={color} fontWeight="600">{sk.name.slice(0,Math.floor(w/6))}</text>}
+                      {w>36&&sk.duration&&<text x={rx+5} y={y+30} fontSize={9} fill={G.muted}>{sk.duration}{(sk.duration_unit||"m")[0]}</text>}
                     </g>
                   );
                 })}
@@ -4461,81 +4608,82 @@ function ProcessesPage({ toast }) {
     );
   };
 
-  // All pill sources (both roles and skills)
-  const allItems = [
-    ...roles.map(r=>({...r,skid:r.rid,_isRole:true})),
-    ...skills,
-  ];
+  const allItems = [...roles.map(r=>({...r,skid:r.rid,_isRole:true})), ...skills];
 
   return (
-    <Page title="Processes" actions={<Btn size="sm" onClick={()=>setShowNew(s=>!s)}>+ Process</Btn>}>
+    <Page title="Processes" actions={<Btn size="sm" onClick={openNew}>+ Process</Btn>}>
       <PertChart/>
 
-      {showNew&&(
+      {/* Add / Edit form */}
+      {showForm&&(
         <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
-          <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Process name…"
-            style={{ border:"none", borderBottom:`2px solid ${G.caramel}`, outline:"none", fontSize:20, fontFamily:G.font, fontWeight:700, color:G.dark, width:"100%", marginBottom:18, paddingBottom:6, background:"transparent" }}/>
+          <div style={{marginBottom:18}}>
+            <input value={formName} onChange={e=>{ setFormName(e.target.value); setNameError(""); }}
+              placeholder={editProc?"Process name…":"New process name…"}
+              style={{ border:"none", borderBottom:`2px solid ${nameError?G.red:G.caramel}`, outline:"none", fontSize:20, fontFamily:G.font, fontWeight:700, color:G.dark, width:"100%", paddingBottom:6, background:"transparent" }}/>
+            {nameError&&(
+              <p style={{fontSize:12,color:G.red,marginTop:6,lineHeight:1.5}}>{nameError}</p>
+            )}
+          </div>
 
           <div style={{ marginBottom:16 }}>
             <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:6}}>Add roles / skills</label>
-            <SkillCombo allSkills={allItems} selected={[]} onChange={sel=>sel.length&&addToProcess(sel[sel.length-1])} onCreateSkill={createSkill}/>
+            <SkillCombo allSkills={allItems} selected={[]} onChange={sel=>sel.length&&addToForm(sel[sel.length-1])} onCreateSkill={createSkill}/>
           </div>
 
-          {newSkills.length>0&&(
+          {formSkills.length>0&&(
             <div style={{ border:`1px solid ${G.border}`, borderRadius:10, overflow:"hidden", marginBottom:16 }}>
               <table style={{ width:"100%", borderCollapse:"collapse" }}>
                 <thead>
                   <tr style={{ background:G.sand }}>
-                    {["#","Skill","Duration","Dependency type","Depends on",""].map(h=>(
-                      <th key={h} style={{padding:"8px 12px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted}}>{h}</th>
+                    {["#","Skill","Duration","Dep. type","Depends on",""].map(h=>(
+                      <th key={h} style={{padding:"8px 12px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,whiteSpace:"nowrap"}}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {newSkills.map((sk,i)=>(
-                    <tr key={sk.skid} style={{ borderTop:`1px solid ${G.border}` }}>
+                  {formSkills.map((sk,i)=>(
+                    <tr key={`${sk.skid}-${i}`} style={{ borderTop:`1px solid ${G.border}` }}>
                       <td style={{padding:"8px 12px",fontSize:13,color:G.muted,fontFamily:G.mono,fontWeight:700}}>{i+1}</td>
                       <td style={{padding:"8px 12px"}}>
                         <span style={{fontSize:13,fontWeight:600,color:sk.color||G.dark}}>{sk.name}</span>
                       </td>
                       <td style={{padding:"8px 12px"}}>
-                        <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                          <input type="number" value={sk.duration||""} onChange={e=>updateSkillRow(i,"duration",e.target.value)} placeholder="0"
-                            style={{width:60,padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}/>
-                          <select value={sk.duration_unit||"minutes"} onChange={e=>updateSkillRow(i,"duration_unit",e.target.value)}
-                            style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
+                        <div style={{display:"flex",gap:5,alignItems:"center"}}>
+                          <input type="number" value={sk.duration||""} onChange={e=>updateRow(i,"duration",e.target.value)} placeholder="0"
+                            style={{width:56,padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}/>
+                          <select value={sk.duration_unit||"minutes"} onChange={e=>updateRow(i,"duration_unit",e.target.value)}
+                            style={{padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
                             {DUR_UNITS.map(u=><option key={u}>{u}</option>)}
                           </select>
                         </div>
                       </td>
                       <td style={{padding:"8px 12px"}}>
-                        <select value={sk.dep_type||""} onChange={e=>updateSkillRow(i,"dep_type",e.target.value)}
-                          style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none",minWidth:60}}>
+                        <select value={sk.dep_type||""} onChange={e=>updateRow(i,"dep_type",e.target.value)}
+                          style={{padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
                           <option value="">—</option>
-                          {DEP_TYPES.map(d=><option key={d.value} value={d.value} title={d.label}>{d.value}</option>)}
+                          {DEP_TYPES.map(d=><option key={d.value} value={d.value}>{d.value}</option>)}
                         </select>
                         {sk.dep_type&&(
-                          <div style={{fontSize:10,color:G.muted,marginTop:2,maxWidth:110}}>
-                            {DEP_TYPES.find(d=>d.value===sk.dep_type)?.label}
-                          </div>
+                          <div style={{fontSize:10,color:G.muted,marginTop:2}}>{DEP_TYPES.find(d=>d.value===sk.dep_type)?.label}</div>
                         )}
                       </td>
                       <td style={{padding:"8px 12px"}}>
-                        <select value={sk.dep_seq||""} onChange={e=>updateSkillRow(i,"dep_seq",e.target.value)}
+                        <select value={sk.dep_seq||""} onChange={e=>updateRow(i,"dep_seq",e.target.value)}
                           disabled={!sk.dep_type}
-                          style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none",background:!sk.dep_type?G.sand:G.white,minWidth:110}}>
-                          <option value="">Select skill…</option>
-                          {newSkills.filter((_,j)=>j!==i).map((other,j)=>{
-                            const actualIdx = newSkills.indexOf(other);
-                            return <option key={other.skid} value={actualIdx+1}>{actualIdx+1}. {other.name}</option>;
+                          style={{padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none",background:!sk.dep_type?G.sand:G.white,minWidth:100}}>
+                          <option value="">Select…</option>
+                          {formSkills.filter((_,j)=>j!==i).map(other=>{
+                            const idx = formSkills.indexOf(other);
+                            return <option key={other.skid} value={idx+1}>{idx+1}. {other.name}</option>;
                           })}
                         </select>
                       </td>
                       <td style={{padding:"8px 12px"}}>
-                        <div style={{display:"flex",gap:4,alignItems:"center"}}>
-                          <button onClick={()=>moveRow(i,-1)} disabled={i===0} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:G.muted,opacity:i===0?0.3:1,padding:"2px 4px"}}>↑</button>
-                          <button onClick={()=>moveRow(i,1)} disabled={i===newSkills.length-1} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:G.muted,opacity:i===newSkills.length-1?0.3:1,padding:"2px 4px"}}>↓</button>
-                          <button onClick={()=>removeRow(i)} style={{background:"none",border:"none",cursor:"pointer",color:G.red,fontSize:16,padding:"2px 4px"}}>×</button>
+                        <div style={{display:"flex",gap:3,alignItems:"center"}}>
+                          <button onClick={()=>moveRow(i,-1)} disabled={i===0} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:G.muted,opacity:i===0?0.3:1,padding:"2px 3px"}}>↑</button>
+                          <button onClick={()=>moveRow(i,1)} disabled={i===formSkills.length-1} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:G.muted,opacity:i===formSkills.length-1?0.3:1,padding:"2px 3px"}}>↓</button>
+                          <button onClick={()=>removeRow(i)} style={{background:"none",border:"none",cursor:"pointer",color:G.red,fontSize:16,padding:"2px 3px"}}>×</button>
                         </div>
                       </td>
                     </tr>
@@ -4551,26 +4699,30 @@ function ProcessesPage({ toast }) {
           )}
 
           <div style={{display:"flex",gap:10}}>
-            <Btn onClick={saveProcess} loading={saving}>Save process</Btn>
-            <Btn variant="ghost" onClick={()=>{setShowNew(false);setNewName("");setNewSkills([]);}}>Cancel</Btn>
+            <Btn onClick={saveForm} loading={saving}>{editProc?"Update process":"Save process"}</Btn>
+            <Btn variant="ghost" onClick={()=>{ setShowForm(false); setEditProc(null); setFormName(""); setFormSkills([]); setNameError(""); }}>Cancel</Btn>
           </div>
         </div>
       )}
 
       {/* Saved processes list */}
       {processes.map(proc=>(
-        <div key={proc.procid} style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:12, padding:"14px 18px", marginBottom:10, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <div>
-            <p style={{ fontWeight:700, fontSize:15, color:G.dark, marginBottom:4 }}>{proc.name}</p>
+        <div key={proc.procid} style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:12, padding:"14px 18px", marginBottom:10, display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+          <div style={{flex:1,minWidth:0}}>
+            <button onClick={()=>{ openEdit(proc); window.scrollTo({top:0,behavior:"smooth"}); }}
+              style={{background:"none",border:"none",cursor:"pointer",fontWeight:700,fontSize:15,color:G.caramel,padding:0,textDecoration:"underline dotted",textUnderlineOffset:3,marginBottom:6,display:"block",textAlign:"left"}}>
+              {proc.name}
+            </button>
             <div style={{ display:"flex", flexWrap:"wrap", gap:4 }}>
               {(proc.skills||[]).map(sk=>(
-                <span key={sk.psid} style={{ fontSize:12, padding:"2px 10px", borderRadius:20, background:`${sk.color||G.muted}18`, color:sk.color||G.muted, border:`1px solid ${sk.color||G.muted}40` }}>
+                <span key={sk.psid} style={{ fontSize:12, padding:"2px 10px", borderRadius:20, background:`${sk.color||G.muted}18`, color:sk.color||G.muted, border:`1px solid ${sk.color||G.muted}40`, display:"flex", alignItems:"center", gap:4 }}>
                   {sk.name}{sk.duration?` · ${sk.duration}${(sk.duration_unit||"m")[0]}`:""}
+                  {sk.dep_type&&<span style={{fontSize:10,opacity:0.8}}>←{sk.dep_type}</span>}
                 </span>
               ))}
             </div>
           </div>
-          <button onClick={()=>deleteProcess(proc.procid)} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:18,padding:"4px 8px"}}>×</button>
+          <button onClick={()=>deleteProcess(proc.procid)} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:18,padding:"4px 8px",flexShrink:0}}>×</button>
         </div>
       ))}
     </Page>
