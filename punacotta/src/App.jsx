@@ -4364,7 +4364,7 @@ function ProcessesPage({ toast }) {
   const [roles,     setRoles]     = useState([]);
   const [loading,   setLoading]   = useState(true);
   const [showForm,  setShowForm]  = useState(false);
-  const [editProc,  setEditProc]  = useState(null); // null=new, else existing process
+  const [editProc,  setEditProc]  = useState(null);
   const [formName,  setFormName]  = useState("");
   const [formSkills,setFormSkills]= useState([]);
   const [saving,    setSaving]    = useState(false);
@@ -4384,27 +4384,37 @@ function ProcessesPage({ toast }) {
     catch(e){ toast(e.message,"error"); return null; }
   };
 
-  const openNew = () => {
-    setEditProc(null); setFormName(""); setFormSkills([]); setNameError(""); setShowForm(true);
-  };
-
+  const openNew = () => { setEditProc(null); setFormName(""); setFormSkills([]); setNameError(""); setShowForm(true); };
   const openEdit = proc => {
-    setEditProc(proc);
-    setFormName(proc.name);
+    setEditProc(proc); setFormName(proc.name);
     setFormSkills((proc.skills||[]).map(sk=>({
       skid:sk.skid, name:sk.name, color:sk.color,
       duration:sk.duration, duration_unit:sk.duration_unit||"minutes",
-      dep_type:sk.dep_type||"", dep_seq:sk.dep_psid?"":""
+      dep_type:sk.dep_type||"", dep_seq:"",
+      _procRef: sk._procRef||null, // if this row came from an expanded process
     })));
-    setNameError("");
-    setShowForm(true);
+    setNameError(""); setShowForm(true);
   };
 
+  // Expand a role/skill/process into form rows
   const addToForm = item => {
     if (item._isRole) {
       const fullRole = roles.find(r=>r.rid===item.rid);
       const roleSkills = (fullRole?.skills||[]).map(s=>({...s,duration:s.duration||null,duration_unit:s.duration_unit||"minutes",dep_type:"",dep_seq:""}));
       setFormSkills(p=>{ const ex=new Set(p.map(x=>x.skid)); return [...p,...roleSkills.filter(s=>!ex.has(s.skid))]; });
+    } else if (item._isProcess) {
+      // Expand a process into its skills, grouped together
+      const fullProc = processes.find(pr=>pr.procid===item.procid);
+      const procSkills = (fullProc?.skills||[]).map(s=>({
+        skid:s.skid, name:s.name, color:s.color,
+        duration:s.duration, duration_unit:s.duration_unit||"minutes",
+        dep_type:s.dep_type||"", dep_seq:"",
+        _procRef:fullProc.name,
+      }));
+      setFormSkills(p=>{
+        const ex = new Set(p.map(x=>x.skid));
+        return [...p, ...procSkills.filter(s=>!ex.has(s.skid))];
+      });
     } else {
       setFormSkills(p=>p.find(x=>x.skid===item.skid)?p:[...p,{...item,duration:item.duration||null,duration_unit:item.duration_unit||"minutes",dep_type:"",dep_seq:""}]);
     }
@@ -4413,14 +4423,12 @@ function ProcessesPage({ toast }) {
   const saveForm = async () => {
     const name = formName.trim();
     if (!name) { setNameError("Process name is required."); return; }
-    // Duplicate name check
     const dupe = processes.find(p=>p.name.toLowerCase()===name.toLowerCase() && p.procid!==editProc?.procid);
     if (dupe) {
       setNameError("A process with the similar name already exists. Modify the name of the process that you are editing or cancel and edit the existing process.");
       return;
     }
-    setNameError("");
-    setSaving(true);
+    setNameError(""); setSaving(true);
     try {
       const skillPayload = formSkills.map((s,i)=>({
         skid:s.skid, seq:i+1,
@@ -4462,173 +4470,194 @@ function ProcessesPage({ toast }) {
   };
   const totalMins = formSkills.reduce((s,sk)=>s+toMins(sk.duration,sk.duration_unit),0);
 
-  // ── PERT chart with D3 dependency arrows ────────────────────────────────────
+  // ── PERT Chart ─────────────────────────────────────────────────────────────
+  // Arrow routing per dep type (based on Gantt visual standard):
+  //   FS: pred.right → succ.left   (sequential — succ shifts right of pred)
+  //   SS: pred.left  → succ.left   (succ can overlap/start with pred — succ shown dashed)
+  //   FF: pred.right → succ.right  (both end together — succ shown dashed, overlapping)
+  //   SF: pred.left  → succ.right  (succ ends when pred starts — rare, succ shown dashed reversed)
+
   const PertChart = () => {
-    const svgRef = useRef(null);
-    const barH=44, gap=16, rowH=barH+gap, dayMins=600, labelW=170, W=900, chartW=W-labelW-20;
-    const svgH = Math.max(120, processes.length*rowH+50);
+    const barH=40, gap=20, rowH=barH+gap;
+    const labelW=180, W=920, chartW=W-labelW-16;
+    const dayMins=600;
     const minToX = m => (m/dayMins)*chartW;
-
-    const DEP_COLORS = { FS:"#059669", SS:"#2563eb", FF:"#d97706", SF:"#dc2626" };
-
-    useEffect(()=>{
-      if (!svgRef.current || !processes.length) return;
-      // D3 is available as window.d3 if imported, else use inline SVG
-      // We build the arrow layer using direct DOM manipulation for compatibility
-      const svg = svgRef.current;
-      // Remove previous arrow layer
-      const old = svg.querySelector('.arrow-layer');
-      if (old) old.remove();
-
-      const ns = "http://www.w3.org/2000/svg";
-      const defs = svg.querySelector('defs') || svg.insertBefore(document.createElementNS(ns,"defs"), svg.firstChild);
-
-      // Add arrowhead markers per dep type
-      Object.entries(DEP_COLORS).forEach(([type, color]) => {
-        const markerId = `arrow-${type}`;
-        if (!defs.querySelector(`#${markerId}`)) {
-          const marker = document.createElementNS(ns,"marker");
-          marker.setAttribute("id", markerId);
-          marker.setAttribute("viewBox","0 -4 8 8");
-          marker.setAttribute("refX","7"); marker.setAttribute("refY","0");
-          marker.setAttribute("markerWidth","6"); marker.setAttribute("markerHeight","6");
-          marker.setAttribute("orient","auto");
-          const path = document.createElementNS(ns,"path");
-          path.setAttribute("d","M0,-4L8,0L0,4"); path.setAttribute("fill",color);
-          marker.appendChild(path); defs.appendChild(marker);
-        }
-      });
-
-      const layer = document.createElementNS(ns,"g");
-      layer.setAttribute("class","arrow-layer");
-
-      // Build a map of psid → {x,y,w} for each rendered block
-      const blockMap = {};
-      processes.forEach((proc,pi)=>{
-        const y = 28+pi*rowH;
-        let x = labelW;
-        (proc.skills||[]).forEach(sk=>{
-          const w = Math.max(8, minToX(toMins(sk.duration,sk.duration_unit)));
-          blockMap[sk.psid] = {x, y, w, barH, procid:proc.procid};
-          x += w;
-        });
-      });
-
-      // Draw arrows for dependencies
-      processes.forEach(proc=>{
-        (proc.skills||[]).forEach(sk=>{
-          if (!sk.dep_type || !sk.dep_psid) return;
-          const src = blockMap[sk.dep_psid];
-          const tgt = blockMap[sk.psid];
-          if (!src || !tgt) return;
-          const type = sk.dep_type;
-          const color = DEP_COLORS[type] || "#999";
-
-          // Source point: FS→right-mid, SS→left-mid, FF→right-mid, SF→left-mid
-          const x1 = (type==="FS"||type==="FF") ? src.x+src.w : src.x;
-          const y1 = src.y + src.barH/2;
-          // Target point: FS→left-mid, SS→left-mid, FF→right-mid, SF→right-mid
-          const x2 = (type==="FS"||type==="SS") ? tgt.x : tgt.x+tgt.w;
-          const y2 = tgt.y + tgt.barH/2;
-
-          const cx = (x1+x2)/2;
-          const d = `M${x1},${y1} C${cx},${y1} ${cx},${y2} ${x2},${y2}`;
-
-          const path = document.createElementNS(ns,"path");
-          path.setAttribute("d",d); path.setAttribute("fill","none");
-          path.setAttribute("stroke",color); path.setAttribute("stroke-width","1.5");
-          path.setAttribute("stroke-dasharray","5,3");
-          path.setAttribute("marker-end",`url(#arrow-${type})`);
-
-          // Label
-          const midX=(x1+x2)/2, midY=(y1+y2)/2-8;
-          const label = document.createElementNS(ns,"text");
-          label.setAttribute("x",String(midX)); label.setAttribute("y",String(midY));
-          label.setAttribute("font-size","9"); label.setAttribute("fill",color);
-          label.setAttribute("text-anchor","middle"); label.setAttribute("font-weight","700");
-          label.textContent = type;
-
-          layer.appendChild(path); layer.appendChild(label);
-        });
-      });
-
-      svg.appendChild(layer);
-    },[processes]);
+    const svgH = Math.max(100, processes.length*rowH + 60);
+    const ns = "http://www.w3.org/2000/svg";
 
     if (!processes.length) return (
-      <div style={{padding:60,textAlign:"center",color:G.muted}}>No processes yet. Click "+ Process" to create one.</div>
+      <div style={{padding:60,textAlign:"center",color:G.muted,fontFamily:G.mono,fontSize:14}}>
+        No processes yet. Click "+ Process" to create one.
+      </div>
     );
 
+    // Build block position map: psid → {x1,x2,y,barH}
+    const blockMap = {};
+    processes.forEach((proc,pi)=>{
+      const y = 30 + pi*rowH;
+      let x = labelW;
+      (proc.skills||[]).forEach(sk=>{
+        const w = Math.max(10, minToX(toMins(sk.duration, sk.duration_unit)));
+        blockMap[sk.psid] = { x1:x, x2:x+w, y, w, barH, color:sk.color||G.muted };
+        x += w;
+      });
+    });
+
+    // Determine if a skill block is a "successor" (dashed) based on its dep type
+    const isDashed = sk => sk.dep_type && sk.dep_type !== "FS";
+
+    // Build arrow paths
+    const arrows = [];
+    processes.forEach(proc=>{
+      (proc.skills||[]).forEach(sk=>{
+        if (!sk.dep_type || !sk.dep_psid) return;
+        const src = blockMap[sk.dep_psid];
+        const tgt = blockMap[sk.psid];
+        if (!src || !tgt) return;
+
+        let x1, y1, x2, y2;
+        switch(sk.dep_type) {
+          case "FS": x1=src.x2; y1=src.y+src.barH/2; x2=tgt.x1; y2=tgt.y+tgt.barH/2; break;
+          case "SS": x1=src.x1; y1=src.y+src.barH/2; x2=tgt.x1; y2=tgt.y+tgt.barH/2; break;
+          case "FF": x1=src.x2; y1=src.y+src.barH/2; x2=tgt.x2; y2=tgt.y+tgt.barH/2; break;
+          case "SF": x1=src.x1; y1=src.y+src.barH/2; x2=tgt.x2; y2=tgt.y+tgt.barH/2; break;
+          default:   x1=src.x2; y1=src.y+src.barH/2; x2=tgt.x1; y2=tgt.y+tgt.barH/2;
+        }
+
+        // Route arrow with a bend if same row, arc if different row
+        const sameRow = Math.abs(y1-y2) < 5;
+        let d;
+        if (sameRow) {
+          // Bend under or over the blocks
+          const midY = y1 + barH + 8;
+          d = `M${x1},${y1} L${x1},${midY} L${x2},${midY} L${x2},${y2}`;
+        } else {
+          const cx = (x1+x2)/2;
+          d = `M${x1},${y1} C${cx},${y1} ${cx},${y2} ${x2},${y2}`;
+        }
+
+        arrows.push({ d, type:sk.dep_type, label:sk.dep_type, lx:(x1+x2)/2, ly:(y1+y2)/2-6 });
+      });
+    });
+
     const hours = Array.from({length:11},(_,i)=>i*60);
+
     return (
       <div style={{ overflowX:"auto", marginBottom:24, background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:16 }}>
-        {/* Legend */}
-        <div style={{display:"flex",gap:16,marginBottom:12,flexWrap:"wrap"}}>
-          {Object.entries(DEP_COLORS).map(([type,col])=>(
-            <span key={type} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:col}}>
-              <svg width="28" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke={col} strokeWidth="1.5" strokeDasharray="4,2"/><polygon points="20,2 28,5 20,8" fill={col}/></svg>
-              {DEP_TYPES.find(d=>d.value===type)?.label||type}
-            </span>
-          ))}
-        </div>
-        <svg ref={svgRef} width={W} height={svgH}>
+        <svg width={W} height={svgH + 50}>
+          <defs>
+            <marker id="arr-end" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+              <polygon points="0 0, 7 3.5, 0 7" fill="#555"/>
+            </marker>
+          </defs>
+
           {/* Hour grid */}
           {hours.map(m=>(
             <g key={m}>
-              <line x1={labelW+minToX(m)} y1={20} x2={labelW+minToX(m)} y2={svgH} stroke={G.border} strokeWidth={1}/>
-              <text x={labelW+minToX(m)+3} y={14} fontSize={10} fill={G.muted}>{`${8+m/60}:00`}</text>
+              <line x1={labelW+minToX(m)} y1={18} x2={labelW+minToX(m)} y2={svgH} stroke={G.border} strokeWidth={0.8}/>
+              <text x={labelW+minToX(m)+3} y={13} fontSize={9} fill={G.muted}>{`${8+m/60}:00`}</text>
             </g>
           ))}
-          {/* Process bars */}
+
+          {/* Process rows */}
           {processes.map((proc,pi)=>{
-            const y = 28+pi*rowH;
+            const y = 30 + pi*rowH;
             let x = labelW;
             return (
               <g key={proc.procid}>
-                <text x={labelW-6} y={y+barH/2+4} fontSize={12} fontWeight="600" fill={G.dark} textAnchor="end" dominantBaseline="middle">
-                  {proc.name.slice(0,20)}
+                {/* Row label */}
+                <text x={labelW-8} y={y+barH/2+4} fontSize={12} fontWeight="600" fill={G.dark}
+                  textAnchor="end" dominantBaseline="middle"
+                  style={{cursor:"pointer",textDecoration:"underline"}}
+                  onClick={()=>openEdit(proc)}>
+                  {proc.name.slice(0,22)}
                 </text>
+                {/* Skill blocks */}
                 {(proc.skills||[]).map(sk=>{
-                  const w = Math.max(8,minToX(toMins(sk.duration,sk.duration_unit)));
-                  const color = sk.color||G.muted;
+                  const w = Math.max(10, minToX(toMins(sk.duration,sk.duration_unit)));
+                  const color = sk.color || G.muted;
+                  const dashed = isDashed(sk);
                   const rx = x; x += w;
                   return (
                     <g key={sk.psid}>
-                      <rect x={rx} y={y} width={w} height={barH} fill={`${color}28`} stroke={color} strokeWidth={1.5} rx={5}/>
-                      {w>28&&<text x={rx+5} y={y+15} fontSize={10} fill={color} fontWeight="600">{sk.name.slice(0,Math.floor(w/6))}</text>}
-                      {w>36&&sk.duration&&<text x={rx+5} y={y+30} fontSize={9} fill={G.muted}>{sk.duration}{(sk.duration_unit||"m")[0]}</text>}
+                      <rect x={rx} y={y} width={w} height={barH}
+                        fill={`${color}22`} stroke={color} strokeWidth={1.5}
+                        strokeDasharray={dashed?"6,3":"none"} rx={5}/>
+                      {w>26&&<text x={rx+5} y={y+15} fontSize={10} fill={color} fontWeight="600">{sk.name.slice(0,Math.floor(w/6.5))}</text>}
+                      {w>36&&sk.duration&&<text x={rx+5} y={y+30} fontSize={8.5} fill={G.muted}>{sk.duration}{(sk.duration_unit||"m")[0]}</text>}
                     </g>
                   );
                 })}
               </g>
             );
           })}
+
+          {/* Dependency arrows (drawn on top) */}
+          {arrows.map((a,i)=>(
+            <g key={i}>
+              <path d={a.d} fill="none" stroke="#555" strokeWidth="1.5" markerEnd="url(#arr-end)" strokeLinejoin="round"/>
+              <text x={a.lx} y={a.ly} fontSize={8} fill="#555" textAnchor="middle" fontWeight="700"
+                style={{paintOrder:"stroke",stroke:G.white,strokeWidth:3}}>{a.label}</text>
+            </g>
+          ))}
         </svg>
+
+        {/* Legend — bottom */}
+        <div style={{display:"flex",gap:24,flexWrap:"wrap",paddingTop:12,borderTop:`1px solid ${G.border}`,marginTop:4}}>
+          {DEP_TYPES.map(dt=>(
+            <div key={dt.value} style={{display:"flex",alignItems:"center",gap:7,fontSize:11,color:G.muted}}>
+              {/* Mini Gantt pair diagram */}
+              <svg width="60" height="20" style={{flexShrink:0}}>
+                {/* predecessor — always solid */}
+                <rect x="0" y="3" width="22" height="14" fill={`${G.caramel}25`} stroke={G.caramel} strokeWidth="1.5" rx="2"/>
+                {/* successor — dashed if not FS */}
+                <rect x={dt.value==="FS"?26:dt.value==="SF"?0:10} y="3" width="22" height="14"
+                  fill={`${G.dark}15`} stroke={G.dark} strokeWidth="1.5" rx="2"
+                  strokeDasharray={dt.value!=="FS"?"5,2":"none"}/>
+                {/* Arrow */}
+                {dt.value==="FS"&&<line x1="22" y1="10" x2="26" y2="10" stroke="#555" strokeWidth="1.2" markerEnd="url(#arr-end)"/>}
+                {dt.value==="SS"&&<path d="M0,10 L0,18 L10,18 L10,10" fill="none" stroke="#555" strokeWidth="1.2" markerEnd="url(#arr-end)"/>}
+                {dt.value==="FF"&&<path d="M22,10 L22,18 L32,18 L32,10" fill="none" stroke="#555" strokeWidth="1.2" markerEnd="url(#arr-end)"/>}
+                {dt.value==="SF"&&<path d="M0,10 L0,18 L22,18 L22,10" fill="none" stroke="#555" strokeWidth="1.2" markerEnd="url(#arr-end)"/>}
+              </svg>
+              <span><b>{dt.value}</b> — {dt.label.replace(` (${dt.value})`,"")}</span>
+            </div>
+          ))}
+          <div style={{display:"flex",alignItems:"center",gap:7,fontSize:11,color:G.muted}}>
+            <svg width="40" height="20"><rect x="2" y="3" width="36" height="14" fill="transparent" stroke={G.muted} strokeWidth="1.5" strokeDasharray="5,2" rx="2"/></svg>
+            <span>Dashed = successor (SS, FF, SF — can overlap)</span>
+          </div>
+        </div>
       </div>
     );
   };
 
-  const allItems = [...roles.map(r=>({...r,skid:r.rid,_isRole:true})), ...skills];
+  // Items for SkillCombo: processes (bold), roles, skills
+  const allItems = [
+    ...processes.filter(p=>p.procid!==editProc?.procid).map(p=>({
+      skid:`proc-${p.procid}`, procid:p.procid, name:p.name, _isProcess:true,
+    })),
+    ...roles.map(r=>({...r, skid:r.rid, _isRole:true})),
+    ...skills,
+  ];
 
   return (
     <Page title="Processes" actions={<Btn size="sm" onClick={openNew}>+ Process</Btn>}>
       <PertChart/>
 
-      {/* Add / Edit form */}
       {showForm&&(
         <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
           <div style={{marginBottom:18}}>
             <input value={formName} onChange={e=>{ setFormName(e.target.value); setNameError(""); }}
               placeholder={editProc?"Process name…":"New process name…"}
               style={{ border:"none", borderBottom:`2px solid ${nameError?G.red:G.caramel}`, outline:"none", fontSize:20, fontFamily:G.font, fontWeight:700, color:G.dark, width:"100%", paddingBottom:6, background:"transparent" }}/>
-            {nameError&&(
-              <p style={{fontSize:12,color:G.red,marginTop:6,lineHeight:1.5}}>{nameError}</p>
-            )}
+            {nameError&&<p style={{fontSize:12,color:G.red,marginTop:6,lineHeight:1.5}}>{nameError}</p>}
           </div>
 
           <div style={{ marginBottom:16 }}>
-            <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:6}}>Add roles / skills</label>
-            <SkillCombo allSkills={allItems} selected={[]} onChange={sel=>sel.length&&addToForm(sel[sel.length-1])} onCreateSkill={createSkill}/>
+            <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:6}}>Add processes / roles / skills</label>
+            {/* Custom combo that renders processes in bold */}
+            <SkillComboWithProcesses allItems={allItems} onAdd={addToForm} onCreateSkill={createSkill}/>
           </div>
 
           {formSkills.length>0&&(
@@ -4636,7 +4665,7 @@ function ProcessesPage({ toast }) {
               <table style={{ width:"100%", borderCollapse:"collapse" }}>
                 <thead>
                   <tr style={{ background:G.sand }}>
-                    {["#","Skill","Duration","Dep. type","Depends on",""].map(h=>(
+                    {["#","Skill / Step","Duration","Dep. type","Depends on",""].map(h=>(
                       <th key={h} style={{padding:"8px 12px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,whiteSpace:"nowrap"}}>{h}</th>
                     ))}
                   </tr>
@@ -4647,11 +4676,12 @@ function ProcessesPage({ toast }) {
                       <td style={{padding:"8px 12px",fontSize:13,color:G.muted,fontFamily:G.mono,fontWeight:700}}>{i+1}</td>
                       <td style={{padding:"8px 12px"}}>
                         <span style={{fontSize:13,fontWeight:600,color:sk.color||G.dark}}>{sk.name}</span>
+                        {sk._procRef&&<span style={{fontSize:10,color:G.muted,marginLeft:6}}>from {sk._procRef}</span>}
                       </td>
                       <td style={{padding:"8px 12px"}}>
                         <div style={{display:"flex",gap:5,alignItems:"center"}}>
                           <input type="number" value={sk.duration||""} onChange={e=>updateRow(i,"duration",e.target.value)} placeholder="0"
-                            style={{width:56,padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}/>
+                            style={{width:52,padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}/>
                           <select value={sk.duration_unit||"minutes"} onChange={e=>updateRow(i,"duration_unit",e.target.value)}
                             style={{padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
                             {DUR_UNITS.map(u=><option key={u}>{u}</option>)}
@@ -4662,11 +4692,9 @@ function ProcessesPage({ toast }) {
                         <select value={sk.dep_type||""} onChange={e=>updateRow(i,"dep_type",e.target.value)}
                           style={{padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
                           <option value="">—</option>
-                          {DEP_TYPES.map(d=><option key={d.value} value={d.value}>{d.value}</option>)}
+                          {DEP_TYPES.map(d=><option key={d.value} value={d.value} title={d.label}>{d.value}</option>)}
                         </select>
-                        {sk.dep_type&&(
-                          <div style={{fontSize:10,color:G.muted,marginTop:2}}>{DEP_TYPES.find(d=>d.value===sk.dep_type)?.label}</div>
-                        )}
+                        {sk.dep_type&&<div style={{fontSize:9,color:G.muted,marginTop:2,maxWidth:90}}>{DEP_TYPES.find(d=>d.value===sk.dep_type)?.label}</div>}
                       </td>
                       <td style={{padding:"8px 12px"}}>
                         <select value={sk.dep_seq||""} onChange={e=>updateRow(i,"dep_seq",e.target.value)}
@@ -4674,15 +4702,15 @@ function ProcessesPage({ toast }) {
                           style={{padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none",background:!sk.dep_type?G.sand:G.white,minWidth:100}}>
                           <option value="">Select…</option>
                           {formSkills.filter((_,j)=>j!==i).map(other=>{
-                            const idx = formSkills.indexOf(other);
-                            return <option key={other.skid} value={idx+1}>{idx+1}. {other.name}</option>;
+                            const idx=formSkills.indexOf(other);
+                            return <option key={`${other.skid}-${idx}`} value={idx+1}>{idx+1}. {other.name}</option>;
                           })}
                         </select>
                       </td>
                       <td style={{padding:"8px 12px"}}>
-                        <div style={{display:"flex",gap:3,alignItems:"center"}}>
-                          <button onClick={()=>moveRow(i,-1)} disabled={i===0} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:G.muted,opacity:i===0?0.3:1,padding:"2px 3px"}}>↑</button>
-                          <button onClick={()=>moveRow(i,1)} disabled={i===formSkills.length-1} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:G.muted,opacity:i===formSkills.length-1?0.3:1,padding:"2px 3px"}}>↓</button>
+                        <div style={{display:"flex",gap:3}}>
+                          <button onClick={()=>moveRow(i,-1)} disabled={i===0} style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:G.muted,opacity:i===0?0.3:1,padding:"2px 3px"}}>↑</button>
+                          <button onClick={()=>moveRow(i,1)} disabled={i===formSkills.length-1} style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:G.muted,opacity:i===formSkills.length-1?0.3:1,padding:"2px 3px"}}>↓</button>
                           <button onClick={()=>removeRow(i)} style={{background:"none",border:"none",cursor:"pointer",color:G.red,fontSize:16,padding:"2px 3px"}}>×</button>
                         </div>
                       </td>
@@ -4717,7 +4745,7 @@ function ProcessesPage({ toast }) {
               {(proc.skills||[]).map(sk=>(
                 <span key={sk.psid} style={{ fontSize:12, padding:"2px 10px", borderRadius:20, background:`${sk.color||G.muted}18`, color:sk.color||G.muted, border:`1px solid ${sk.color||G.muted}40`, display:"flex", alignItems:"center", gap:4 }}>
                   {sk.name}{sk.duration?` · ${sk.duration}${(sk.duration_unit||"m")[0]}`:""}
-                  {sk.dep_type&&<span style={{fontSize:10,opacity:0.8}}>←{sk.dep_type}</span>}
+                  {sk.dep_type&&<span style={{fontSize:9,opacity:0.75,fontWeight:700}}>{sk.dep_type}</span>}
                 </span>
               ))}
             </div>
@@ -4726,6 +4754,49 @@ function ProcessesPage({ toast }) {
         </div>
       ))}
     </Page>
+  );
+}
+
+// ─── SKILL COMBO WITH PROCESSES ───────────────────────────────────────────────
+// Variant of SkillCombo that shows processes in bold and doesn't use pills (add-only)
+function SkillComboWithProcesses({ allItems, onAdd, onCreateSkill }) {
+  const [input, setInput] = useState("");
+  const [open, setOpen]   = useState(false);
+
+  const filtered = allItems.filter(s=>s.name.toLowerCase().includes(input.toLowerCase()));
+  const canCreate = onCreateSkill && input.trim() &&
+    !allItems.find(s=>s.name.toLowerCase()===input.trim().toLowerCase() && !s._isProcess && !s._isRole);
+
+  const select = item => { onAdd(item); setInput(""); setOpen(false); };
+
+  return (
+    <div style={{position:"relative"}}>
+      <input value={input} onChange={e=>{ setInput(e.target.value); setOpen(true); }}
+        onFocus={()=>setOpen(true)} onBlur={()=>setTimeout(()=>setOpen(false),150)}
+        onKeyDown={e=>{ if(e.key==="Escape") setOpen(false); if(e.key==="Enter"&&filtered.length) select(filtered[0]); }}
+        placeholder="Type to search processes, roles or skills…"
+        style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}/>
+      {open&&(filtered.length>0||canCreate)&&(
+        <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,background:G.white,border:`1px solid ${G.border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(44,24,16,0.12)",zIndex:500,maxHeight:240,overflowY:"auto"}}>
+          {canCreate&&(
+            <button onMouseDown={async()=>{ const s=await onCreateSkill(input.trim()); if(s) select(s); }}
+              style={{width:"100%",textAlign:"left",padding:"9px 14px",background:"none",border:"none",cursor:"pointer",fontSize:13,fontFamily:G.mono,color:G.caramel,fontWeight:600,borderBottom:`1px solid ${G.border}`}}>
+              + Add skill "{input.trim()}"
+            </button>
+          )}
+          {filtered.map(item=>(
+            <button key={item.skid} onMouseDown={()=>select(item)}
+              style={{width:"100%",textAlign:"left",padding:"9px 14px",background:"none",border:"none",cursor:"pointer",fontSize:13,fontFamily:G.mono,color:G.dark,display:"flex",alignItems:"center",gap:8}}
+              onMouseEnter={e=>e.currentTarget.style.background=G.sand}
+              onMouseLeave={e=>e.currentTarget.style.background="none"}>
+              {item._isProcess&&<span style={{fontSize:10,background:`${G.caramel}20`,color:G.caramel,borderRadius:4,padding:"1px 6px",fontWeight:700,flexShrink:0}}>PROCESS</span>}
+              {item._isRole&&<span style={{fontSize:10,background:`${G.dark}15`,color:G.dark,borderRadius:4,padding:"1px 6px",fontWeight:700,flexShrink:0}}>ROLE</span>}
+              <span style={{fontWeight:item._isProcess?700:item._isRole?600:400}}>{item.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
