@@ -4470,20 +4470,18 @@ function ProcessesPage({ toast }) {
   };
   const totalMins = formSkills.reduce((s,sk)=>s+toMins(sk.duration,sk.duration_unit),0);
 
-  // ── PERT Chart ─────────────────────────────────────────────────────────────
-  // Arrow routing per dep type (based on Gantt visual standard):
-  //   FS: pred.right → succ.left   (sequential — succ shifts right of pred)
-  //   SS: pred.left  → succ.left   (succ can overlap/start with pred — succ shown dashed)
-  //   FF: pred.right → succ.right  (both end together — succ shown dashed, overlapping)
-  //   SF: pred.left  → succ.right  (succ ends when pred starts — rare, succ shown dashed reversed)
+  // ── PERT Chart with multi-track layout ─────────────────────────────────────
+  // Layout rules:
+  //   FS → successor on SAME track, placed after predecessor (sequential)
+  //   SS → successor on NEW sub-track, x-aligned with predecessor's LEFT edge
+  //   FF → successor on NEW sub-track, x-aligned so its RIGHT edge matches predecessor's RIGHT edge
+  //   SF → successor on NEW sub-track, x-aligned so its RIGHT edge matches predecessor's LEFT edge
 
   const PertChart = () => {
-    const barH=40, gap=20, rowH=barH+gap;
-    const labelW=180, W=920, chartW=W-labelW-16;
+    const barH=38, subGap=6, procGap=22;
+    const labelW=185, W=940, chartW=W-labelW-16;
     const dayMins=600;
-    const minToX = m => (m/dayMins)*chartW;
-    const svgH = Math.max(100, processes.length*rowH + 60);
-    const ns = "http://www.w3.org/2000/svg";
+    const minToX = m => Math.max(0,(m/dayMins)*chartW);
 
     if (!processes.length) return (
       <div style={{padding:60,textAlign:"center",color:G.muted,fontFamily:G.mono,fontSize:14}}>
@@ -4491,52 +4489,99 @@ function ProcessesPage({ toast }) {
       </div>
     );
 
-    // Build block position map: psid → {x1,x2,y,barH}
+    // ── Layout engine ─────────────────────────────────────────────────────────
+    // For each process, assign each skill to a (track, x1, x2).
+    // Track 0 = main row. SS/FF/SF successors get a new track.
+    const processLayouts = processes.map(proc => {
+      const skills = proc.skills || [];
+      // psid → { track, x1, x2, w }
+      const placed = {};
+      // track → current right edge (for FS chaining)
+      const trackCursor = { 0: labelW };
+      let maxTrack = 0;
+
+      skills.forEach(sk => {
+        const w = Math.max(12, minToX(toMins(sk.duration, sk.duration_unit)));
+        const dep = sk.dep_type;
+        const predPsid = sk.dep_psid;
+
+        if (!dep || dep === "FS" || !predPsid || !placed[predPsid]) {
+          // FS or no dep: place on track 0, after current cursor
+          const x1 = trackCursor[0] || labelW;
+          placed[sk.psid] = { track:0, x1, x2:x1+w, w };
+          trackCursor[0] = x1+w;
+        } else {
+          const pred = placed[predPsid];
+          // Assign a new track
+          const track = maxTrack + 1;
+          maxTrack = track;
+          trackCursor[track] = trackCursor[track] || labelW;
+          let x1;
+          if (dep === "SS") x1 = pred.x1;           // align left edges
+          if (dep === "FF") x1 = pred.x2 - w;       // align right edges
+          if (dep === "SF") x1 = pred.x1 - w;       // successor ends where pred starts
+          // Ensure x1 doesn't go left of labelW
+          x1 = Math.max(labelW, x1);
+          placed[sk.psid] = { track, x1, x2:x1+w, w };
+          trackCursor[track] = Math.max(trackCursor[track]||0, x1+w);
+        }
+      });
+
+      return { proc, skills, placed, maxTrack };
+    });
+
+    // ── Assign y positions ────────────────────────────────────────────────────
+    // Each process occupies (maxTrack+1) sub-rows
+    let curY = 30;
+    const processY = {}; // procid → base y
+    const trackH = barH + subGap;
+    processLayouts.forEach(({ proc, maxTrack }) => {
+      processY[proc.procid] = curY;
+      curY += (maxTrack + 1) * trackH + procGap;
+    });
+    const svgH = curY + 40;
+
+    // ── Build blockMap for arrow drawing ─────────────────────────────────────
     const blockMap = {};
-    processes.forEach((proc,pi)=>{
-      const y = 30 + pi*rowH;
-      let x = labelW;
-      (proc.skills||[]).forEach(sk=>{
-        const w = Math.max(10, minToX(toMins(sk.duration, sk.duration_unit)));
-        blockMap[sk.psid] = { x1:x, x2:x+w, y, w, barH, color:sk.color||G.muted };
-        x += w;
+    processLayouts.forEach(({ proc, placed }) => {
+      const baseY = processY[proc.procid];
+      Object.entries(placed).forEach(([psid, b]) => {
+        blockMap[psid] = {
+          x1: b.x1, x2: b.x2, w: b.w,
+          y: baseY + b.track * trackH,
+          barH,
+        };
       });
     });
 
-    // Determine if a skill block is a "successor" (dashed) based on its dep type
-    const isDashed = sk => sk.dep_type && sk.dep_type !== "FS";
-
-    // Build arrow paths
+    // ── Build arrows ──────────────────────────────────────────────────────────
     const arrows = [];
-    processes.forEach(proc=>{
-      (proc.skills||[]).forEach(sk=>{
+    processes.forEach(proc => {
+      (proc.skills||[]).forEach(sk => {
         if (!sk.dep_type || !sk.dep_psid) return;
         const src = blockMap[sk.dep_psid];
         const tgt = blockMap[sk.psid];
         if (!src || !tgt) return;
+        const dep = sk.dep_type;
 
-        let x1, y1, x2, y2;
-        switch(sk.dep_type) {
-          case "FS": x1=src.x2; y1=src.y+src.barH/2; x2=tgt.x1; y2=tgt.y+tgt.barH/2; break;
-          case "SS": x1=src.x1; y1=src.y+src.barH/2; x2=tgt.x1; y2=tgt.y+tgt.barH/2; break;
-          case "FF": x1=src.x2; y1=src.y+src.barH/2; x2=tgt.x2; y2=tgt.y+tgt.barH/2; break;
-          case "SF": x1=src.x1; y1=src.y+src.barH/2; x2=tgt.x2; y2=tgt.y+tgt.barH/2; break;
-          default:   x1=src.x2; y1=src.y+src.barH/2; x2=tgt.x1; y2=tgt.y+tgt.barH/2;
-        }
+        // Anchor points based on dep type
+        let x1,y1,x2,y2;
+        if (dep==="FS"){ x1=src.x2; y1=src.y+barH/2; x2=tgt.x1; y2=tgt.y+barH/2; }
+        else if (dep==="SS"){ x1=src.x1; y1=src.y+barH; x2=tgt.x1; y2=tgt.y; }
+        else if (dep==="FF"){ x1=src.x2; y1=src.y+barH; x2=tgt.x2; y2=tgt.y; }
+        else if (dep==="SF"){ x1=src.x1; y1=src.y+barH; x2=tgt.x2; y2=tgt.y; }
+        else { x1=src.x2; y1=src.y+barH/2; x2=tgt.x1; y2=tgt.y+barH/2; }
 
-        // Route arrow with a bend if same row, arc if different row
-        const sameRow = Math.abs(y1-y2) < 5;
+        // For FS same row: horizontal. For others: vertical drop
         let d;
-        if (sameRow) {
-          // Bend under or over the blocks
-          const midY = y1 + barH + 8;
-          d = `M${x1},${y1} L${x1},${midY} L${x2},${midY} L${x2},${y2}`;
+        if (dep==="FS") {
+          d = `M${x1},${y1} L${x2},${y2}`;
         } else {
-          const cx = (x1+x2)/2;
-          d = `M${x1},${y1} C${cx},${y1} ${cx},${y2} ${x2},${y2}`;
+          // Short vertical line from bottom of pred to top of succ, with small bends
+          const midY = (y1+y2)/2;
+          d = `M${x1},${y1} C${x1},${midY} ${x2},${midY} ${x2},${y2}`;
         }
-
-        arrows.push({ d, type:sk.dep_type, label:sk.dep_type, lx:(x1+x2)/2, ly:(y1+y2)/2-6 });
+        arrows.push({ d, dep, lx:(x1+x2)/2+8, ly:(y1+y2)/2 });
       });
     });
 
@@ -4544,47 +4589,46 @@ function ProcessesPage({ toast }) {
 
     return (
       <div style={{ overflowX:"auto", marginBottom:24, background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:16 }}>
-        <svg width={W} height={svgH + 50}>
+        <svg width={W} height={svgH} style={{display:"block"}}>
           <defs>
-            <marker id="arr-end" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
-              <polygon points="0 0, 7 3.5, 0 7" fill="#555"/>
+            <marker id="arr-tip" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+              <polygon points="0 0, 7 3.5, 0 7" fill="#666"/>
             </marker>
           </defs>
 
           {/* Hour grid */}
           {hours.map(m=>(
             <g key={m}>
-              <line x1={labelW+minToX(m)} y1={18} x2={labelW+minToX(m)} y2={svgH} stroke={G.border} strokeWidth={0.8}/>
+              <line x1={labelW+minToX(m)} y1={18} x2={labelW+minToX(m)} y2={svgH-40} stroke={G.border} strokeWidth={0.8}/>
               <text x={labelW+minToX(m)+3} y={13} fontSize={9} fill={G.muted}>{`${8+m/60}:00`}</text>
             </g>
           ))}
 
-          {/* Process rows */}
-          {processes.map((proc,pi)=>{
-            const y = 30 + pi*rowH;
-            let x = labelW;
+          {/* Process bars */}
+          {processLayouts.map(({ proc, placed }) => {
+            const baseY = processY[proc.procid];
             return (
               <g key={proc.procid}>
-                {/* Row label */}
-                <text x={labelW-8} y={y+barH/2+4} fontSize={12} fontWeight="600" fill={G.dark}
-                  textAnchor="end" dominantBaseline="middle"
-                  style={{cursor:"pointer",textDecoration:"underline"}}
-                  onClick={()=>openEdit(proc)}>
+                {/* Process label — vertically centred across all its tracks */}
+                <text x={labelW-8} y={baseY + barH/2 + 4}
+                  fontSize={12} fontWeight="700" fill={G.dark} textAnchor="end" dominantBaseline="middle"
+                  style={{cursor:"pointer"}} onClick={()=>openEdit(proc)}>
                   {proc.name.slice(0,22)}
                 </text>
                 {/* Skill blocks */}
-                {(proc.skills||[]).map(sk=>{
-                  const w = Math.max(10, minToX(toMins(sk.duration,sk.duration_unit)));
+                {(proc.skills||[]).map(sk => {
+                  const b = placed[sk.psid];
+                  if (!b) return null;
+                  const bx = b.x1, by = baseY + b.track*trackH;
                   const color = sk.color || G.muted;
-                  const dashed = isDashed(sk);
-                  const rx = x; x += w;
+                  const dashed = sk.dep_type && sk.dep_type !== "FS";
                   return (
                     <g key={sk.psid}>
-                      <rect x={rx} y={y} width={w} height={barH}
+                      <rect x={bx} y={by} width={b.w} height={barH}
                         fill={`${color}22`} stroke={color} strokeWidth={1.5}
                         strokeDasharray={dashed?"6,3":"none"} rx={5}/>
-                      {w>26&&<text x={rx+5} y={y+15} fontSize={10} fill={color} fontWeight="600">{sk.name.slice(0,Math.floor(w/6.5))}</text>}
-                      {w>36&&sk.duration&&<text x={rx+5} y={y+30} fontSize={8.5} fill={G.muted}>{sk.duration}{(sk.duration_unit||"m")[0]}</text>}
+                      {b.w>24&&<text x={bx+5} y={by+15} fontSize={10} fill={color} fontWeight="600">{sk.name.slice(0,Math.floor(b.w/6.5))}</text>}
+                      {b.w>36&&sk.duration&&<text x={bx+5} y={by+30} fontSize={8.5} fill={G.muted}>{sk.duration}{(sk.duration_unit||"m")[0]}</text>}
                     </g>
                   );
                 })}
@@ -4592,52 +4636,53 @@ function ProcessesPage({ toast }) {
             );
           })}
 
-          {/* Dependency arrows (drawn on top) */}
+          {/* Dependency arrows */}
           {arrows.map((a,i)=>(
             <g key={i}>
-              <path d={a.d} fill="none" stroke="#555" strokeWidth="1.5" markerEnd="url(#arr-end)" strokeLinejoin="round"/>
-              <text x={a.lx} y={a.ly} fontSize={8} fill="#555" textAnchor="middle" fontWeight="700"
-                style={{paintOrder:"stroke",stroke:G.white,strokeWidth:3}}>{a.label}</text>
+              <path d={a.d} fill="none" stroke="#666" strokeWidth="1.5"
+                strokeDasharray={a.dep==="FS"?"none":"none"}
+                markerEnd="url(#arr-tip)" strokeLinejoin="round"/>
+              <text x={a.lx} y={a.ly+4} fontSize={8} fill="#666" textAnchor="start" fontWeight="700"
+                style={{paintOrder:"stroke",stroke:G.white,strokeWidth:3}}>
+                {a.dep}
+              </text>
             </g>
           ))}
         </svg>
 
         {/* Legend — bottom */}
-        <div style={{display:"flex",gap:24,flexWrap:"wrap",paddingTop:12,borderTop:`1px solid ${G.border}`,marginTop:4}}>
+        <div style={{display:"flex",gap:20,flexWrap:"wrap",paddingTop:12,borderTop:`1px solid ${G.border}`,marginTop:4,fontSize:11,color:G.muted}}>
           {DEP_TYPES.map(dt=>(
-            <div key={dt.value} style={{display:"flex",alignItems:"center",gap:7,fontSize:11,color:G.muted}}>
-              {/* Mini Gantt pair diagram */}
-              <svg width="60" height="20" style={{flexShrink:0}}>
-                {/* predecessor — always solid */}
-                <rect x="0" y="3" width="22" height="14" fill={`${G.caramel}25`} stroke={G.caramel} strokeWidth="1.5" rx="2"/>
-                {/* successor — dashed if not FS */}
-                <rect x={dt.value==="FS"?26:dt.value==="SF"?0:10} y="3" width="22" height="14"
-                  fill={`${G.dark}15`} stroke={G.dark} strokeWidth="1.5" rx="2"
-                  strokeDasharray={dt.value!=="FS"?"5,2":"none"}/>
+            <span key={dt.value} style={{display:"flex",alignItems:"center",gap:6}}>
+              <svg width="50" height="26">
+                {/* predecessor */}
+                <rect x="0" y="2" width="20" height="12" fill={`${G.caramel}25`} stroke={G.caramel} strokeWidth="1.5" rx="2"/>
+                {/* successor */}
+                {dt.value==="FS" && <rect x="24" y="2" width="20" height="12" fill={`${G.dark}15`} stroke={G.dark} strokeWidth="1.5" rx="2"/>}
+                {dt.value==="SS" && <rect x="0"  y="14" width="20" height="12" fill={`${G.dark}15`} stroke={G.dark} strokeWidth="1.5" rx="2" strokeDasharray="4,2"/>}
+                {dt.value==="FF" && <rect x="4"  y="14" width="20" height="12" fill={`${G.dark}15`} stroke={G.dark} strokeWidth="1.5" rx="2" strokeDasharray="4,2"/>}
+                {dt.value==="SF" && <rect x="-4" y="14" width="16" height="12" fill={`${G.dark}15`} stroke={G.dark} strokeWidth="1.5" rx="2" strokeDasharray="4,2"/>}
                 {/* Arrow */}
-                {dt.value==="FS"&&<line x1="22" y1="10" x2="26" y2="10" stroke="#555" strokeWidth="1.2" markerEnd="url(#arr-end)"/>}
-                {dt.value==="SS"&&<path d="M0,10 L0,18 L10,18 L10,10" fill="none" stroke="#555" strokeWidth="1.2" markerEnd="url(#arr-end)"/>}
-                {dt.value==="FF"&&<path d="M22,10 L22,18 L32,18 L32,10" fill="none" stroke="#555" strokeWidth="1.2" markerEnd="url(#arr-end)"/>}
-                {dt.value==="SF"&&<path d="M0,10 L0,18 L22,18 L22,10" fill="none" stroke="#555" strokeWidth="1.2" markerEnd="url(#arr-end)"/>}
+                {dt.value==="FS" && <line x1="20" y1="8" x2="24" y2="8" stroke="#666" strokeWidth="1.2" markerEnd="url(#arr-tip)"/>}
+                {dt.value!=="FS" && <path d="M10,14 L10,18 L10,22" stroke="#666" strokeWidth="1.2" fill="none" markerEnd="url(#arr-tip)"/>}
               </svg>
-              <span><b>{dt.value}</b> — {dt.label.replace(` (${dt.value})`,"")}</span>
-            </div>
+              <span><b>{dt.value}</b> {dt.label.replace(/ \(.*\)/,"")}</span>
+            </span>
           ))}
-          <div style={{display:"flex",alignItems:"center",gap:7,fontSize:11,color:G.muted}}>
-            <svg width="40" height="20"><rect x="2" y="3" width="36" height="14" fill="transparent" stroke={G.muted} strokeWidth="1.5" strokeDasharray="5,2" rx="2"/></svg>
-            <span>Dashed = successor (SS, FF, SF — can overlap)</span>
-          </div>
+          <span style={{display:"flex",alignItems:"center",gap:6}}>
+            <svg width="30" height="14"><rect x="1" y="1" width="28" height="12" fill="transparent" stroke={G.muted} strokeWidth="1.5" strokeDasharray="4,2" rx="2"/></svg>
+            Dashed = parallel successor
+          </span>
         </div>
       </div>
     );
   };
 
-  // Items for SkillCombo: processes (bold), roles, skills
+  // Items for combo: processes (bold) + skills only — no roles
   const allItems = [
     ...processes.filter(p=>p.procid!==editProc?.procid).map(p=>({
       skid:`proc-${p.procid}`, procid:p.procid, name:p.name, _isProcess:true,
     })),
-    ...roles.map(r=>({...r, skid:r.rid, _isRole:true})),
     ...skills,
   ];
 
@@ -4655,8 +4700,8 @@ function ProcessesPage({ toast }) {
           </div>
 
           <div style={{ marginBottom:16 }}>
-            <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:6}}>Add processes / roles / skills</label>
-            {/* Custom combo that renders processes in bold */}
+            <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:6}}>Add processes / skills</label>
+            {/* Custom combo showing processes in bold */}
             <SkillComboWithProcesses allItems={allItems} onAdd={addToForm} onCreateSkill={createSkill}/>
           </div>
 
@@ -4774,7 +4819,7 @@ function SkillComboWithProcesses({ allItems, onAdd, onCreateSkill }) {
       <input value={input} onChange={e=>{ setInput(e.target.value); setOpen(true); }}
         onFocus={()=>setOpen(true)} onBlur={()=>setTimeout(()=>setOpen(false),150)}
         onKeyDown={e=>{ if(e.key==="Escape") setOpen(false); if(e.key==="Enter"&&filtered.length) select(filtered[0]); }}
-        placeholder="Type to search processes, roles or skills…"
+        placeholder="Type to search processes or skills…"
         style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}/>
       {open&&(filtered.length>0||canCreate)&&(
         <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,background:G.white,border:`1px solid ${G.border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(44,24,16,0.12)",zIndex:500,maxHeight:240,overflowY:"auto"}}>
@@ -4790,8 +4835,7 @@ function SkillComboWithProcesses({ allItems, onAdd, onCreateSkill }) {
               onMouseEnter={e=>e.currentTarget.style.background=G.sand}
               onMouseLeave={e=>e.currentTarget.style.background="none"}>
               {item._isProcess&&<span style={{fontSize:10,background:`${G.caramel}20`,color:G.caramel,borderRadius:4,padding:"1px 6px",fontWeight:700,flexShrink:0}}>PROCESS</span>}
-              {item._isRole&&<span style={{fontSize:10,background:`${G.dark}15`,color:G.dark,borderRadius:4,padding:"1px 6px",fontWeight:700,flexShrink:0}}>ROLE</span>}
-              <span style={{fontWeight:item._isProcess?700:item._isRole?600:400}}>{item.name}</span>
+              <span style={{fontWeight:item._isProcess?700:400}}>{item.name}</span>
             </button>
           ))}
         </div>
