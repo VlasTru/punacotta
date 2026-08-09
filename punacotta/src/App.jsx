@@ -541,6 +541,7 @@ function Nav({ user, page, setPage, logout, lang, setLang }) {
   const tl = k => lang==='ru' ? (RU[k]||k) : k;
   const links = isM
     ? [{key:"orders-manuf",label:tl("Orders")},{key:"products",label:tl("Products")},{key:"items",label:tl("Items")},{key:"menus",label:tl("Menus")},{key:"procurement",label:tl("Procurement")},{key:"suppliers",label:tl("Suppliers")},{key:"reports",label:tl("Reports")},{key:"staff",label:"Staff"},{key:"processes",label:"Processes"}]
+    : user?.employer_uid ? [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")},{key:"roster-emp",label:"My Roster"}]
     : [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")}];
   const navigate = key => { setPage(key); setDropOpen(false); };
   return (
@@ -4010,7 +4011,7 @@ function RoleEditDialog({ role, allSkills, onSave, onClose, createSkill }) {
 }
 
 // ─── STAFF PAGE ────────────────────────────────────────────────────────────────
-function StaffPage({ toast }) {
+function StaffPage({ user, toast }) {
   const [employees, setEmployees] = useState([]);
   const [roles,     setRoles]     = useState([]);
   const [skills,    setSkills]    = useState([]);
@@ -4019,6 +4020,7 @@ function StaffPage({ toast }) {
   const [editEmp,   setEditEmp]   = useState(null);
   const [showNew,   setShowNew]   = useState(false);
   const [showRoles, setShowRoles] = useState(false);
+  const [showRoster, setShowRoster] = useState(false);
   const [saving,    setSaving]    = useState(false);
   const [editSkill, setEditSkill] = useState(null);
   const [editRole,  setEditRole]  = useState(null);
@@ -4147,12 +4149,14 @@ function StaffPage({ toast }) {
   // Find skill color
   const skillColor = name => skills.find(s=>s.name===name)?.color || G.muted;
 
-  if (showRoles) return <RolesPage roles={roles} skills={skills} setRoles={setRoles} setSkills={setSkills} createSkill={createSkill} toast={toast} onBack={()=>setShowRoles(false)} />;
+  if (showRoster) return <RosterPage user={user} toast={toast} onBack={()=>setShowRoster(false)} />;
+  if (showRoles)  return <RolesPage roles={roles} skills={skills} setRoles={setRoles} setSkills={setSkills} createSkill={createSkill} toast={toast} onBack={()=>setShowRoles(false)} />;
 
   return (
     <Page title="Staff" actions={
       <div style={{display:"flex",gap:10}}>
         {selected.length>0&&<Btn variant="danger" size="sm" onClick={doDelete}>Delete ({selected.length})</Btn>}
+        <Btn variant="secondary" size="sm" onClick={()=>setShowRoster(true)}>Roster →</Btn>
         <Btn variant="secondary" size="sm" onClick={()=>setShowRoles(true)}>Roles & Skills →</Btn>
         <Btn size="sm" onClick={openNew}>+ Employee</Btn>
       </div>
@@ -4845,6 +4849,467 @@ function SkillComboWithProcesses({ allItems, onAdd, onCreateSkill }) {
 }
 
 
+// ─── ROSTER PAGE ──────────────────────────────────────────────────────────────
+// Used both by Restaurant (full view, publish/approve) and Employees (own slots)
+// ─── ROSTER PAGE ──────────────────────────────────────────────────────────────
+function RosterPage({ user, toast, onBack }) {
+  const isManuf = user?.is_manufacturer;
+
+  const toMonday = d => {
+    const dt = new Date(d); dt.setHours(0,0,0,0);
+    const day = dt.getDay();
+    dt.setDate(dt.getDate() + (day===0 ? -6 : 1-day));
+    return dt;
+  };
+  const fmt = d => d.toISOString().split('T')[0];
+  const hhmm = (h, m=0) => `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+  const minsToHhmm = mins => hhmm(Math.floor(mins/60), mins%60);
+
+  const [weekStart, setWeekStart] = useState(()=>toMonday(new Date()));
+  const [roster, setRoster]       = useState(null);
+  const [loading, setLoading]     = useState(true);
+  const [saving,  setSaving]      = useState(false);
+  const [empEditing, setEmpEditing] = useState(false);
+
+  // My slots (employee editing). Keyed list of {tempId, slot_date, start_time, end_time}
+  const [mySlots, setMySlots] = useState([]);
+
+  // Tooltip state: which slot is being edited inline
+  const [tooltip, setTooltip] = useState(null); // {tempId, x, y}
+
+  // Drag state for creating/extending a slot
+  // {mode:'create'|'extend', dateStr, startMins, currentMins, tempId?}
+  const [drag, setDrag] = useState(null);
+
+  const calRef = useRef(null);
+
+  const START_H = 7, END_H = 23;
+  const HOURS = Array.from({length:END_H-START_H}, (_,i)=>START_H+i);
+  const COL_H = 720; // px — 48px per hour
+  const PX_PER_MIN = COL_H / ((END_H-START_H)*60);
+  const SNAP = 15; // snap to 15-min intervals
+
+  const minsToPx = m => m * PX_PER_MIN;
+  const pxToMins = px => px / PX_PER_MIN;
+  const snapMins = m => Math.round(m/SNAP)*SNAP;
+  const startMins = () => START_H*60;
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await api.getRoster(fmt(weekStart));
+      setRoster(r);
+      if (!isManuf) {
+        const own = (r.slots||[]).filter(s=>String(s.uid)===String(user.uid));
+        setMySlots(own.map((s,i)=>({
+          tempId: `s${i}`, rsid:s.rsid,
+          slot_date:s.slot_date,
+          start_time:s.start_time?.slice(0,5),
+          end_time:s.end_time?.slice(0,5),
+          finalized:s.finalized,
+        })));
+        if (own.some(s=>s.finalized)) setEmpEditing(false);
+      }
+    } catch(e){ toast(e.message,"error"); }
+    finally{ setLoading(false); }
+  }, [weekStart]);
+  useEffect(()=>{ load(); },[load]);
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate()+6);
+  const isPast   = weekEnd < today;
+  const isFuture = weekStart > today;
+  const status   = roster?.status || 'unpublished';
+
+  const rAction = async (fn, ...args) => {
+    setSaving(true);
+    try { const r = await fn(...args); setRoster(r); toast("Saved"); }
+    catch(e){ toast(e.message,"error"); }
+    finally{ setSaving(false); }
+  };
+
+  const ensureRoster = async () => {
+    if (roster?.roid) return roster;
+    const r = await api.initRoster({ week_start: fmt(weekStart) });
+    setRoster(r); return r;
+  };
+
+  // ── Restaurant buttons ──────────────────────────────────────────────────────
+  const canClone = roster?.roid && !isFuture && ['published','approved','unapproved'].includes(status);
+
+  const manufButtons = () => {
+    if (isPast) return null;
+    const btns = [];
+    if (['unpublished','unapproved'].includes(status))
+      btns.push(<Btn key="pub" size="sm" loading={saving} onClick={async()=>{ const r=await ensureRoster(); rAction(api.publishRoster,r.roid); }}>Publish</Btn>);
+    if (status==='published')
+      btns.push(<Btn key="unpub" size="sm" variant="secondary" loading={saving} onClick={()=>rAction(api.unpublishRoster,roster.roid)}>Unpublish</Btn>);
+    if (canClone)
+      btns.push(<Btn key="clone" size="sm" variant="secondary" loading={saving} onClick={()=>rAction(api.cloneRoster,roster.roid)}>Clone →</Btn>);
+    if (['published','unapproved'].includes(status))
+      btns.push(<Btn key="app" size="sm" loading={saving} onClick={()=>rAction(api.approveRoster,roster.roid)}>Approve</Btn>);
+    if (status==='approved') {
+      btns.push(<Btn key="unapp" size="sm" variant="secondary" loading={saving} onClick={()=>rAction(api.unapproveRoster,roster.roid)}>Unapprove</Btn>);
+      if (canClone) btns.push(<Btn key="clone2" size="sm" variant="secondary" loading={saving} onClick={()=>rAction(api.cloneRoster,roster.roid)}>Clone →</Btn>);
+    }
+    return btns;
+  };
+
+  // ── Employee slot helpers ───────────────────────────────────────────────────
+  const canEdit = !isManuf && status==='published' && !isPast;
+  const isFinalized = mySlots.some(s=>s.finalized);
+  const nextTempId = () => `t${Date.now()}${Math.random()}`;
+
+  const overlaps = (dateStr, startM, endM, excludeId=null) =>
+    mySlots.some(s=>s.slot_date===dateStr && s.tempId!==excludeId &&
+      timeToMins(s.start_time)<endM && timeToMins(s.end_time)>startM);
+
+  const addOrUpdateSlot = (dateStr, startM, endM, tempId=null) => {
+    const start_time = minsToHhmm(Math.max(startMins(), Math.min(startM, END_H*60-SNAP)));
+    const end_time   = minsToHhmm(Math.min(END_H*60, Math.max(endM, startMins()+SNAP)));
+    if (overlaps(dateStr, timeToMins(start_time), timeToMins(end_time), tempId)) return;
+    if (tempId) {
+      setMySlots(p=>p.map(s=>s.tempId===tempId?{...s,start_time,end_time}:s));
+    } else {
+      setMySlots(p=>[...p,{tempId:nextTempId(),slot_date:dateStr,start_time,end_time,finalized:false}]);
+    }
+  };
+
+  const removeSlot = tempId => { setMySlots(p=>p.filter(s=>s.tempId!==tempId)); setTooltip(null); };
+
+  const saveSlots = async (finalize=false) => {
+    if (!roster?.roid) { toast("Roster not published yet","error"); return; }
+    setSaving(true);
+    try {
+      const r = await api.saveRosterSlots(roster.roid, {
+        slots: mySlots.map(s=>({slot_date:s.slot_date,start_time:s.start_time,end_time:s.end_time})),
+        finalize,
+      });
+      setRoster(r);
+      toast(finalize?"Roster finalized!":"Slots saved");
+      if (finalize) setEmpEditing(false);
+      // Re-sync mySlots with server response
+      const own = (r.slots||[]).filter(s=>String(s.uid)===String(user.uid));
+      setMySlots(own.map((s,i)=>({tempId:`s${i}`,rsid:s.rsid,slot_date:s.slot_date,start_time:s.start_time?.slice(0,5),end_time:s.end_time?.slice(0,5),finalized:s.finalized})));
+    } catch(e){ toast(e.message,"error"); }
+    finally{ setSaving(false); }
+  };
+
+  // ── Drag handlers ───────────────────────────────────────────────────────────
+  const getColDateStr = target => target.closest('[data-datestr]')?.dataset.datestr;
+
+  const onMouseDown = (e, dateStr) => {
+    if (!canEdit || !empEditing) return;
+    if (e.button!==0) return;
+    // Check if clicking on an existing slot handle
+    const slotEl = e.target.closest('[data-tempid]');
+    if (slotEl) return; // handled by slot's own mousedown
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const py = e.clientY - rect.top;
+    const rawMins = START_H*60 + pxToMins(py);
+    const startM = snapMins(rawMins);
+    setDrag({mode:'create', dateStr, startM, currentM: startM+60});
+    setTooltip(null);
+  };
+
+  const onMouseMove = useCallback(e => {
+    if (!drag) return;
+    // Find which column we're in
+    const dayEls = calRef.current?.querySelectorAll('[data-datestr]');
+    if (!dayEls) return;
+    let targetEl = null;
+    for (const el of dayEls) {
+      const r = el.getBoundingClientRect();
+      if (e.clientX >= r.left && e.clientX <= r.right) { targetEl = el; break; }
+    }
+    if (!targetEl) return;
+    const rect = targetEl.getBoundingClientRect();
+    const py = Math.max(0, e.clientY - rect.top);
+    const rawMins = START_H*60 + pxToMins(py);
+    const curM = snapMins(rawMins);
+    setDrag(d => d ? {...d, currentM: Math.max(d.startM+SNAP, curM)} : null);
+  }, [drag]);
+
+  const onMouseUp = useCallback(e => {
+    if (!drag) return;
+    const {mode, dateStr, startM, currentM, tempId} = drag;
+    const endM = Math.max(startM+SNAP, currentM);
+    addOrUpdateSlot(dateStr, startM, endM, mode==='extend'?tempId:null);
+    setDrag(null);
+  }, [drag, mySlots]);
+
+  useEffect(()=>{
+    if (drag) {
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', onMouseUp);
+      return ()=>{
+        window.removeEventListener('mousemove', onMouseMove);
+        window.removeEventListener('mouseup', onMouseUp);
+      };
+    }
+  }, [drag, onMouseMove, onMouseUp]);
+
+  // ── Calendar data ────────────────────────────────────────────────────────────
+  const weekDays = DAY_LABELS.map((label,i)=>{
+    const d = new Date(weekStart); d.setDate(d.getDate()+i);
+    return { label, date:d, dateStr:fmt(d), isToday:fmt(d)===fmt(today) };
+  });
+
+  const slotsByDay = {};
+  (roster?.slots||[]).forEach(s=>{ (slotsByDay[s.slot_date]=slotsByDay[s.slot_date]||[]).push(s); });
+
+  const empColors = {};
+  (roster?.employees||[]).forEach((e,i)=>{ empColors[e.uid]=ROLE_PALETTE[i%ROLE_PALETTE.length]; });
+  // For employee: own colour is their own entry; for restaurant their employee list
+  const myColor = empColors[user?.uid] || G.caramel;
+
+  const calOpacity = isPast ? 0.5 : (isFuture && status==='unpublished') ? 0.65 : 1;
+
+  // Drag ghost dimensions (for create)
+  const dragGhost = drag?.mode==='create' ? {
+    top: minsToPx(drag.startM - START_H*60),
+    height: minsToPx(Math.max(drag.currentM - drag.startM, SNAP)),
+  } : null;
+
+  // ── Render ──────────────────────────────────────────────────────────────────
+  return (
+    <Page
+      title={`Roster — week of ${weekStart.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}`}
+      actions={
+        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+          {isManuf && manufButtons()}
+          {!isManuf && canEdit && !isFinalized && (
+            empEditing ? <>
+              <Btn size="sm" loading={saving} onClick={()=>saveSlots(false)}>Save</Btn>
+              <Btn size="sm" loading={saving} onClick={()=>saveSlots(true)}>Finalize</Btn>
+              <Btn size="sm" variant="ghost" onClick={()=>{ setEmpEditing(false); load(); }}>Cancel</Btn>
+            </> : <Btn size="sm" onClick={()=>setEmpEditing(true)}>Edit my slots</Btn>
+          )}
+          {!isManuf && isFinalized && !loading &&
+            <Btn size="sm" variant="secondary" onClick={()=>{ setMySlots(p=>p.map(s=>({...s,finalized:false}))); setEmpEditing(true); }}>Edit</Btn>}
+          {onBack && <Btn size="sm" variant="ghost" onClick={onBack}>← Staff</Btn>}
+        </div>
+      }>
+
+      {/* Week navigation + status */}
+      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16,flexWrap:"wrap"}}>
+        <button onClick={()=>{ const d=new Date(weekStart); d.setDate(d.getDate()-7); setWeekStart(d); }}
+          style={{background:"none",border:`1px solid ${G.border}`,borderRadius:7,cursor:"pointer",padding:"5px 14px",fontSize:14}}>←</button>
+        <span style={{fontSize:14,fontWeight:600,color:G.dark,minWidth:150,textAlign:"center"}}>
+          {weekStart.toLocaleDateString('en-GB',{day:'numeric',month:'short'})} – {weekEnd.toLocaleDateString('en-GB',{day:'numeric',month:'short'})}
+        </span>
+        <button onClick={()=>{ const d=new Date(weekStart); d.setDate(d.getDate()+7); setWeekStart(d); }}
+          style={{background:"none",border:`1px solid ${G.border}`,borderRadius:7,cursor:"pointer",padding:"5px 14px",fontSize:14}}>→</button>
+        <span style={{fontSize:12,padding:"3px 12px",borderRadius:20,fontWeight:600,
+          background:status==='approved'?`${G.green}20`:status==='published'?`${G.caramel}20`:status==='unapproved'?'#fef3c7':'#f3f4f6',
+          color:status==='approved'?G.green:status==='published'?G.caramel:status==='unapproved'?'#92400e':G.muted}}>
+          {status.charAt(0).toUpperCase()+status.slice(1)}
+        </span>
+      </div>
+
+      {/* Auto-settings (restaurant, non-past) */}
+      {isManuf && roster?.roid && !isPast && (
+        <div style={{background:G.sand,borderRadius:10,padding:"10px 16px",marginBottom:14,display:"flex",gap:20,flexWrap:"wrap"}}>
+          {[['auto_clone','Auto-clone next week'],['auto_approve','Auto-approve at week end']].map(([k,label])=>(
+            <label key={k} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,cursor:"pointer"}}>
+              <input type="checkbox" checked={!!roster[k]} style={{accentColor:G.caramel}}
+                onChange={async e=>{ const r=await api.patchRoster(roster.roid,{[k]:e.target.checked}); setRoster(r); }}/>
+              {label}
+            </label>
+          ))}
+        </div>
+      )}
+
+      {/* Employee legend (shown always) */}
+      {(roster?.employees||[]).length>0 && (
+        <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:12}}>
+          {roster.employees.map(e=>(
+            <span key={e.uid} style={{display:"flex",alignItems:"center",gap:5,fontSize:12,
+              color:empColors[e.uid]||G.muted, fontWeight:String(e.uid)===String(user?.uid)?700:400}}>
+              <span style={{width:10,height:10,borderRadius:"50%",background:empColors[e.uid]||G.muted,display:"inline-block",flexShrink:0}}/>
+              {e.first_name}{e.role_name?` (${e.role_name})`:""}
+              {String(e.uid)===String(user?.uid)?" (you)":""}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {loading ? <Spinner/> : (
+        <div style={{overflowX:"auto",userSelect:"none"}} ref={calRef}>
+          <div style={{display:"grid",gridTemplateColumns:`44px repeat(7,1fr)`,minWidth:680,opacity:calOpacity}}>
+            {/* Header */}
+            <div/>
+            {weekDays.map(({label,date,dateStr,isToday})=>(
+              <div key={dateStr} style={{padding:"8px 4px",textAlign:"center",fontWeight:600,fontSize:12,
+                color:isToday?G.caramel:G.dark,background:isToday?`${G.caramel}12`:G.sand,
+                borderRight:`1px solid ${G.border}`,borderBottom:`1px solid ${G.border}`,borderTop:`1px solid ${G.border}`}}>
+                {label}<br/><span style={{fontSize:11,fontWeight:400,color:G.muted}}>{date.getDate()}/{date.getMonth()+1}</span>
+              </div>
+            ))}
+
+            {/* Time column */}
+            <div style={{position:"relative",height:COL_H,borderRight:`1px solid ${G.border}`}}>
+              {HOURS.map(h=>(
+                <div key={h} style={{position:"absolute",top:minsToPx((h-START_H)*60)-1,right:4,fontSize:9,color:G.muted,lineHeight:1}}>
+                  {h}:00
+                </div>
+              ))}
+            </div>
+
+            {/* Day columns */}
+            {weekDays.map(({dateStr,date})=>{
+              const allDaySlots = slotsByDay[dateStr]||[];
+              const myDaySlots  = mySlots.filter(s=>s.slot_date===dateStr);
+              const otherSlots  = !isManuf
+                ? allDaySlots.filter(s=>String(s.uid)!==String(user.uid))
+                : allDaySlots;
+              const isEditable  = canEdit && empEditing;
+              const isDragCol   = drag?.dateStr===dateStr;
+
+              return (
+                <div key={dateStr}
+                  data-datestr={dateStr}
+                  style={{position:"relative",height:COL_H,
+                    borderRight:`1px solid ${G.border}`,borderBottom:`1px solid ${G.border}`,
+                    background:isPast?`${G.sand}60`:G.white,
+                    cursor:isEditable?"crosshair":"default"}}
+                  onMouseDown={e=>onMouseDown(e,dateStr)}>
+
+                  {/* Hour grid */}
+                  {HOURS.map(h=>(
+                    <div key={h} style={{position:"absolute",top:minsToPx((h-START_H)*60),left:0,right:0,
+                      borderTop:`1px solid ${h%2===0?G.border:"#f5f0ea"}`,pointerEvents:"none"}}/>
+                  ))}
+
+                  {/* 30-min sub-lines */}
+                  {HOURS.map(h=>(
+                    <div key={`${h}h`} style={{position:"absolute",top:minsToPx((h-START_H)*60+30),left:0,right:0,
+                      borderTop:`1px dashed #f0ebe3`,pointerEvents:"none"}}/>
+                  ))}
+
+                  {/* Unpublished overlay */}
+                  {isFuture && status==='unpublished' && isManuf && (
+                    <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none",opacity:0.3}}>
+                      <span className="material-symbols-outlined" style={{fontSize:36,color:G.muted}}>publish</span>
+                    </div>
+                  )}
+
+                  {/* Drag ghost */}
+                  {isEditable && isDragCol && dragGhost && (
+                    <div style={{position:"absolute",left:2,right:2,
+                      top:dragGhost.top,height:Math.max(dragGhost.height,4),
+                      background:`${myColor}30`,border:`2px dashed ${myColor}`,borderRadius:5,pointerEvents:"none"}}>
+                      <span style={{fontSize:9,color:myColor,padding:"2px 4px",display:"block"}}>
+                        {minsToHhmm(drag.startM)}–{minsToHhmm(Math.max(drag.currentM,drag.startM+SNAP))}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Other employees' slots (read-only) */}
+                  {(isManuf ? allDaySlots : otherSlots).map(s=>{
+                    const col = empColors[s.uid]||G.caramel;
+                    const t1 = timeToMins(s.start_time?.slice?.(0,5)||s.start_time);
+                    const t2 = timeToMins(s.end_time?.slice?.(0,5)||s.end_time);
+                    const top = minsToPx(t1-START_H*60);
+                    const h   = minsToPx(t2-t1);
+                    return (
+                      <div key={s.rsid} style={{position:"absolute",left:2,right:2,top,height:Math.max(h,4),
+                        background:`${col}28`,border:`1.5px solid ${col}`,borderRadius:5,overflow:"hidden",pointerEvents:"none"}}>
+                        <span style={{fontSize:9,fontWeight:600,color:col,writingMode:"vertical-rl",lineHeight:1.2,padding:"2px 3px"}}>
+                          {s.first_name}{s.role_name?` · ${s.role_name}`:""}
+                        </span>
+                      </div>
+                    );
+                  })}
+
+                  {/* My own slots (editable) */}
+                  {!isManuf && myDaySlots.map(s=>{
+                    const t1 = timeToMins(s.start_time);
+                    const t2 = timeToMins(s.end_time);
+                    const top = minsToPx(t1-START_H*60);
+                    const ht  = minsToPx(t2-t1);
+                    const isOpen = tooltip?.tempId===s.tempId;
+                    return (
+                      <div key={s.tempId} data-tempid={s.tempId}
+                        style={{position:"absolute",left:2,right:2,top,height:Math.max(ht,4),
+                          background:`${myColor}35`,border:`2px solid ${myColor}`,borderRadius:5,
+                          cursor:isEditable?"pointer":"default",zIndex:2}}>
+                        {/* Slot label */}
+                        <div style={{fontSize:10,color:myColor,fontWeight:600,padding:"2px 4px",lineHeight:1.3}}>
+                          {s.start_time}–{s.end_time}
+                        </div>
+                        {/* Drag handle to extend */}
+                        {isEditable && (
+                          <div
+                            style={{position:"absolute",bottom:0,left:0,right:0,height:8,cursor:"s-resize",
+                              background:`${myColor}50`,borderRadius:"0 0 4px 4px"}}
+                            onMouseDown={e=>{
+                              e.stopPropagation(); e.preventDefault();
+                              setDrag({mode:'extend',dateStr,startM:t1,currentM:t2,tempId:s.tempId});
+                            }}/>
+                        )}
+                        {/* Click to open tooltip */}
+                        {isEditable && (
+                          <div style={{position:"absolute",inset:0,bottom:8}}
+                            onClick={e=>{ e.stopPropagation(); setTooltip(isOpen?null:{tempId:s.tempId}); }}/>
+                        )}
+                        {/* Tooltip */}
+                        {isOpen && isEditable && (
+                          <div onClick={e=>e.stopPropagation()}
+                            style={{position:"absolute",top:-4,left:"calc(100% + 6px)",zIndex:20,
+                              background:G.white,border:`1px solid ${G.border}`,borderRadius:10,
+                              padding:"12px 14px",boxShadow:"0 4px 20px rgba(44,24,16,0.15)",
+                              minWidth:180,fontSize:13}}>
+                            <p style={{fontWeight:600,color:G.dark,marginBottom:10}}>Edit slot</p>
+                            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                              <label style={{fontSize:12,color:G.muted}}>Start
+                                <input type="time" value={s.start_time}
+                                  onChange={e=>setMySlots(p=>p.map(x=>x.tempId===s.tempId?{...x,start_time:e.target.value}:x))}
+                                  style={{display:"block",width:"100%",padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",marginTop:2}}/>
+                              </label>
+                              <label style={{fontSize:12,color:G.muted}}>End
+                                <input type="time" value={s.end_time}
+                                  onChange={e=>setMySlots(p=>p.map(x=>x.tempId===s.tempId?{...x,end_time:e.target.value}:x))}
+                                  style={{display:"block",width:"100%",padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",marginTop:2}}/>
+                              </label>
+                              <button onClick={()=>removeSlot(s.tempId)}
+                                style={{background:G.red,border:"none",borderRadius:6,color:G.white,cursor:"pointer",padding:"5px 10px",fontSize:12,fontWeight:600,marginTop:2}}>
+                                Remove slot
+                              </button>
+                            </div>
+                            <button onClick={()=>setTooltip(null)}
+                              style={{position:"absolute",top:6,right:8,background:"none",border:"none",cursor:"pointer",fontSize:16,color:G.muted,lineHeight:1}}>×</button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Status messages */}
+      {!isManuf && !loading && (
+        <p style={{fontSize:13,color:
+          status==='approved'?G.green:
+          status==='published'&&empEditing?"#854d0e":G.muted,
+          marginTop:12,textAlign:"center",fontWeight:status==='approved'?600:400}}>
+          {status==='approved'   && "✓ Roster approved — your schedule is final."}
+          {status==='unpublished'&& "Roster not yet published. Check back later."}
+          {status==='published'  && !empEditing && !isFinalized && "Click \"Edit my slots\" then drag to select your available hours."}
+          {status==='published'  && empEditing  && "Click and drag on any day column to create a slot. Drag the bottom edge to extend. Click a slot to edit times or remove."}
+          {status==='published'  && isFinalized && !empEditing && "Slots finalized. Click \"Edit\" to make changes before approval."}
+        </p>
+      )}
+    </Page>
+  );
+}
+
+
 // ─── EMBED MENU PAGE ──────────────────────────────────────────────────────────
 function EmbedMenuPage({ toast }) {
   const lang = useLangContext();
@@ -5075,8 +5540,9 @@ export default function App() {
           {page==="procurement"  &&<ProcurementPage toast={toast}/>}
           {page==="suppliers"    &&<SuppliersPage toast={toast}/>}
           {page==="reports"      &&<ReportsPage   toast={toast}/>}
-          {page==="staff"        &&<StaffPage      toast={toast}/>}
+          {page==="staff"        &&<StaffPage      user={user} toast={toast}/>}
           {page==="processes"    &&<ProcessesPage  toast={toast}/>}
+          {page==="roster-emp"   &&<RosterPage     user={user} toast={toast}/>}
           {page==="embed"        &&<EmbedMenuPage toast={toast}/>}
           {page==="orders-manuf" &&<OrdersManufPage toast={toast}/>}
           {page==="restaurants"  &&<RestaurantsPage setPage={setPage} setActiveMenu={setActiveMenu}/>}

@@ -59,6 +59,17 @@ export const api = {
   unlinkSupplierProduct: (sid, psid) => req('DELETE', `/suppliers/${sid}/products/${psid}`),
 
   lookupUserByEmail: (email) => req('GET', `/staff/lookup?email=${encodeURIComponent(email)}`),
+  // Roster
+  getRoster:          (week)       => req('GET',  `/roster?week=${week}`),
+  initRoster:         (data)       => req('POST', '/roster', data),
+  patchRoster:        (roid,data)  => req('PATCH',`/roster/${roid}`, data),
+  publishRoster:      (roid)       => req('POST', `/roster/${roid}/publish`),
+  unpublishRoster:    (roid)       => req('POST', `/roster/${roid}/unpublish`),
+  approveRoster:      (roid)       => req('POST', `/roster/${roid}/approve`),
+  unapproveRoster:    (roid)       => req('POST', `/roster/${roid}/unapprove`),
+  cloneRoster:        (roid)       => req('POST', `/roster/${roid}/clone`),
+  saveRosterSlots:    (roid,data)  => req('POST', `/roster/${roid}/slots`, data),
+  deleteRosterSlot:   (roid,rsid)  => req('DELETE',`/roster/${roid}/slots`, {rsid}),
   // Staff
   getStaff:       ()          => req('GET',    '/staff'),
   createEmployee: (data)      => req('POST',   '/staff', data),

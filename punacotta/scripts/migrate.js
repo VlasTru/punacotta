@@ -353,6 +353,33 @@ CREATE TABLE IF NOT EXISTS process_skill (
 
 ALTER TABLE process_skill ADD COLUMN IF NOT EXISTS dep_type VARCHAR(2);
 ALTER TABLE process_skill ADD COLUMN IF NOT EXISTS dep_psid INTEGER;
+
+-- Roster
+CREATE TABLE IF NOT EXISTS roster (
+  roid          SERIAL PRIMARY KEY,
+  owner_uid     INTEGER NOT NULL REFERENCES "user"(uid),
+  week_start    DATE NOT NULL,           -- Monday of the roster week
+  status        VARCHAR(12) NOT NULL DEFAULT 'unpublished',
+                                          -- unpublished | published | approved | unapproved
+  auto_clone    BOOLEAN NOT NULL DEFAULT false,
+  auto_approve  BOOLEAN NOT NULL DEFAULT false,
+  cloned_from   INTEGER REFERENCES roster(roid),
+  published_at  TIMESTAMPTZ,
+  approved_at   TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(owner_uid, week_start)
+);
+
+CREATE TABLE IF NOT EXISTS roster_slot (
+  rsid        SERIAL PRIMARY KEY,
+  roid        INTEGER NOT NULL REFERENCES roster(roid) ON DELETE CASCADE,
+  uid         INTEGER NOT NULL REFERENCES "user"(uid),  -- employee
+  slot_date   DATE NOT NULL,
+  start_time  TIME NOT NULL,
+  end_time    TIME NOT NULL,
+  finalized   BOOLEAN NOT NULL DEFAULT false,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 `
 
 await client.connect()

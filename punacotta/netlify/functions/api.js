@@ -1546,6 +1546,180 @@ async function route(method, segments, body, headers, event) {
     }
   }
 
+  // ── ROSTER ─────────────────────────────────────────────────────────────────
+  if (r0 === 'roster') {
+    if (!user) return [401, { error: 'Unauthorized' }]
+
+    async function getRosterByWeek(ownerUid, weekStart) {
+      const [r] = await dbq('SELECT * FROM roster WHERE owner_uid=$1 AND week_start=$2', [ownerUid, weekStart])
+      return r || null
+    }
+
+    async function fetchRoster(roid) {
+      const [r] = await dbq('SELECT * FROM roster WHERE roid=$1', [roid])
+      if (!r) return null
+      const slots = await dbq(
+        `SELECT rs.*, u.first_name, u.last_name,
+                (SELECT r2.name FROM employee_role er JOIN role r2 ON r2.rid=er.rid WHERE er.uid=rs.uid ORDER BY r2.name LIMIT 1) AS role_name
+         FROM roster_slot rs JOIN "user" u ON u.uid=rs.uid
+         WHERE rs.roid=$1 ORDER BY rs.slot_date, rs.start_time`, [roid])
+      const employees = await dbq(
+        `SELECT u.uid, u.first_name, u.last_name,
+                (SELECT r2.name FROM employee_role er JOIN role r2 ON r2.rid=er.rid WHERE er.uid=u.uid ORDER BY r2.name LIMIT 1) AS role_name
+         FROM "user" u WHERE u.employer_uid=$1 ORDER BY u.first_name`, [r.owner_uid])
+      return { ...r, slots, employees }
+    }
+
+    const ownerUid = user.is_manufacturer ? user.uid : user.employer_uid
+
+    if (method === 'GET' && !r1) {
+      const week = event?.queryStringParameters?.week
+      if (!week) return [400, { error: 'week required' }]
+      if (!ownerUid) return [403, { error: 'Not associated with a restaurant' }]
+      const roster = await getRosterByWeek(ownerUid, week)
+      if (!roster) {
+        const employees = await dbq(`SELECT u.uid, u.first_name, u.last_name FROM "user" u WHERE u.employer_uid=$1 ORDER BY u.first_name`, [ownerUid])
+        return [200, { week_start:week, status:'unpublished', slots:[], employees }]
+      }
+      return [200, await fetchRoster(roster.roid)]
+    }
+
+    if (method === 'POST' && !r1) {
+      if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+      const { week_start, auto_clone, auto_approve } = body
+      if (!week_start) return [400, { error: 'week_start required' }]
+      const res = await dbr(
+        `INSERT INTO roster (owner_uid,week_start,auto_clone,auto_approve)
+         VALUES ($1,$2,$3,$4) ON CONFLICT (owner_uid,week_start)
+         DO UPDATE SET auto_clone=EXCLUDED.auto_clone,auto_approve=EXCLUDED.auto_approve RETURNING *`,
+        [user.uid, week_start, !!auto_clone, !!auto_approve])
+      return [200, await fetchRoster(res.rows[0].roid)]
+    }
+
+    if (r1 && r2 === 'publish' && method === 'POST') {
+      if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+      const [r] = await dbq('SELECT * FROM roster WHERE roid=$1 AND owner_uid=$2', [r1, user.uid])
+      if (!r) return [404, { error: 'Not found' }]
+      await dbr(`UPDATE roster SET status='published',published_at=NOW() WHERE roid=$1`, [r1])
+      const emps = await dbq(`SELECT email, first_name FROM "user" WHERE employer_uid=$1 AND email IS NOT NULL`, [user.uid])
+      const wk = new Date(r.week_start).toLocaleDateString('en-GB',{day:'numeric',month:'short'})
+      for (const e of emps) {
+        await sendMail(e.email, `Roster published — week of ${wk}`,
+          `Hi ${e.first_name}, the roster for week of ${wk} is now open. Please post your availability.`,
+          mailHtml('Roster published', `The roster for the week of ${wk} is now open for editing. Please log in and post your available time slots.`, `${BASE_URL}/#roster`, 'Open roster'))
+      }
+      return [200, await fetchRoster(r1)]
+    }
+
+    if (r1 && r2 === 'unpublish' && method === 'POST') {
+      if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+      const [r] = await dbq('SELECT * FROM roster WHERE roid=$1 AND owner_uid=$2', [r1, user.uid])
+      if (!r) return [404, { error: 'Not found' }]
+      const weekStart = new Date(r.week_start)
+      const deadline = new Date(weekStart); deadline.setDate(deadline.getDate()-1); deadline.setHours(23,59,59)
+      if (new Date() > deadline) return [400, { error: 'Cannot unpublish after roster week starts' }]
+      await dbr(`UPDATE roster SET status='unpublished' WHERE roid=$1`, [r1])
+      return [200, await fetchRoster(r1)]
+    }
+
+    if (r1 && r2 === 'approve' && method === 'POST') {
+      if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+      const [r] = await dbq('SELECT * FROM roster WHERE roid=$1 AND owner_uid=$2', [r1, user.uid])
+      if (!r) return [404, { error: 'Not found' }]
+      if (!['published','unapproved'].includes(r.status)) return [400, { error: 'Must be published first' }]
+      await dbr(`UPDATE roster SET status='approved',approved_at=NOW() WHERE roid=$1`, [r1])
+      const emps = await dbq(`SELECT email, first_name FROM "user" WHERE employer_uid=$1 AND email IS NOT NULL`, [user.uid])
+      const wk = new Date(r.week_start).toLocaleDateString('en-GB',{day:'numeric',month:'short'})
+      for (const e of emps) {
+        await sendMail(e.email, `Roster approved — week of ${wk}`,
+          `Hi ${e.first_name}, the roster for week of ${wk} has been approved. Your schedule is now final.`,
+          mailHtml('Roster approved', `The roster for the week of ${wk} is approved and mandatory.`, `${BASE_URL}/#roster`, 'View roster'))
+      }
+      return [200, await fetchRoster(r1)]
+    }
+
+    if (r1 && r2 === 'unapprove' && method === 'POST') {
+      if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+      const [r] = await dbq('SELECT * FROM roster WHERE roid=$1 AND owner_uid=$2', [r1, user.uid])
+      if (!r) return [404, { error: 'Not found' }]
+      if (r.status !== 'approved') return [400, { error: 'Roster is not approved' }]
+      await dbr(`UPDATE roster SET status='unapproved' WHERE roid=$1`, [r1])
+      return [200, await fetchRoster(r1)]
+    }
+
+    if (r1 && r2 === 'clone' && method === 'POST') {
+      if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+      const [r] = await dbq('SELECT * FROM roster WHERE roid=$1 AND owner_uid=$2', [r1, user.uid])
+      if (!r) return [404, { error: 'Not found' }]
+      const tgtDate = new Date(r.week_start); tgtDate.setDate(tgtDate.getDate()+7)
+      const tgtStr = tgtDate.toISOString().split('T')[0]
+      const [existing] = await dbq('SELECT roid FROM roster WHERE owner_uid=$1 AND week_start=$2', [user.uid, tgtStr])
+      if (existing) {
+        const [hasSlots] = await dbq('SELECT rsid FROM roster_slot WHERE roid=$1 LIMIT 1', [existing.roid])
+        if (hasSlots) return [400, { error: 'Target week already has slots — cannot overwrite' }]
+      }
+      const res = await dbr(
+        `INSERT INTO roster (owner_uid,week_start,cloned_from,auto_clone,auto_approve)
+         VALUES ($1,$2,$3,$4,$5) ON CONFLICT (owner_uid,week_start) DO UPDATE SET cloned_from=$3 RETURNING *`,
+        [user.uid, tgtStr, r.roid, r.auto_clone, r.auto_approve])
+      const newRoid = res.rows[0].roid
+      const slots = await dbq('SELECT * FROM roster_slot WHERE roid=$1', [r.roid])
+      for (const s of slots) {
+        const d = new Date(s.slot_date); d.setDate(d.getDate()+7)
+        await dbr('INSERT INTO roster_slot (roid,uid,slot_date,start_time,end_time) VALUES ($1,$2,$3,$4,$5)',
+          [newRoid, s.uid, d.toISOString().split('T')[0], s.start_time, s.end_time])
+      }
+      return [201, await fetchRoster(newRoid)]
+    }
+
+    if (r1 && r2 === 'slots' && method === 'POST') {
+      if (!ownerUid) return [403, { error: 'Not associated with a restaurant' }]
+      const [r] = await dbq('SELECT * FROM roster WHERE roid=$1 AND owner_uid=$2', [r1, ownerUid])
+      if (!r) return [404, { error: 'Not found' }]
+      if (r.status !== 'published' && !user.is_manufacturer) return [400, { error: 'Roster not open for editing' }]
+      const { slots, finalize, uid: slotUid } = body
+      const empUid = user.is_manufacturer ? (slotUid||user.uid) : user.uid
+      await dbr('DELETE FROM roster_slot WHERE roid=$1 AND uid=$2', [r1, empUid])
+      for (const s of (slots||[])) {
+        await dbr('INSERT INTO roster_slot (roid,uid,slot_date,start_time,end_time,finalized) VALUES ($1,$2,$3,$4,$5,$6)',
+          [r1, empUid, s.slot_date, s.start_time, s.end_time, !!finalize])
+      }
+      if (!user.is_manufacturer) {
+        const [owner] = await dbq(`SELECT email FROM "user" WHERE uid=$1`, [ownerUid])
+        const wk = new Date(r.week_start).toLocaleDateString('en-GB',{day:'numeric',month:'short'})
+        if (owner?.email) {
+          await sendMail(owner.email, `${user.first_name} posted roster slots — week of ${wk}`,
+            `${user.first_name} saved their roster for week of ${wk}.`,
+            mailHtml('Roster slots posted', `${user.first_name} saved their availability for the week of ${wk}.`, `${BASE_URL}/`, 'View roster'))
+        }
+        if (finalize) {
+          const allEmps = await dbq('SELECT uid FROM "user" WHERE employer_uid=$1', [ownerUid])
+          const fin = await dbq('SELECT DISTINCT uid FROM roster_slot WHERE roid=$1 AND finalized=true', [r1])
+          if (fin.length >= allEmps.length && allEmps.length > 0 && owner?.email) {
+            await sendMail(owner.email, `All employees finalized — week of ${wk}`,
+              `All employees have posted their roster for week of ${wk}.`,
+              mailHtml('All slots finalized', `All employees have finalized their availability for the week of ${wk}.`, `${BASE_URL}/`, 'View roster'))
+          }
+        }
+      }
+      return [200, await fetchRoster(r1)]
+    }
+
+    if (r1 && r2 === 'slots' && method === 'DELETE') {
+      const { rsid } = body
+      if (rsid) await dbr('DELETE FROM roster_slot WHERE rsid=$1', [rsid])
+      return [200, { deleted: rsid }]
+    }
+
+    if (r1 && !r2 && method === 'PATCH') {
+      if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+      const { auto_clone, auto_approve } = body
+      if (auto_clone  !== undefined) await dbr('UPDATE roster SET auto_clone=$1  WHERE roid=$2 AND owner_uid=$3', [!!auto_clone,  r1, user.uid])
+      if (auto_approve !== undefined) await dbr('UPDATE roster SET auto_approve=$1 WHERE roid=$2 AND owner_uid=$3', [!!auto_approve, r1, user.uid])
+      return [200, await fetchRoster(r1)]
+    }
+  }
+
   // ── EMBED SETTINGS (authenticated, manufacturer only) ─────────────────────
   if (r0 === 'embed' && r1 === 'settings') {
     if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
