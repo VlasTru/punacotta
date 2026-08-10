@@ -4848,8 +4848,10 @@ function SkillComboWithProcesses({ allItems, onAdd, onCreateSkill }) {
 // Used both by Restaurant (full view, publish/approve) and Employees (own slots)
 // ─── ROSTER PAGE ──────────────────────────────────────────────────────────────
 function RosterPage({ user, toast, onBack }) {
-  const isManuf = user?.is_manufacturer && !user?.employer_uid;
-  // A user who is both manufacturer AND employee (employer_uid set) is treated as employee on this page
+  const isBoth   = user?.is_manufacturer && !!user?.employer_uid;
+  const [viewMode, setViewMode] = useState(isBoth ? 'manager' : user?.is_manufacturer ? 'manager' : 'employee');
+  const isManuf  = viewMode === 'manager';
+  // A user who is both manufacturer AND employee can switch between views
 
   const toMonday = d => {
     const dt = new Date(d); dt.setHours(0,0,0,0);
@@ -4895,7 +4897,7 @@ function RosterPage({ user, toast, onBack }) {
     try {
       const r = await api.getRoster(fmt(weekStart));
       setRoster(r);
-      if (!isManuf) {
+      if (viewMode === 'employee') {
         const own = (r.slots||[]).filter(s=>String(s.uid)===String(user.uid));
         setMySlots(own.map((s,i)=>({
           tempId: `s${i}`, rsid:s.rsid,
@@ -4904,14 +4906,15 @@ function RosterPage({ user, toast, onBack }) {
           end_time:s.end_time?.slice(0,5),
           finalized:s.finalized,
         })));
-        // Auto-enter edit mode if roster is published and not yet finalized
         const finalized = own.some(s=>s.finalized);
         if (r.status==='published' && !finalized) setEmpEditing(true);
         else setEmpEditing(false);
+      } else {
+        setEmpEditing(false);
       }
     } catch(e){ toast(e.message,"error"); }
     finally{ setLoading(false); }
-  }, [weekStart]);
+  }, [weekStart, viewMode]);
   useEffect(()=>{ load(); },[load]);
 
   const today = new Date(); today.setHours(0,0,0,0);
@@ -4955,7 +4958,7 @@ function RosterPage({ user, toast, onBack }) {
   };
 
   // ── Employee slot helpers ───────────────────────────────────────────────────
-  const canEdit = !isManuf && status==='published' && !isPast;
+  const canEdit = viewMode === 'employee' && status==='published' && !isPast;
   const isFinalized = mySlots.some(s=>s.finalized);
   const nextTempId = () => `t${Date.now()}${Math.random()}`;
 
@@ -5077,6 +5080,14 @@ function RosterPage({ user, toast, onBack }) {
       title={`Roster — week of ${weekStart.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}`}
       actions={
         <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+          {isBoth && (
+            <Btn size="sm" variant="secondary" onClick={()=>{
+              setViewMode(m=>m==='manager'?'employee':'manager');
+              setEmpEditing(false);
+            }}>
+              {viewMode==='manager' ? '👤 My slots' : '📋 Manage roster'}
+            </Btn>
+          )}
           {isManuf && manufButtons()}
           {!isManuf && canEdit && !isFinalized && (
             empEditing ? <>
