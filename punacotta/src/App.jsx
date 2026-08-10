@@ -4853,7 +4853,8 @@ function SkillComboWithProcesses({ allItems, onAdd, onCreateSkill }) {
 // Used both by Restaurant (full view, publish/approve) and Employees (own slots)
 // ─── ROSTER PAGE ──────────────────────────────────────────────────────────────
 function RosterPage({ user, toast, onBack }) {
-  const isManuf = user?.is_manufacturer;
+  const isManuf = user?.is_manufacturer && !user?.employer_uid;
+  // A user who is both manufacturer AND employee (employer_uid set) is treated as employee on this page
 
   const toMonday = d => {
     const dt = new Date(d); dt.setHours(0,0,0,0);
@@ -4908,7 +4909,10 @@ function RosterPage({ user, toast, onBack }) {
           end_time:s.end_time?.slice(0,5),
           finalized:s.finalized,
         })));
-        if (own.some(s=>s.finalized)) setEmpEditing(false);
+        // Auto-enter edit mode if roster is published and not yet finalized
+        const finalized = own.some(s=>s.finalized);
+        if (r.status==='published' && !finalized) setEmpEditing(true);
+        else setEmpEditing(false);
       }
     } catch(e){ toast(e.message,"error"); }
     finally{ setLoading(false); }
@@ -5300,8 +5304,8 @@ function RosterPage({ user, toast, onBack }) {
           marginTop:12,textAlign:"center",fontWeight:status==='approved'?600:400}}>
           {status==='approved'   && "✓ Roster approved — your schedule is final."}
           {status==='unpublished'&& "Roster not yet published. Check back later."}
-          {status==='published'  && !empEditing && !isFinalized && "Click \"Edit my slots\" then drag to select your available hours."}
-          {status==='published'  && empEditing  && "Click and drag on any day column to create a slot. Drag the bottom edge to extend. Click a slot to edit times or remove."}
+          {status==='published'  && empEditing  && "Drag on any day column to add a slot. Drag the bottom edge to extend it. Click a slot to edit times or remove."}
+          {status==='published'  && !empEditing && !isFinalized && "Click \"Edit my slots\" to post your availability."}
           {status==='published'  && isFinalized && !empEditing && "Slots finalized. Click \"Edit\" to make changes before approval."}
         </p>
       )}
