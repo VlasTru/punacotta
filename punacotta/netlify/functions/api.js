@@ -1317,24 +1317,30 @@ async function route(method, segments, body, headers, event) {
       const seq = Number(max) + 1
 
       let newUid
-      if (isEmp && email) {
-        // Check if a verified Tanelu user already exists with this email
-        const [existing] = await dbq(`SELECT uid FROM "user" WHERE email=$1`, [email.toLowerCase()])
+
+      // If email provided, check for any existing user with this email (verified or not)
+      if (email) {
+        const [existing] = await dbq(`SELECT uid, employer_uid FROM "user" WHERE email=$1`, [email.toLowerCase()])
         if (existing) {
-          // Link the existing user as an employee — just set employer_uid and seq
+          if (existing.employer_uid && String(existing.employer_uid) !== String(user.uid)) {
+            return [409, { error: 'This email is already linked to a different restaurant' }]
+          }
+          // Link existing user — do NOT create a new row
           await dbr(`UPDATE "user" SET employer_uid=$1, employee_seq=$2, is_employee=true WHERE uid=$3`,
             [user.uid, seq, existing.uid])
           newUid = existing.uid
         }
       }
+
       if (!newUid) {
-        // Create a new user record (non-login employee or unknown email)
+        // No existing user found — create a brand new employee-only record
         const res = await dbr(
           `INSERT INTO "user" (first_name,last_name,email,phone,street_address,city,zip,is_employee,employer_uid,employee_seq,password_hash,email_verified)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'$2b$10$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',false) RETURNING uid`,
           [first_name, last_name, email||null, phone||null, street_address||null, city||null, zip||null, !!isEmp, user.uid, seq])
         newUid = res.rows[0].uid
       }
+
       for (const rid  of (role_ids  ||[])) await dbr('INSERT INTO employee_role  (uid,rid)  VALUES ($1,$2) ON CONFLICT DO NOTHING', [newUid, rid])
       for (const skid of (skill_ids ||[])) await dbr('INSERT INTO employee_skill (uid,skid) VALUES ($1,$2) ON CONFLICT DO NOTHING', [newUid, skid])
       return [201, await fetchEmployee(newUid)]
@@ -1364,10 +1370,15 @@ async function route(method, segments, body, headers, event) {
       const { ids } = body
       if (!Array.isArray(ids)||!ids.length) return [400, { error: 'ids required' }]
       for (const uid of ids) {
-        const [emp] = await dbq('SELECT uid FROM "user" WHERE uid=$1 AND employer_uid=$2', [uid, user.uid])
-        if (emp) {
-          await dbr('DELETE FROM employee_role  WHERE uid=$1', [uid])
-          await dbr('DELETE FROM employee_skill WHERE uid=$1', [uid])
+        const [emp] = await dbq('SELECT uid, email_verified, password_hash FROM "user" WHERE uid=$1 AND employer_uid=$2', [uid, user.uid])
+        if (!emp) continue
+        await dbr('DELETE FROM employee_role  WHERE uid=$1', [uid])
+        await dbr('DELETE FROM employee_skill WHERE uid=$1', [uid])
+        // If this is a real Tanelu account (email verified), just unlink — don't delete the row
+        if (emp.email_verified || (emp.password_hash && !emp.password_hash.includes('xxxxxxxxxxx'))) {
+          await dbr('UPDATE "user" SET employer_uid=NULL, employee_seq=NULL, is_employee=false WHERE uid=$1', [uid])
+        } else {
+          // Employee-only record — safe to delete entirely
           await dbr('DELETE FROM "user" WHERE uid=$1', [uid])
         }
       }

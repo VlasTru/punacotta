@@ -4055,7 +4055,6 @@ function StaffPage({ user, toast }) {
   const [formSkills, setFormSkills] = useState([]);
   const [linkedUser, setLinkedUser] = useState(null);
   const [lookingUp,  setLookingUp]  = useState(false);
-  const [dupeUser,   setDupeUser]   = useState(null); // existing user found without is_employee checked
 
   // Skills that come from selected roles (excluded from manual Skills combo)
   const roleSkillIds = formRoles.flatMap(r => {
@@ -4065,57 +4064,66 @@ function StaffPage({ user, toast }) {
   // Auto-merge role skills into formSkills when roles change
   const handleRolesChange = newRoles => {
     setFormRoles(newRoles);
-    // Add skills from newly added roles (avoid duplicates)
     const addedRids = newRoles.map(r=>r.rid);
     const removedRids = formRoles.filter(r=>!addedRids.includes(r.rid)).map(r=>r.rid);
-    // Skills to add from new roles
     const toAdd = newRoles.flatMap(r => {
       const fullRole = roles.find(x=>x.rid===r.rid);
       return (fullRole?.skills||[]).filter(s=>!formSkills.find(x=>x.skid===s.skid));
     });
-    // Skills to remove (belonged to removed roles, not in other selected roles)
     const remainingRoleSkillIds = newRoles.flatMap(r=>(roles.find(x=>x.rid===r.rid)?.skills||[]).map(s=>s.skid));
     const removedRoleSkillIds = removedRids.flatMap(rid=>(roles.find(x=>x.rid===rid)?.skills||[]).map(s=>s.skid))
       .filter(skid=>!remainingRoleSkillIds.includes(skid));
     setFormSkills(p => [...p.filter(s=>!removedRoleSkillIds.includes(s.skid)), ...toAdd]);
   };
 
-  const handleIsEmployeeToggle = async checked => {
-    if (!checked) { setLinkedUser(null); setForm(p=>({...p,is_employee:false})); return; }
-    setForm(p=>({...p,is_employee:true}));
-    const email = form.email.trim();
-    if (!email) return;
+  // Fetch and link an existing Tanelu user by email
+  const linkByEmail = async (email) => {
+    if (!email?.trim()) return null;
     setLookingUp(true);
     try {
-      const found = await api.lookupUserByEmail(email);
+      const found = await api.lookupUserByEmail(email.trim());
       if (found) {
         setLinkedUser(found);
-        setForm(p=>({...p,first_name:found.first_name,last_name:found.last_name,email:found.email,phone:found.phone||"",street_address:found.street_address||"",city:found.city||"",zip:found.zip||"",is_employee:true}));
-        toast(`Linked to existing account: ${found.first_name} ${found.last_name}`);
-      } else { toast("No Tanelu account found with this email — a new record will be created.","info"); }
-    } catch(e){ toast(e.message,"error"); } finally{ setLookingUp(false); }
+        setForm(p=>({...p,
+          first_name:   found.first_name,
+          last_name:    found.last_name,
+          email:        found.email,
+          phone:        found.phone||"",
+          street_address: found.street_address||"",
+          city:         found.city||"",
+          zip:          found.zip||"",
+          is_employee:  true,
+        }));
+        return found;
+      }
+      return null;
+    } catch(e){ return null; }
+    finally{ setLookingUp(false); }
+  };
+
+  const handleIsEmployeeToggle = async checked => {
+    if (!checked) {
+      // Uncheck — clear link, re-enable fields
+      setLinkedUser(null);
+      setForm(p=>({...p, is_employee:false}));
+      return;
+    }
+    // Check — attempt lookup immediately if email is filled
+    setForm(p=>({...p, is_employee:true}));
+    const found = await linkByEmail(form.email);
+    if (!found && form.email.trim()) {
+      toast("No existing account found for this email — a new employee record will be created.", "info");
+    }
   };
 
   const handleEmailBlur = async () => {
-    if (!form.email.trim() || linkedUser) return;
-    // Always look up — warn even if is_employee not checked
-    try {
-      const found = await api.lookupUserByEmail(form.email.trim());
-      if (found && !form.is_employee) {
-        setDupeUser(found); // show warning banner
-      } else if (found && form.is_employee) {
-        setLinkedUser(found);
-        setDupeUser(null);
-        setForm(p=>({...p,first_name:found.first_name,last_name:found.last_name,phone:found.phone||"",street_address:found.street_address||"",city:found.city||"",zip:found.zip||""}));
-        toast(`Linked to existing account: ${found.first_name} ${found.last_name}`);
-      } else {
-        setDupeUser(null);
-      }
-    } catch(e){ /* ignore lookup errors */ }
+    // On email blur: if checkbox is already checked and not yet linked, look up
+    if (!form.is_employee || !form.email.trim() || linkedUser) return;
+    await linkByEmail(form.email);
   };
 
   const openEdit = emp => {
-    setEditEmp(emp); setLinkedUser(null); setDupeUser(null);
+    setEditEmp(emp); setLinkedUser(null);
     setForm({first_name:emp.first_name,last_name:emp.last_name,email:emp.email||"",phone:emp.phone||"",street_address:emp.street_address||"",city:emp.city||"",zip:emp.zip||"",is_employee:emp.is_employee||false});
     setFormRoles(roles.filter(r=>emp.roles?.includes(r.name)));
     setFormSkills(skills.filter(s=>emp.skills?.includes(s.name)));
@@ -4123,7 +4131,7 @@ function StaffPage({ user, toast }) {
   };
 
   const openNew = () => {
-    setEditEmp(null); setLinkedUser(null); setDupeUser(null); setForm(emptyForm); setFormRoles([]); setFormSkills([]); setShowNew(true);
+    setEditEmp(null); setLinkedUser(null); setForm(emptyForm); setFormRoles([]); setFormSkills([]); setShowNew(true);
   };
 
   const saveEmployee = async () => {
@@ -4166,22 +4174,9 @@ function StaffPage({ user, toast }) {
         <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
           <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>{editEmp?`${editEmp.first_name} ${editEmp.last_name}`:"New employee"}</h3>
           {linkedUser&&(
-            <div style={{ background:"#f0fdf4", border:"1px solid #86efac", borderRadius:8, padding:"10px 14px", marginBottom:14, fontSize:13, color:"#166534" }}>
-              ✓ Linked to existing Tanelu account — personal fields are read-only.
-            </div>
-          )}
-          {dupeUser&&!linkedUser&&(
-            <div style={{ background:"#fef3c7", border:"1px solid #fcd34d", borderRadius:8, padding:"12px 14px", marginBottom:14, fontSize:13, color:"#92400e" }}>
-              <p style={{fontWeight:600,marginBottom:6}}>A user with this email already exists ({dupeUser.first_name} {dupeUser.last_name}).</p>
-              <p style={{marginBottom:10}}>Would you like to update the existing account or edit the email?</p>
-              <div style={{display:"flex",gap:8}}>
-                <Btn size="sm" onClick={()=>{
-                  setLinkedUser(dupeUser); setDupeUser(null);
-                  setForm(p=>({...p,first_name:dupeUser.first_name,last_name:dupeUser.last_name,phone:dupeUser.phone||"",street_address:dupeUser.street_address||"",city:dupeUser.city||"",zip:dupeUser.zip||"",is_employee:true}));
-                  toast(`Linked to ${dupeUser.first_name} ${dupeUser.last_name}`);
-                }}>Update</Btn>
-                <Btn variant="ghost" size="sm" onClick={()=>{ setDupeUser(null); setForm(p=>({...p,email:""})); setTimeout(()=>document.querySelector('input[type="email"]')?.focus(),50); }}>Edit</Btn>
-              </div>
+            <div style={{ background:"#f0fdf4", border:"1px solid #86efac", borderRadius:8, padding:"10px 14px", marginBottom:14, fontSize:13, color:"#166534", display:"flex", alignItems:"center", gap:8 }}>
+              <span>✓</span>
+              <span>Linked to <strong>{linkedUser.first_name} {linkedUser.last_name}</strong> — personal fields are read-only. Uncheck "Has Tanelu account" to enter a different person.</span>
             </div>
           )}
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
