@@ -1570,7 +1570,11 @@ async function route(method, segments, body, headers, event) {
       const [r] = await dbq('SELECT * FROM roster WHERE roid=$1', [roid])
       if (!r) return null
       const slots = await dbq(
-        `SELECT rs.*, u.first_name, u.last_name,
+        `SELECT rs.rsid, rs.roid, rs.uid, rs.finalized,
+                TO_CHAR(rs.slot_date, 'YYYY-MM-DD') AS slot_date,
+                TO_CHAR(rs.start_time, 'HH24:MI') AS start_time,
+                TO_CHAR(rs.end_time,   'HH24:MI') AS end_time,
+                u.first_name, u.last_name,
                 (SELECT r2.name FROM employee_role er JOIN role r2 ON r2.rid=er.rid WHERE er.uid=rs.uid ORDER BY r2.name LIMIT 1) AS role_name
          FROM roster_slot rs JOIN "user" u ON u.uid=rs.uid
          WHERE rs.roid=$1 ORDER BY rs.slot_date, rs.start_time`, [roid])

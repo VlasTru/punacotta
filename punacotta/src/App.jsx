@@ -4901,10 +4901,10 @@ function RosterPage({ user, toast, onBack }) {
         const own = (r.slots||[]).filter(s=>String(s.uid)===String(user.uid));
         setMySlots(own.map((s,i)=>({
           tempId: `s${i}`, rsid:s.rsid,
-          slot_date:s.slot_date,
-          start_time:s.start_time?.slice(0,5),
-          end_time:s.end_time?.slice(0,5),
-          finalized:s.finalized,
+          slot_date: String(s.slot_date).slice(0,10),
+          start_time: s.start_time?.slice(0,5),
+          end_time:   s.end_time?.slice(0,5),
+          finalized:  s.finalized,
         })));
         const finalized = own.some(s=>s.finalized);
         if (r.status==='published' && !finalized) setEmpEditing(true);
@@ -4991,7 +4991,13 @@ function RosterPage({ user, toast, onBack }) {
       setEmpEditing(false);
       toast("Slots saved");
       const own = (r.slots||[]).filter(s=>String(s.uid)===String(user.uid));
-      setMySlots(own.map((s,i)=>({tempId:`s${i}`,rsid:s.rsid,slot_date:s.slot_date,start_time:s.start_time?.slice(0,5),end_time:s.end_time?.slice(0,5),finalized:s.finalized})));
+      setMySlots(own.map((s,i)=>({
+        tempId:`s${i}`, rsid:s.rsid,
+        slot_date: String(s.slot_date).slice(0,10),
+        start_time: s.start_time?.slice(0,5),
+        end_time:   s.end_time?.slice(0,5),
+        finalized:  s.finalized,
+      })));
     } catch(e){ toast(e.message,"error"); }
     finally{ setSaving(false); }
   };
@@ -5058,7 +5064,10 @@ function RosterPage({ user, toast, onBack }) {
   });
 
   const slotsByDay = {};
-  (roster?.slots||[]).forEach(s=>{ (slotsByDay[s.slot_date]=slotsByDay[s.slot_date]||[]).push(s); });
+  (roster?.slots||[]).forEach(s=>{
+    const d = String(s.slot_date).slice(0,10);
+    (slotsByDay[d]=slotsByDay[d]||[]).push({...s, slot_date:d});
+  });
 
   const empColors = {};
   (roster?.employees||[]).forEach((e,i)=>{ empColors[e.uid]=ROLE_PALETTE[i%ROLE_PALETTE.length]; });
