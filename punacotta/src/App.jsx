@@ -4979,18 +4979,17 @@ function RosterPage({ user, toast, onBack }) {
 
   const removeSlot = tempId => { setMySlots(p=>p.filter(s=>s.tempId!==tempId)); setTooltip(null); };
 
-  const saveSlots = async (finalize=false) => {
+  const saveSlots = async () => {
     if (!roster?.roid) { toast("Roster not published yet","error"); return; }
     setSaving(true);
     try {
       const r = await api.saveRosterSlots(roster.roid, {
         slots: mySlots.map(s=>({slot_date:s.slot_date,start_time:s.start_time,end_time:s.end_time})),
-        finalize,
+        finalize: true,
       });
       setRoster(r);
-      toast(finalize?"Roster finalized!":"Slots saved");
-      if (finalize) setEmpEditing(false);
-      // Re-sync mySlots with server response
+      setEmpEditing(false);
+      toast("Slots saved");
       const own = (r.slots||[]).filter(s=>String(s.uid)===String(user.uid));
       setMySlots(own.map((s,i)=>({tempId:`s${i}`,rsid:s.rsid,slot_date:s.slot_date,start_time:s.start_time?.slice(0,5),end_time:s.end_time?.slice(0,5),finalized:s.finalized})));
     } catch(e){ toast(e.message,"error"); }
@@ -5089,15 +5088,16 @@ function RosterPage({ user, toast, onBack }) {
             </Btn>
           )}
           {isManuf && manufButtons()}
-          {!isManuf && canEdit && !isFinalized && (
-            empEditing ? <>
-              <Btn size="sm" loading={saving} onClick={()=>saveSlots(false)}>Save</Btn>
-              <Btn size="sm" loading={saving} onClick={()=>saveSlots(true)}>Finalize</Btn>
-              <Btn size="sm" variant="ghost" onClick={()=>{ setEmpEditing(false); load(); }}>Cancel</Btn>
-            </> : <Btn size="sm" onClick={()=>setEmpEditing(true)}>Edit my slots</Btn>
+          {!isManuf && canEdit && (
+            empEditing
+              ? <>
+                  <Btn size="sm" loading={saving} onClick={saveSlots}>Save</Btn>
+                  <Btn size="sm" variant="ghost" onClick={()=>{ setEmpEditing(false); load(); }}>Cancel</Btn>
+                </>
+              : <Btn size="sm" onClick={()=>setEmpEditing(true)}>
+                  {isFinalized ? "Edit" : "Edit my slots"}
+                </Btn>
           )}
-          {!isManuf && isFinalized && !loading &&
-            <Btn size="sm" variant="secondary" onClick={()=>{ setMySlots(p=>p.map(s=>({...s,finalized:false}))); setEmpEditing(true); }}>Edit</Btn>}
           {onBack && <Btn size="sm" variant="ghost" onClick={onBack}>← Staff</Btn>}
         </div>
       }>
@@ -5233,23 +5233,29 @@ function RosterPage({ user, toast, onBack }) {
                     );
                   })}
 
-                  {/* My own slots (editable) */}
-                  {!isManuf && myDaySlots.map(s=>{
+                  {/* My own slots — always visible in employee view, interactive when editing */}
+                  {viewMode==='employee' && myDaySlots.map(s=>{
                     const t1 = timeToMins(s.start_time);
                     const t2 = timeToMins(s.end_time);
                     const top = minsToPx(t1-START_H*60);
                     const ht  = minsToPx(t2-t1);
                     const isOpen = tooltip?.tempId===s.tempId;
+                    // Visual state: editing=full border, finalized=solid, approved=full opacity
+                    const borderStyle = empEditing ? `2px solid ${myColor}` : `1.5px solid ${myColor}`;
+                    const bgOpacity   = s.finalized ? (status==='approved'?'55':'38') : '35';
                     return (
                       <div key={s.tempId} data-tempid={s.tempId}
                         style={{position:"absolute",left:2,right:2,top,height:Math.max(ht,4),
-                          background:`${myColor}35`,border:`2px solid ${myColor}`,borderRadius:5,
+                          background:`${myColor}${bgOpacity}`,
+                          border:borderStyle,
+                          borderRadius:5,
+                          opacity: s.finalized && status!=='approved' ? 0.75 : 1,
                           cursor:isEditable?"pointer":"default",zIndex:2}}>
-                        {/* Slot label */}
                         <div style={{fontSize:10,color:myColor,fontWeight:600,padding:"2px 4px",lineHeight:1.3}}>
                           {s.start_time}–{s.end_time}
+                          {s.finalized && !isEditable && <span style={{marginLeft:4,fontSize:9,opacity:0.7}}>{status==='approved'?'✓':'⏳'}</span>}
                         </div>
-                        {/* Drag handle to extend */}
+                        {/* Resize handle — only in edit mode */}
                         {isEditable && (
                           <div
                             style={{position:"absolute",bottom:0,left:0,right:0,height:8,cursor:"s-resize",
@@ -5259,7 +5265,7 @@ function RosterPage({ user, toast, onBack }) {
                               setDrag({mode:'extend',dateStr,startM:t1,currentM:t2,tempId:s.tempId});
                             }}/>
                         )}
-                        {/* Click to open tooltip */}
+                        {/* Click to open tooltip — only in edit mode */}
                         {isEditable && (
                           <div style={{position:"absolute",inset:0,bottom:8}}
                             onClick={e=>{ e.stopPropagation(); setTooltip(isOpen?null:{tempId:s.tempId}); }}/>
@@ -5310,9 +5316,9 @@ function RosterPage({ user, toast, onBack }) {
           marginTop:12,textAlign:"center",fontWeight:status==='approved'?600:400}}>
           {status==='approved'   && "✓ Roster approved — your schedule is final."}
           {status==='unpublished'&& "Roster not yet published. Check back later."}
-          {status==='published'  && empEditing  && "Drag on any day column to add a slot. Drag the bottom edge to extend it. Click a slot to edit times or remove."}
-          {status==='published'  && !empEditing && !isFinalized && "Click \"Edit my slots\" to post your availability."}
-          {status==='published'  && isFinalized && !empEditing && "Slots finalized. Click \"Edit\" to make changes before approval."}
+          {status==='published'  && empEditing  && "Drag on any day to add a slot. Drag the bottom edge to extend. Click a slot to edit or remove. Click Save when done."}
+          {status==='published'  && !empEditing && !isFinalized && "Click \"Edit my slots\" then drag to select your available hours, then Save."}
+          {status==='published'  && !empEditing && isFinalized  && "Slots saved. Click \"Edit\" to make changes before the roster is approved."}
         </p>
       )}
     </Page>
