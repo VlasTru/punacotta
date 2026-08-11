@@ -62,6 +62,14 @@ function getUser(headers) {
     return jwt.verify(h.slice(7), SECRET)
   } catch { return null }
 }
+// After getUser, call enrichUser(decoded, db) to add employer_uid etc.
+async function enrichUser(user) {
+  if (!user) return null
+  const [row] = await dbq(
+    'SELECT employer_uid, is_employee, is_manufacturer FROM "user" WHERE uid=$1', [user.uid])
+  if (!row) return user
+  return { ...user, employer_uid: row.employer_uid, is_employee: row.is_employee, is_manufacturer: row.is_manufacturer }
+}
 function safe(u) { const { password_hash, ...r } = u; return r }
 
 // ─── MAIL ─────────────────────────────────────────────────────────────────────
@@ -230,7 +238,7 @@ function parseMultipart(event) {
 const TRANSITIONS = { New:'Accepted', Accepted:'Preparing', Preparing:'Done', Done:'Dispatched', Dispatched:'Delivered' }
 
 async function route(method, segments, body, headers, event) {
-  const user = getUser(headers)
+  const user = await enrichUser(getUser(headers))
   const [r0, r1, r2] = segments
 
   // ── AUTH ──────────────────────────────────────────────────────────────────
