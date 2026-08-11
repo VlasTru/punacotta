@@ -319,7 +319,7 @@ async function route(method, segments, body, headers, event) {
       const [row] = await dbq(
         `SELECT * FROM auth_token WHERE token=$1 AND purpose='reset' AND used=false AND expires_at>now()`, [token])
       if (!row) return [400, { error: 'Invalid or expired link' }]
-      await dbr('UPDATE "user" SET password_hash=$1 WHERE uid=$2', [await bcrypt.hash(password.trim(), 10), row.uid])
+      await dbr('UPDATE "user" SET password_hash=$1, email_verified=true WHERE uid=$2', [await bcrypt.hash(password.trim(), 10), row.uid])
       await dbr('UPDATE auth_token SET used=true WHERE tid=$1', [row.tid])
       return [200, { message: 'Password updated. You can now log in.' }]
     }
@@ -1309,7 +1309,7 @@ async function route(method, segments, body, headers, event) {
          WHERE at.token=$1 AND at.purpose='invite' AND at.used=false AND at.expires_at>NOW()`, [r1])
       if (!tok) return [400, { error: 'Invite link is invalid or has expired.' }]
 
-      const empUid = tok.employer_uid  // the user row created when restaurant added this employee
+      const empUid = tok.uid  // the employee's own user row (auth_token.uid = the employee)
 
       if (tok.email_verified) {
         // Already a full account — just mark token used and return a login token

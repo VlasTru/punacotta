@@ -5007,7 +5007,6 @@ function RosterPage({ user, toast, onBack }) {
   const minsToPx = m => m * PX_PER_MIN;
   const pxToMins = px => px / PX_PER_MIN;
   const snapMins = m => Math.round(m/SNAP)*SNAP;
-  const startMins = () => START_H*60;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -5079,19 +5078,41 @@ function RosterPage({ user, toast, onBack }) {
   const isFinalized = mySlots.some(s=>s.finalized);
   const nextTempId = () => `t${Date.now()}${Math.random()}`;
 
-  const overlaps = (dateStr, startM, endM, excludeId=null) =>
-    mySlots.some(s=>s.slot_date===dateStr && s.tempId!==excludeId &&
-      timeToMins(s.start_time)<endM && timeToMins(s.end_time)>startM);
+  const mergeSlots = (slots) => {
+    // Sort by start, then merge overlapping/adjacent slots
+    const sorted = [...slots].sort((a,b) => timeToMins(a.start_time) - timeToMins(b.start_time));
+    const merged = [];
+    for (const s of sorted) {
+      const last = merged[merged.length-1];
+      if (last && timeToMins(s.start_time) <= timeToMins(last.end_time)) {
+        // Overlaps or adjacent — extend end if needed
+        if (timeToMins(s.end_time) > timeToMins(last.end_time)) {
+          last.end_time = s.end_time;
+        }
+      } else {
+        merged.push({ ...s });
+      }
+    }
+    return merged.map((s,i) => ({ ...s, tempId: `m${i}${Date.now()}` }));
+  };
 
   const addOrUpdateSlot = (dateStr, startM, endM, tempId=null) => {
-    const start_time = minsToHhmm(Math.max(startMins(), Math.min(startM, END_H*60-SNAP)));
-    const end_time   = minsToHhmm(Math.min(END_H*60, Math.max(endM, startMins()+SNAP)));
-    if (overlaps(dateStr, timeToMins(start_time), timeToMins(end_time), tempId)) return;
-    if (tempId) {
-      setMySlots(p=>p.map(s=>s.tempId===tempId?{...s,start_time,end_time}:s));
-    } else {
-      setMySlots(p=>[...p,{tempId:nextTempId(),slot_date:dateStr,start_time,end_time,finalized:false}]);
-    }
+    const start_time = minsToHhmm(Math.max(START_H*60, Math.min(startM, END_H*60-SNAP)));
+    const end_time   = minsToHhmm(Math.min(END_H*60,  Math.max(endM,   START_H*60+SNAP)));
+    setMySlots(prev => {
+      let updated;
+      if (tempId) {
+        // Extending an existing slot
+        updated = prev.map(s => s.tempId===tempId ? {...s, start_time, end_time} : s);
+      } else {
+        // Adding a new slot
+        updated = [...prev, { tempId: nextTempId(), slot_date:dateStr, start_time, end_time, finalized:false }];
+      }
+      // Separate this day's slots from other days, merge, then recombine
+      const otherDays = updated.filter(s => s.slot_date !== dateStr);
+      const thisDay   = updated.filter(s => s.slot_date === dateStr);
+      return [...otherDays, ...mergeSlots(thisDay)];
+    });
   };
 
   const removeSlot = tempId => { setMySlots(p=>p.filter(s=>s.tempId!==tempId)); setTooltip(null); };
