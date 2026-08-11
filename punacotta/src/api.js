@@ -59,7 +59,10 @@ export const api = {
   unlinkSupplierProduct: (sid, psid) => req('DELETE', `/suppliers/${sid}/products/${psid}`),
 
   lookupUserByEmail: (email) => req('GET', `/staff/lookup?email=${encodeURIComponent(email)}`),
-  // Roster
+  // Invite
+  getInvite:          (token)      => req('GET',  `/invite/${token}`),
+  completeInvite:     (token,data) => req('POST', `/invite/${token}`, data),
+  resendInvite:       (uid)        => req('POST', `/staff/${uid}/invite`),
   getRoster:          (week)       => req('GET',  `/roster?week=${week}`),
   initRoster:         (data)       => req('POST', '/roster', data),
   patchRoster:        (roid,data)  => req('PATCH',`/roster/${roid}`, data),

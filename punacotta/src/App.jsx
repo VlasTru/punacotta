@@ -3727,6 +3727,111 @@ function SuppliersPage({
   );
 }
 
+// ─── INVITE PAGE ─────────────────────────────────────────────────────────────
+function InvitePage({ token, setPage, toast, onLogin }) {
+  const [info,    setInfo]    = useState(null);   // {email, employer_name, already_registered}
+  const [status,  setStatus]  = useState("loading"); // loading | ready | done | error
+  const [errMsg,  setErrMsg]  = useState("");
+  const [form,    setForm]    = useState({ first_name:"", last_name:"", password:"" });
+  const [saving,  setSaving]  = useState(false);
+
+  useEffect(()=>{
+    api.getInvite(token)
+      .then(data=>{ setInfo(data); setStatus("ready"); })
+      .catch(e=>{ setErrMsg(e.message); setStatus("error"); });
+  },[token]);
+
+  const submit = async () => {
+    if (!info.already_registered) {
+      if (!form.first_name.trim()||!form.last_name.trim()) { toast("Please enter your name","error"); return; }
+      if (form.password.trim().length<6) { toast("Password must be at least 6 characters","error"); return; }
+    }
+    setSaving(true);
+    try {
+      const res = await api.completeInvite(token, {
+        first_name: form.first_name.trim(),
+        last_name:  form.last_name.trim(),
+        password:   form.password.trim(),
+      });
+      localStorage.setItem("token", res.token);
+      setStatus("done");
+      setTimeout(()=>{ window.location.hash=""; onLogin(res.user); }, 1200);
+    } catch(e){ toast(e.message,"error"); }
+    finally{ setSaving(false); }
+  };
+
+  if (status==="loading") return (
+    <AuthLayout><div style={{textAlign:"center",padding:32}}><Spinner/></div></AuthLayout>
+  );
+
+  if (status==="error") return (
+    <AuthLayout>
+      <div style={{textAlign:"center",padding:"24px 0"}}>
+        <div style={{fontSize:40,marginBottom:16}}>⚠️</div>
+        <h2 style={{fontFamily:G.font,fontSize:22,marginBottom:12}}>Invalid or expired invite</h2>
+        <p style={{color:G.muted,marginBottom:24,lineHeight:1.6}}>{errMsg}</p>
+        <p style={{color:G.muted,fontSize:13}}>Please ask your restaurant manager to resend the invite.</p>
+        <Btn variant="ghost" onClick={()=>{ window.location.hash=""; setPage("login"); }} style={{marginTop:16}}>Go to login</Btn>
+      </div>
+    </AuthLayout>
+  );
+
+  if (status==="done") return (
+    <AuthLayout>
+      <div style={{textAlign:"center",padding:"24px 0"}}>
+        <div style={{fontSize:40,marginBottom:16}}>🎉</div>
+        <h2 style={{fontFamily:G.font,fontSize:22,marginBottom:8}}>You're all set!</h2>
+        <p style={{color:G.muted}}>Logging you in…</p>
+      </div>
+    </AuthLayout>
+  );
+
+  return (
+    <AuthLayout>
+      <div style={{marginBottom:24}}>
+        <h2 style={{fontFamily:G.font,fontSize:22,marginBottom:8}}>
+          {info.already_registered ? "Accept invitation" : "Set up your account"}
+        </h2>
+        <p style={{color:G.muted,fontSize:14,lineHeight:1.6}}>
+          You've been invited to join <strong>{info.employer_name}</strong> on Tanelu.
+        </p>
+      </div>
+
+      {/* Email — always locked */}
+      <div style={{marginBottom:16}}>
+        <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Email</label>
+        <input value={info.email} disabled
+          style={{width:"100%",padding:"10px 14px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,background:G.sand,color:G.muted}}/>
+      </div>
+
+      {info.already_registered ? (
+        /* Already has an account — just one-click accept */
+        <div>
+          <div style={{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:8,padding:"12px 14px",marginBottom:20,fontSize:13,color:"#166534"}}>
+            ✓ You already have a Tanelu account with this email. Click below to link it to {info.employer_name}.
+          </div>
+          <Btn size="lg" onClick={submit} loading={saving} style={{width:"100%"}}>Accept invitation</Btn>
+        </div>
+      ) : (
+        /* New account — enter name + password */
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <Input label="First name" value={form.first_name} onChange={v=>setForm(p=>({...p,first_name:v}))} required/>
+            <Input label="Last name"  value={form.last_name}  onChange={v=>setForm(p=>({...p,last_name:v}))}  required/>
+          </div>
+          <Input label="Password" type="password" value={form.password} onChange={v=>setForm(p=>({...p,password:v}))} placeholder="At least 6 characters" required/>
+          <Btn size="lg" onClick={submit} loading={saving}>Create account & join</Btn>
+        </div>
+      )}
+
+      <button onClick={()=>{ window.location.hash=""; setPage("login"); }}
+        style={{background:"none",border:"none",color:G.muted,cursor:"pointer",fontSize:13,marginTop:16,display:"block",textAlign:"center",width:"100%"}}>
+        Already have a different account? Log in
+      </button>
+    </AuthLayout>
+  );
+}
+
 // ─── RESET PASSWORD PAGE ──────────────────────────────────────────────────────
 function ResetPage({ token, setPage, toast, onLogin }) {
   const [pw, setPw]           = useState("");
@@ -4233,7 +4338,7 @@ function StaffPage({ user, toast }) {
             <thead>
               <tr style={{ background:G.sand, borderBottom:`1px solid ${G.border}` }}>
                 <th style={{ width:40, padding:"10px 14px" }}></th>
-                {["#","First name","Last name","Role(s)","Skill(s)"].map(h=>(
+                {["#","First name","Last name","Role(s)","Skill(s)",""].map(h=>(
                   <th key={h} style={{ padding:"10px 14px", textAlign:"left", fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:G.muted }}>{h}</th>
                 ))}
               </tr>
@@ -4258,6 +4363,18 @@ function StaffPage({ user, toast }) {
                     {(e.skills||[]).map(s=>{const c=skillColor(s);return(
                       <span key={s} onClick={()=>setEditSkill(skills.find(x=>x.name===s))} style={{display:"inline-flex",alignItems:"center",gap:4,background:`${c}18`,border:`1px solid ${c}40`,borderRadius:20,padding:"2px 10px",fontSize:12,fontWeight:500,color:c,marginRight:4,marginBottom:2,cursor:"pointer"}}>{s}</span>
                     );})}
+                  </td>
+                  <td style={{padding:"10px 14px",whiteSpace:"nowrap"}}>
+                    {e.email && !e.email_verified && (
+                      <button onClick={async()=>{
+                        try{ await api.resendInvite(e.uid); toast(`Invite resent to ${e.email}`); }
+                        catch(err){ toast(err.message,"error"); }
+                      }} style={{fontSize:11,padding:"3px 8px",borderRadius:5,border:`1px solid ${G.caramel}`,background:"none",color:G.caramel,cursor:"pointer",fontFamily:G.mono}}>
+                        Resend invite
+                      </button>
+                    )}
+                    {e.email_verified && <span style={{fontSize:11,color:G.green}}>✓ Active</span>}
+                    {!e.email && <span style={{fontSize:11,color:G.muted}}>No email</span>}
                   </td>
                 </tr>
               ))}
@@ -5517,6 +5634,7 @@ export default function App() {
     const h = window.location.hash;
     if (h.startsWith("#reset/"))  return { type:"reset",  token:h.slice(7) };
     if (h.startsWith("#verify/")) return { type:"verify", token:h.slice(8) };
+    if (h.startsWith("#invite/")) return { type:"invite", token:h.slice(8) };
     return null;
   });
 
@@ -5530,6 +5648,13 @@ export default function App() {
   const onLogin=u=>{setUser(u);setHashPage(null);setPage(u.is_manufacturer?"orders-manuf":"restaurants");};
 
   // If a hash token is present, show the appropriate page regardless of auth state
+  if (hashPage?.type === "invite") return (
+    <LangContext.Provider value={lang}>
+      <style>{css}</style>
+      <Toast toasts={toasts} remove={remove} />
+      <InvitePage token={hashPage.token} setPage={p=>{setHashPage(null);setPage(p);}} toast={toast} onLogin={onLogin}/>
+    </LangContext.Provider>
+  );
   if (hashPage?.type === "reset") return (
     <LangContext.Provider value={lang}>
       <style>{css}</style>

@@ -1278,6 +1278,63 @@ async function route(method, segments, body, headers, event) {
   }
 
   // ── STAFF ─────────────────────────────────────────────────────────────────
+  // ── INVITE ─────────────────────────────────────────────────────────────────
+  // GET  /invite/:token  — validate token, return {email, employer_name, already_registered}
+  // POST /invite/:token  — complete registration (set password + names), auto-link
+  if (r0 === 'invite') {
+    const crypto = await import('crypto')
+
+    if (r1 && method === 'GET') {
+      const [tok] = await dbq(
+        `SELECT at.*, u.email, u.employer_uid AS emp_uid,
+                (SELECT business_name FROM "user" WHERE uid=u.employer_uid) AS employer_name
+         FROM auth_token at JOIN "user" u ON u.uid=at.uid
+         WHERE at.token=$1 AND at.purpose='invite' AND at.used=false AND at.expires_at>NOW()`, [r1])
+      if (!tok) return [404, { error: 'Invite link is invalid or has expired.' }]
+      // Check if a registered (email-verified) account already exists with this email
+      const [existing] = await dbq(`SELECT uid, email_verified FROM "user" WHERE email=$1`, [tok.email])
+      return [200, {
+        email: tok.email,
+        employer_name: tok.employer_name || 'your restaurant',
+        already_registered: !!(existing?.email_verified),
+        uid: tok.uid,
+      }]
+    }
+
+    if (r1 && method === 'POST') {
+      const { first_name, last_name, password } = body
+      const [tok] = await dbq(
+        `SELECT at.*, u.uid, u.email, u.employer_uid, u.email_verified
+         FROM auth_token at JOIN "user" u ON u.uid=at.uid
+         WHERE at.token=$1 AND at.purpose='invite' AND at.used=false AND at.expires_at>NOW()`, [r1])
+      if (!tok) return [400, { error: 'Invite link is invalid or has expired.' }]
+
+      const empUid = tok.employer_uid  // the user row created when restaurant added this employee
+
+      if (tok.email_verified) {
+        // Already a full account — just mark token used and return a login token
+        await dbr('UPDATE auth_token SET used=true WHERE tid=$1', [tok.tid])
+        const jwt = signToken({ uid:empUid, email:tok.email, is_manufacturer:false })
+        const [u] = await dbq('SELECT * FROM "user" WHERE uid=$1', [empUid])
+        return [200, { token:jwt, user:safe(u) }]
+      }
+
+      if (!first_name?.trim() || !last_name?.trim()) return [400, { error: 'Name required' }]
+      if (!password || password.trim().length < 6) return [400, { error: 'Password must be at least 6 characters' }]
+
+      const hash = await bcrypt.hash(password.trim(), 10)
+      await dbr(
+        `UPDATE "user" SET first_name=$1, last_name=$2, password_hash=$3,
+         email_verified=true, is_employee=true WHERE uid=$4`,
+        [first_name.trim(), last_name.trim(), hash, empUid])
+      await dbr('UPDATE auth_token SET used=true WHERE tid=$1', [tok.tid])
+
+      const jwt = signToken({ uid:empUid, email:tok.email, is_manufacturer:false })
+      const [u] = await dbq('SELECT * FROM "user" WHERE uid=$1', [empUid])
+      return [200, { token:jwt, user:safe(u) }]
+    }
+  }
+
   if (r0 === 'staff') {
     if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
 
@@ -1300,12 +1357,12 @@ async function route(method, segments, body, headers, event) {
     }
 
     if (!r1 && method === 'GET') {
-      const emps = await dbq(`SELECT uid, first_name, last_name, email, is_employee, employee_seq FROM "user" WHERE employer_uid=$1 ORDER BY first_name, last_name`, [user.uid])
+      const emps = await dbq(`SELECT uid, first_name, last_name, email, is_employee, employee_seq, email_verified FROM "user" WHERE employer_uid=$1 ORDER BY first_name, last_name`, [user.uid])
       const result = []
       for (const e of emps) {
         const roles  = await dbq(`SELECT r.name FROM employee_role er JOIN role r ON r.rid=er.rid WHERE er.uid=$1 ORDER BY r.name`, [e.uid])
         const skills = await dbq(`SELECT s.name FROM employee_skill es JOIN skill s ON s.skid=es.skid WHERE es.uid=$1 ORDER BY s.name`, [e.uid])
-        result.push({ ...e, roles: roles.map(r=>r.name), skills: skills.map(s=>s.name) })
+        result.push({ ...e, roles: roles.map(r=>r.name), skills: skills.map(s=>s.name), email_verified: e.email_verified })
       }
       return [200, result]
     }
@@ -1343,7 +1400,51 @@ async function route(method, segments, body, headers, event) {
 
       for (const rid  of (role_ids  ||[])) await dbr('INSERT INTO employee_role  (uid,rid)  VALUES ($1,$2) ON CONFLICT DO NOTHING', [newUid, rid])
       for (const skid of (skill_ids ||[])) await dbr('INSERT INTO employee_skill (uid,skid) VALUES ($1,$2) ON CONFLICT DO NOTHING', [newUid, skid])
+
+      // Send invite email if this is a new (unverified) employee with an email address
+      const [newEmp] = await dbq('SELECT email_verified, email FROM "user" WHERE uid=$1', [newUid])
+      if (newEmp?.email && !newEmp.email_verified) {
+        const inviteToken = require('crypto').randomBytes(32).toString('hex')
+        await dbr(
+          `INSERT INTO auth_token (uid, token, purpose, expires_at)
+           VALUES ($1, $2, 'invite', NOW() + INTERVAL '7 days')`,
+          [newUid, inviteToken])
+        const [owner] = await dbq('SELECT business_name, first_name FROM "user" WHERE uid=$1', [user.uid])
+        const restaurantName = owner?.business_name || owner?.first_name || 'your restaurant'
+        await sendMail(
+          newEmp.email,
+          `You've been invited to join ${restaurantName} on Tanelu`,
+          `Hi,\n\nYou've been added as a team member at ${restaurantName}.\n\nClick the link below to set up your account:\n${BASE_URL}/#invite/${inviteToken}\n\nThis link expires in 7 days.\n\nTanelu`,
+          mailHtml(
+            `You're invited to join ${restaurantName}`,
+            `You've been added as a team member at <strong>${restaurantName}</strong> on Tanelu. Click below to set up your account and access your roster and schedule.`,
+            `${BASE_URL}/#invite/${inviteToken}`,
+            'Set up my account'
+          )
+        )
+      }
+
       return [201, await fetchEmployee(newUid)]
+    }
+
+    // POST /staff/:uid/invite — resend invite to an unverified employee
+    if (r1 && r2 === 'invite' && method === 'POST') {
+      const [emp] = await dbq('SELECT * FROM "user" WHERE uid=$1 AND employer_uid=$2', [r1, user.uid])
+      if (!emp) return [404, { error: 'Employee not found' }]
+      if (emp.email_verified) return [400, { error: 'This employee already has a verified account' }]
+      if (!emp.email) return [400, { error: 'No email address on file for this employee' }]
+      await dbr(`UPDATE auth_token SET used=true WHERE uid=$1 AND purpose='invite'`, [r1])
+      const inviteToken = require('crypto').randomBytes(32).toString('hex')
+      await dbr(`INSERT INTO auth_token (uid,token,purpose,expires_at) VALUES ($1,$2,'invite',NOW()+INTERVAL '7 days')`, [r1, inviteToken])
+      const [owner] = await dbq('SELECT business_name, first_name FROM "user" WHERE uid=$1', [user.uid])
+      const restaurantName = owner?.business_name || owner?.first_name || 'your restaurant'
+      await sendMail(emp.email,
+        `Invitation to join ${restaurantName} on Tanelu`,
+        `Hi,\n\nHere is your updated invite link:\n${BASE_URL}/#invite/${inviteToken}\n\nThis link expires in 7 days.\n\nTanelu`,
+        mailHtml(`Join ${restaurantName} on Tanelu`,
+          `You've been added as a team member at <strong>${restaurantName}</strong>. Click below to set up your account.`,
+          `${BASE_URL}/#invite/${inviteToken}`, 'Set up my account'))
+      return [200, { sent: true }]
     }
 
     if (r1 && method === 'PATCH') {
