@@ -405,6 +405,28 @@ CREATE TABLE IF NOT EXISTS process_run_step (
   completed_at  TIMESTAMPTZ,
   hold_secs     INTEGER NOT NULL DEFAULT 0
 );
+
+-- Equipment
+CREATE TABLE IF NOT EXISTS equipment (
+  eid         SERIAL PRIMARY KEY,
+  owner_uid   INTEGER NOT NULL REFERENCES "user"(uid),
+  name        VARCHAR(100) NOT NULL,     -- full display name e.g. "pizza oven (1)"
+  base_name   VARCHAR(100) NOT NULL,     -- canonical name e.g. "pizza oven"
+  seq         INTEGER,                   -- NULL for first, 1,2,3... for duplicates
+  status      VARCHAR(10) NOT NULL DEFAULT 'idle',  -- idle | inactive | in_use
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS equipment_item (
+  erid        SERIAL PRIMARY KEY,
+  eid         INTEGER NOT NULL REFERENCES equipment(eid) ON DELETE CASCADE,
+  rid         INTEGER NOT NULL REFERENCES recipe(rid) ON DELETE CASCADE,
+  volume      NUMERIC(10,3),             -- how many units of this item fit
+  UNIQUE(eid, rid)
+);
+
+-- Link recipe to a production process
+ALTER TABLE recipe ADD COLUMN IF NOT EXISTS procid INTEGER REFERENCES process(procid) ON DELETE SET NULL;
 `
 
 await client.connect()

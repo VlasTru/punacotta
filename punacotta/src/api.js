@@ -89,6 +89,12 @@ export const api = {
   createSkill:    (data)      => req('POST',   '/skills', data),
   updateSkill:    (skid,data) => req('PATCH',  `/skills/${skid}`, data),
   deleteSkills:   (ids)       => req('DELETE', '/skills', { ids }),
+  // Equipment
+  getEquipment:       ()          => req('GET',    '/equipment'),
+  getEquipmentOne:    (eid)       => req('GET',    `/equipment/${eid}`),
+  createEquipment:    (data)      => req('POST',   '/equipment', data),
+  updateEquipment:    (eid,data)  => req('PATCH',  `/equipment/${eid}`, data),
+  deleteEquipment:    (eid)       => req('DELETE', `/equipment/${eid}`),
   // Process runs
   startProcess:       (procid,data) => req('POST', `/processes/${procid}/run`, data),
   getProcessRuns:     ()            => req('GET',  '/process-runs'),

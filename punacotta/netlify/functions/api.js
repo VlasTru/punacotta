@@ -136,7 +136,7 @@ function mailHtml(title, body, cta_url, cta_label) {
 const RECIPE_SEL = `
   SELECT r.rid, r.name, r.description, r.price, r.currency, r.available,
          r.deliverable, r.image_url, r.image_thumb_url, r.cloudinary_id,
-         r.allow_submultiples, r.moq,
+         r.allow_submultiples, r.moq, r.procid,
          u.name AS units, u.unid, c.name AS category, c.caid
   FROM recipe r
   LEFT JOIN units u ON u.unid=r.unid
@@ -485,15 +485,15 @@ async function route(method, segments, body, headers, event) {
       if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
       const { name, description, unid, caid, price, currency, available,
               deliverable, image_url, image_thumb_url, cloudinary_id,
-              allow_submultiples, moq, contents } = body
+              allow_submultiples, moq, procid, contents } = body
       if (!name?.trim()) return [400, { error: 'Name required' }]
       await dbr(`UPDATE recipe SET name=$1,description=$2,unid=$3,caid=$4,price=$5,currency=$6,
                  available=$7,deliverable=$8,image_url=$9,image_thumb_url=$10,cloudinary_id=$11,
-                 allow_submultiples=$12,moq=$13 WHERE rid=$14`,
+                 allow_submultiples=$12,moq=$13,procid=$14 WHERE rid=$15`,
         [name.trim(), description||null, unid||null, caid||null,
          Number(price)||0, currency||'AMD', available!==false, deliverable!==false,
          image_url||null, image_thumb_url||null, cloudinary_id||null,
-         !!allow_submultiples, moq?Number(moq):null, r1])
+         !!allow_submultiples, moq?Number(moq):null, procid||null, r1])
       if (Array.isArray(contents)) await saveContents(r1, contents)
       const rows = await dbq(RECIPE_SEL + ' WHERE r.rid=$1', [r1])
       return [200, (await attachContents(rows))[0]]
@@ -516,16 +516,16 @@ async function route(method, segments, body, headers, event) {
     if (method === 'POST') {
       const { name, description, unid, caid, price, currency, available,
               deliverable, image_url, image_thumb_url, cloudinary_id,
-              allow_submultiples, moq, contents } = body
+              allow_submultiples, moq, procid, contents } = body
       if (!name?.trim()) return [400, { error: 'Name required' }]
       const res = await dbr(
         `INSERT INTO recipe (name,description,unid,caid,price,currency,available,deliverable,
-                             image_url,image_thumb_url,cloudinary_id,allow_submultiples,moq)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING rid`,
+                             image_url,image_thumb_url,cloudinary_id,allow_submultiples,moq,procid)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING rid`,
         [name.trim(), description||null, unid||null, caid||null,
          Number(price)||0, currency||'AMD', available!==false, deliverable!==false,
          image_url||null, image_thumb_url||null, cloudinary_id||null,
-         !!allow_submultiples, moq?Number(moq):null])
+         !!allow_submultiples, moq?Number(moq):null, procid||null])
       const rid = res.rows[0].rid
       if (Array.isArray(contents)) await saveContents(rid, contents)
       const rows = await dbq(RECIPE_SEL + ' WHERE r.rid=$1', [rid])
@@ -1791,6 +1791,102 @@ async function route(method, segments, body, headers, event) {
          LEFT JOIN "user" u ON u.uid=prs.uid
          WHERE prs.prid=$1 ORDER BY ps.seq`, [prid])
       return [201, { ...runData, steps: allSteps, warnings }]
+    }
+  }
+
+  // ── EQUIPMENT ─────────────────────────────────────────────────────────────────
+  if (r0 === 'equipment') {
+    if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+
+    const fetchEquipment = async (eid) => {
+      const [eq] = await dbq('SELECT * FROM equipment WHERE eid=$1', [eid])
+      if (!eq) return null
+      const items = await dbq(
+        `SELECT ei.erid, ei.eid, ei.rid, ei.volume,
+                r.name AS item_name, u.name AS unit_name, u.unid
+         FROM equipment_item ei
+         JOIN recipe r ON r.rid=ei.rid
+         LEFT JOIN units u ON u.unid=r.unid
+         WHERE ei.eid=$1 ORDER BY r.name`, [eid])
+      return { ...eq, items }
+    }
+
+    // Assign a unique name using the next vacant sequence slot
+    const assignName = async (ownerUid, baseName) => {
+      const existing = await dbq(
+        `SELECT seq FROM equipment WHERE owner_uid=$1 AND base_name=$2 ORDER BY seq NULLS FIRST`,
+        [ownerUid, baseName])
+      if (!existing.length) return { name: baseName, seq: null }
+      // Find first vacant slot
+      const usedSeqs = new Set(existing.map(e => e.seq))
+      if (!usedSeqs.has(null)) return { name: baseName, seq: null }
+      let slot = 1
+      while (usedSeqs.has(slot)) slot++
+      return { name: `${baseName} (${slot})`, seq: slot }
+    }
+
+    if (!r1 && method === 'GET') {
+      const rows = await dbq(
+        `SELECT e.*, COUNT(ei.erid) AS item_count
+         FROM equipment e LEFT JOIN equipment_item ei ON ei.eid=e.eid
+         WHERE e.owner_uid=$1 GROUP BY e.eid ORDER BY e.name`, [user.uid])
+      return [200, rows]
+    }
+
+    if (!r1 && method === 'POST') {
+      const { name: inputName, items } = body
+      if (!inputName?.trim()) return [400, { error: 'Name required' }]
+      const baseName = inputName.trim()
+      const { name, seq } = await assignName(user.uid, baseName)
+      const res = await dbr(
+        `INSERT INTO equipment (owner_uid,name,base_name,seq) VALUES ($1,$2,$3,$4) RETURNING eid`,
+        [user.uid, name, baseName, seq])
+      const eid = res.rows[0].eid
+      for (const it of (items||[])) {
+        await dbr(
+          'INSERT INTO equipment_item (eid,rid,volume) VALUES ($1,$2,$3) ON CONFLICT (eid,rid) DO UPDATE SET volume=$3',
+          [eid, it.rid, it.volume||null])
+      }
+      return [201, await fetchEquipment(eid)]
+    }
+
+    if (r1 && method === 'GET') {
+      const eq = await fetchEquipment(r1)
+      return eq ? [200, eq] : [404, { error: 'Not found' }]
+    }
+
+    if (r1 && method === 'PATCH') {
+      const { status, items } = body
+      const [eq] = await dbq('SELECT * FROM equipment WHERE eid=$1 AND owner_uid=$2', [r1, user.uid])
+      if (!eq) return [404, { error: 'Not found' }]
+      // Status transitions: idle ↔ inactive; in_use is set by process runs only
+      if (status !== undefined) {
+        if (status === 'inactive' && eq.status === 'idle')
+          await dbr('UPDATE equipment SET status=$1 WHERE eid=$2', ['inactive', r1])
+        else if (status === 'idle' && eq.status === 'inactive')
+          await dbr('UPDATE equipment SET status=$1 WHERE eid=$2', ['idle', r1])
+        else if (status === 'idle' && eq.status === 'in_use')
+          return [400, { error: 'Equipment is in use — cannot change status manually' }]
+      }
+      if (Array.isArray(items)) {
+        await dbr('DELETE FROM equipment_item WHERE eid=$1', [r1])
+        for (const it of items) {
+          if (!it.rid) continue
+          await dbr(
+            'INSERT INTO equipment_item (eid,rid,volume) VALUES ($1,$2,$3) ON CONFLICT (eid,rid) DO UPDATE SET volume=$3',
+            [r1, it.rid, it.volume||null])
+        }
+      }
+      return [200, await fetchEquipment(r1)]
+    }
+
+    if (r1 && method === 'DELETE') {
+      const [eq] = await dbq('SELECT * FROM equipment WHERE eid=$1 AND owner_uid=$2', [r1, user.uid])
+      if (!eq) return [404, { error: 'Not found' }]
+      if (eq.status === 'in_use') return [400, { error: 'Cannot delete equipment that is in use' }]
+      await dbr('DELETE FROM equipment_item WHERE eid=$1', [r1])
+      await dbr('DELETE FROM equipment WHERE eid=$1', [r1])
+      return [200, { deleted: Number(r1) }]
     }
   }
 

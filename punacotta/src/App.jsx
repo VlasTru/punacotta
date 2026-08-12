@@ -370,7 +370,7 @@ function RecipeForm({
   const [form, setForm] = useState({
     name:"", description:"", unid:"", caid:"", price:"", currency:"AMD",
     available:true, deliverable:true, image_url:null, image_thumb_url:null, cloudinary_id:null,
-    allow_submultiples:false, moq:"",
+    allow_submultiples:false, moq:"", procid:null,
     ...initial
   });
   const [imageBlob, setImageBlob] = useState(null);
@@ -505,6 +505,37 @@ function RecipeForm({
         </div>
       )}
 
+      {/* Process selector — below price, above image */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+        <div>
+          <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Production process</label>
+          <select value={String(form.procid||"")} onChange={e=>set("procid",e.target.value||null)}
+            style={{width:"100%",padding:"10px 14px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}>
+            <option value="">No process</option>
+            {(lookups.processes||[]).map(p=><option key={p.procid} value={p.procid}>{p.name}</option>)}
+          </select>
+        </div>
+        {form.procid&&(
+          <div>
+            <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Prep. time</label>
+            <input readOnly value={
+              (() => {
+                const proc = (lookups.processes||[]).find(p=>String(p.procid)===String(form.procid));
+                const mins = (proc?.skills||[]).reduce((s,sk)=>{
+                  const d=Number(sk.duration)||0;
+                  if(sk.duration_unit==="hours") return s+d*60;
+                  if(sk.duration_unit==="seconds") return s+d/60;
+                  return s+d;
+                },0);
+                if(!mins) return "—";
+                const h=Math.floor(mins/60),m=Math.round(mins%60);
+                return h?`${h}h ${m}min`:`${m}min`;
+              })()
+            } style={{width:"100%",padding:"10px 14px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,background:G.sand,color:G.muted}}/>
+          </div>
+        )}
+      </div>
+
       <div>
         <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:8 }}>{tl("Image")}</label>
         <ImageUploader
@@ -540,7 +571,7 @@ function Nav({ user, page, setPage, logout, lang, setLang }) {
   const [dropOpen, setDropOpen] = useState(false);
   const tl = k => lang==='ru' ? (RU[k]||k) : k;
   const links = isM
-    ? [{key:"orders-manuf",label:tl("Orders")},{key:"products",label:tl("Products")},{key:"items",label:tl("Items")},{key:"menus",label:tl("Menus")},{key:"procurement",label:tl("Procurement")},{key:"suppliers",label:tl("Suppliers")},{key:"reports",label:tl("Reports")},{key:"staff",label:"Staff"},{key:"processes",label:"Processes"}]
+    ? [{key:"orders-manuf",label:tl("Orders")},{key:"products",label:tl("Products")},{key:"items",label:tl("Items")},{key:"menus",label:tl("Menus")},{key:"procurement",label:tl("Procurement")},{key:"suppliers",label:tl("Suppliers")},{key:"reports",label:tl("Reports")},{key:"staff",label:"Staff"},{key:"processes",label:"Processes"},{key:"equipment",label:"Equipment"}]
     : user?.employer_uid ? [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")},{key:"roster-emp",label:"My Roster"}]
     : [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")}];
   const navigate = key => { setPage(key); setDropOpen(false); };
@@ -1087,7 +1118,7 @@ function RecipesPage({
 
   const BLANK = { name:"", description:"", unid:"", caid:"", price:"", currency:"AMD", available:true, deliverable:true, image_url:null, image_thumb_url:null };
 
-  const load = useCallback(async()=>{ setLoading(true); try{ const[r,l]=await Promise.all([api.getRecipes(),api.getRecipeLookups()]); setRecipes(r); setLookups(l); } catch(e){toast(e.message,"error");} finally{setLoading(false);} },[]);
+  const load = useCallback(async()=>{ setLoading(true); try{ const[r,l,p]=await Promise.all([api.getRecipes(),api.getRecipeLookups(),api.getProcesses()]); setRecipes(r); setLookups({...l,processes:p||[]}); } catch(e){toast(e.message,"error");} finally{setLoading(false);} },[]);
   useEffect(()=>{load();},[]);
 
   const sorted=[...recipes].sort((a,b)=>{ const v=String(a[sortKey]||"")<String(b[sortKey]||"")?-1:String(a[sortKey]||"")>String(b[sortKey]||"")?1:0; return sortDir==="asc"?v:-v; });
@@ -1115,7 +1146,7 @@ function RecipesPage({
         image_url = null; image_thumb_url = null; cloudinary_id = null;
       }
 
-      const payload = { name:form.name, description:form.description||null, unid:form.unid||null, caid:form.caid||null, price:Number(form.price)||0, currency:form.currency||"AMD", available:form.available!==false, deliverable:form.deliverable!==false, image_url, image_thumb_url, cloudinary_id, allow_submultiples:!!form.allow_submultiples, moq:form.moq?Number(form.moq):null, contents:(contents||[]).filter(c=>c.pid) };
+      const payload = { name:form.name, description:form.description||null, unid:form.unid||null, caid:form.caid||null, price:Number(form.price)||0, currency:form.currency||"AMD", available:form.available!==false, deliverable:form.deliverable!==false, image_url, image_thumb_url, cloudinary_id, allow_submultiples:!!form.allow_submultiples, moq:form.moq?Number(form.moq):null, procid:form.procid||null, contents:(contents||[]).filter(c=>c.pid) };
 
       if (existingRid) {
         const updated = await api.updateRecipe(existingRid, payload);
@@ -4946,10 +4977,11 @@ function ProcessesPage({ toast }) {
       ))}
 
       {/* ── Executions ───────────────────────────────────────────────────────── */}
-      {runs.length>0&&(
-        <div style={{marginTop:32}}>
-          <h3 style={{fontFamily:G.font,fontSize:18,marginBottom:14,color:G.dark}}>Executions</h3>
-          {runs.map(run=>{
+      <div style={{marginTop:32}}>
+        <h3 style={{fontFamily:G.font,fontSize:18,marginBottom:14,color:G.dark}}>Executions</h3>
+        {runs.length===0?(
+          <p style={{fontSize:13,color:G.muted,fontStyle:"italic"}}>No processes have been started yet. Click ▶ Run on any process above to begin.</p>
+        ):runs.map(run=>{
             const col = STATUS_COLORS_RUN[run.status]||G.muted;
             return (
               <div key={run.prid} style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:12,padding:"14px 18px",marginBottom:10}}>
@@ -4977,8 +5009,8 @@ function ProcessesPage({ toast }) {
               </div>
             );
           })}
-        </div>
-      )}
+      </div>
+
 
       {/* ── Start validation dialog ───────────────────────────────────────────── */}
       {startDialog&&(
@@ -5578,6 +5610,190 @@ function RosterPage({ user, toast, onBack }) {
 }
 
 
+// ─── EQUIPMENT PAGE ───────────────────────────────────────────────────────────
+function EquipmentPage({ toast }) {
+  const [equipment, setEquipment] = useState([]);
+  const [recipes,   setRecipes]   = useState([]);
+  const [loading,   setLoading]   = useState(true);
+  const [editItem,  setEditItem]  = useState(null); // null=list, obj=edit, 'new'=new
+  const [saving,    setSaving]    = useState(false);
+  const [sortBy,    setSortBy]    = useState("name");
+
+  const emptyForm = { name:"", items:[] };
+  const [form, setForm] = useState(emptyForm);
+
+  useEffect(()=>{
+    Promise.all([api.getEquipment(), api.getRecipes()])
+      .then(([e,r])=>{ setEquipment(e||[]); setRecipes(r||[]); })
+      .catch(e=>toast(e.message,"error"))
+      .finally(()=>setLoading(false));
+  },[]);
+
+  const STATUS_COLORS = { idle:G.green, inactive:G.muted, in_use:G.caramel };
+  const STATUS_LABELS = { idle:"Idle", inactive:"Inactive", in_use:"In use" };
+
+  const sorted = [...equipment].sort((a,b)=>{
+    if (sortBy==="status") return a.status.localeCompare(b.status);
+    return a.name.localeCompare(b.name);
+  });
+
+  const openNew  = () => { setForm(emptyForm); setEditItem("new"); };
+  const openEdit = (eq) => {
+    setForm({ name:eq.base_name, items:(eq.items||[]).map(it=>({rid:it.rid,volume:it.volume||"",item_name:it.item_name,unit_name:it.unit_name})) });
+    setEditItem(eq);
+  };
+
+  const save = async () => {
+    if (!form.name.trim()) { toast("Name required","error"); return; }
+    setSaving(true);
+    try {
+      const payload = { name:form.name.trim(), items:form.items.filter(it=>it.rid) };
+      if (editItem==="new") {
+        const created = await api.createEquipment(payload);
+        setEquipment(p=>[...p,{...created,item_count:created.items?.length||0}].sort((a,b)=>a.name.localeCompare(b.name)));
+        toast(`"${created.name}" added`);
+      } else {
+        const updated = await api.updateEquipment(editItem.eid, payload);
+        setEquipment(p=>p.map(e=>e.eid===updated.eid?{...updated,item_count:updated.items?.length||0}:e));
+        toast(`"${updated.name}" saved`);
+      }
+      setEditItem(null);
+    } catch(e){ toast(e.message,"error"); }
+    finally{ setSaving(false); }
+  };
+
+  const del = async (eid) => {
+    if (!window.confirm("Delete this equipment?")) return;
+    try { await api.deleteEquipment(eid); setEquipment(p=>p.filter(e=>e.eid!==eid)); toast("Deleted"); }
+    catch(e){ toast(e.message,"error"); }
+  };
+
+  const toggleStatus = async (eq) => {
+    const newStatus = eq.status==='idle'?'inactive':'idle';
+    try {
+      const updated = await api.updateEquipment(eq.eid,{status:newStatus});
+      setEquipment(p=>p.map(e=>e.eid===updated.eid?{...e,status:updated.status}:e));
+    } catch(e){ toast(e.message,"error"); }
+  };
+
+  const addItem = () => setForm(p=>({...p,items:[...p.items,{rid:"",volume:"",item_name:"",unit_name:""}]}));
+  const removeItem = i => setForm(p=>({...p,items:p.items.filter((_,j)=>j!==i)}));
+  const setItemField = (i,k,v) => setForm(p=>({...p,items:p.items.map((it,j)=>j===i?{...it,[k]:v}:it)}));
+
+  if (loading) return <Page title="Equipment"><Spinner/></Page>;
+
+  return (
+    <Page title="Equipment" actions={<Btn size="sm" onClick={openNew}>+ Equipment</Btn>}>
+
+      {/* New / Edit form */}
+      {editItem&&(
+        <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,padding:24,marginBottom:20,animation:"fadeIn 0.2s ease"}}>
+          <h3 style={{fontFamily:G.font,fontSize:17,marginBottom:16}}>{editItem==="new"?"New equipment":editItem.name}</h3>
+          <div style={{marginBottom:16}}>
+            <Input label="Name / Model" value={form.name} onChange={v=>setForm(p=>({...p,name:v}))} required
+              hint="If a unit with this name already exists, a sequence number will be appended automatically."/>
+          </div>
+
+          {/* Items (capacity) */}
+          <div style={{marginBottom:16}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <label style={{fontSize:13,fontWeight:600,color:G.dark}}>Items (capacity)</label>
+              <Btn size="sm" variant="secondary" onClick={addItem}>+ Add item</Btn>
+            </div>
+            {form.items.length===0&&<p style={{fontSize:13,color:G.muted,fontStyle:"italic"}}>No items linked yet.</p>}
+            {form.items.map((it,i)=>{
+              const rec = recipes.find(r=>String(r.rid)===String(it.rid));
+              return (
+                <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 120px 32px",gap:10,marginBottom:10,alignItems:"end"}}>
+                  <div>
+                    <label style={{fontSize:12,color:G.muted,display:"block",marginBottom:4}}>Item</label>
+                    <select value={String(it.rid)} onChange={e=>{
+                      const r=recipes.find(x=>String(x.rid)===e.target.value);
+                      setItemField(i,"rid",e.target.value);
+                      setItemField(i,"unit_name",r?.units||"");
+                      setItemField(i,"item_name",r?.name||"");
+                    }} style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}>
+                      <option value="">Select item…</option>
+                      {recipes.map(r=><option key={r.rid} value={r.rid}>{r.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{fontSize:12,color:G.muted,display:"block",marginBottom:4}}>
+                      Capacity{it.unit_name?` (${it.unit_name})`:""}
+                    </label>
+                    <input type="number" min="0" step="any" value={it.volume}
+                      onChange={e=>setItemField(i,"volume",e.target.value)} placeholder="e.g. 2"
+                      style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}/>
+                  </div>
+                  <button onClick={()=>removeItem(i)} style={{background:"none",border:"none",cursor:"pointer",color:G.red,fontSize:18,paddingBottom:8}}>×</button>
+                </div>
+              );
+            })}
+          </div>
+
+          <div style={{display:"flex",gap:10}}>
+            <Btn size="sm" onClick={save} loading={saving}>Save</Btn>
+            <Btn variant="ghost" size="sm" onClick={()=>setEditItem(null)}>Cancel</Btn>
+            {editItem!=="new"&&<Btn variant="danger" size="sm" onClick={()=>del(editItem.eid)}>Delete</Btn>}
+          </div>
+        </div>
+      )}
+
+      {/* Equipment table */}
+      <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,overflow:"hidden"}}>
+        <table style={{width:"100%",borderCollapse:"collapse"}}>
+          <thead>
+            <tr style={{background:G.sand,borderBottom:`1px solid ${G.border}`}}>
+              <th style={{padding:"10px 14px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,width:40}}>#</th>
+              <th style={{padding:"10px 14px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted}}>Name / Model</th>
+              <th style={{padding:"10px 14px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,cursor:"pointer"}}
+                onClick={()=>setSortBy(s=>s==="status"?"name":"status")}>
+                Status {sortBy==="status"?"▴":""}
+              </th>
+              <th style={{padding:"10px 14px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted}}>Items</th>
+              <th style={{width:80}}/>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.length===0?(
+              <tr><td colSpan={5} style={{padding:40,textAlign:"center",color:G.muted}}>No equipment yet. Click "+ Equipment" to add.</td></tr>
+            ):sorted.map((eq,i)=>{
+              const col = STATUS_COLORS[eq.status]||G.muted;
+              return (
+                <tr key={eq.eid} style={{borderBottom:i<sorted.length-1?`1px solid ${G.border}`:"none"}}>
+                  <td style={{padding:"10px 14px",fontSize:13,color:G.muted,fontFamily:G.mono}}>{i+1}</td>
+                  <td style={{padding:"10px 14px"}}>
+                    <button onClick={()=>openEdit(eq)} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,fontWeight:600,color:G.dark,padding:0,textDecoration:"underline dotted",textUnderlineOffset:3}}>
+                      {eq.name}
+                    </button>
+                  </td>
+                  <td style={{padding:"10px 14px"}}>
+                    <span style={{fontSize:12,padding:"3px 10px",borderRadius:20,fontWeight:600,background:`${col}20`,color:col}}>
+                      {STATUS_LABELS[eq.status]||eq.status}
+                    </span>
+                  </td>
+                  <td style={{padding:"10px 14px",fontSize:13,color:G.muted}}>{eq.item_count||0} item{eq.item_count!==1?"s":""}</td>
+                  <td style={{padding:"10px 14px"}}>
+                    <div style={{display:"flex",gap:8}}>
+                      {eq.status!=="in_use"&&(
+                        <button onClick={()=>toggleStatus(eq)}
+                          style={{fontSize:11,padding:"3px 8px",borderRadius:5,border:`1px solid ${G.border}`,background:"none",cursor:"pointer",color:G.muted,fontFamily:G.mono}}>
+                          {eq.status==="idle"?"Disable":"Enable"}
+                        </button>
+                      )}
+                      <button onClick={()=>del(eq.eid)} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:16}}>×</button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Page>
+  );
+}
+
 // ─── EMBED MENU PAGE ──────────────────────────────────────────────────────────
 function EmbedMenuPage({ toast }) {
   const lang = useLangContext();
@@ -5818,6 +6034,7 @@ export default function App() {
           {page==="reports"      &&<ReportsPage   toast={toast}/>}
           {page==="staff"        &&<StaffPage      user={user} toast={toast}/>}
           {page==="processes"    &&<ProcessesPage  toast={toast}/>}
+          {page==="equipment"    &&<EquipmentPage  toast={toast}/>}
           {page==="roster-emp"   &&<RosterPage     user={user} toast={toast}/>}
           {page==="embed"        &&<EmbedMenuPage toast={toast}/>}
           {page==="orders-manuf" &&<OrdersManufPage toast={toast}/>}
