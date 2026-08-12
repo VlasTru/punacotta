@@ -373,12 +373,37 @@ CREATE TABLE IF NOT EXISTS roster (
 CREATE TABLE IF NOT EXISTS roster_slot (
   rsid        SERIAL PRIMARY KEY,
   roid        INTEGER NOT NULL REFERENCES roster(roid) ON DELETE CASCADE,
-  uid         INTEGER NOT NULL REFERENCES "user"(uid),  -- employee
+  uid         INTEGER NOT NULL REFERENCES "user"(uid),
   slot_date   DATE NOT NULL,
   start_time  TIME NOT NULL,
   end_time    TIME NOT NULL,
   finalized   BOOLEAN NOT NULL DEFAULT false,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Process executions
+CREATE TABLE IF NOT EXISTS process_run (
+  prid          SERIAL PRIMARY KEY,
+  procid        INTEGER NOT NULL REFERENCES process(procid),
+  owner_uid     INTEGER NOT NULL REFERENCES "user"(uid),
+  started_by    INTEGER REFERENCES "user"(uid),
+  status        VARCHAR(12) NOT NULL DEFAULT 'in_progress',
+  scheduled_at  TIMESTAMPTZ,
+  started_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  held_at       TIMESTAMPTZ,
+  completed_at  TIMESTAMPTZ,
+  hold_secs     INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS process_run_step (
+  psrid         SERIAL PRIMARY KEY,
+  prid          INTEGER NOT NULL REFERENCES process_run(prid) ON DELETE CASCADE,
+  psid          INTEGER NOT NULL REFERENCES process_skill(psid),
+  uid           INTEGER REFERENCES "user"(uid),
+  status        VARCHAR(12) NOT NULL DEFAULT 'pending',
+  started_at    TIMESTAMPTZ,
+  completed_at  TIMESTAMPTZ,
+  hold_secs     INTEGER NOT NULL DEFAULT 0
 );
 `
 

@@ -89,6 +89,15 @@ export const api = {
   createSkill:    (data)      => req('POST',   '/skills', data),
   updateSkill:    (skid,data) => req('PATCH',  `/skills/${skid}`, data),
   deleteSkills:   (ids)       => req('DELETE', '/skills', { ids }),
+  // Process runs
+  startProcess:       (procid,data) => req('POST', `/processes/${procid}/run`, data),
+  getProcessRuns:     ()            => req('GET',  '/process-runs'),
+  getProcessRun:      (prid)        => req('GET',  `/process-runs/${prid}`),
+  pauseRun:           (prid)        => req('POST', `/process-runs/${prid}/pause`),
+  resumeRun:          (prid)        => req('POST', `/process-runs/${prid}/resume`),
+  stopRun:            (prid)        => req('POST', `/process-runs/${prid}/stop`),
+  startStep:          (prid,psrid)  => req('POST', `/process-runs/${prid}/steps/${psrid}/start`),
+  completeStep:       (prid,psrid)  => req('POST', `/process-runs/${prid}/steps/${psrid}/complete`),
   // Processes
   getProcesses:   ()          => req('GET',    '/processes'),
   createProcess:  (data)      => req('POST',   '/processes', data),

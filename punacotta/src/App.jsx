@@ -4485,6 +4485,9 @@ function ProcessesPage({ toast }) {
   const [formSkills,setFormSkills]= useState([]);
   const [saving,    setSaving]    = useState(false);
   const [nameError, setNameError] = useState("");
+  const [runs,      setRuns]      = useState([]);
+  const [startDialog, setStartDialog] = useState(null); // {proc, warnings}
+  const [startSaving, setStartSaving] = useState(false);
 
   const load = useCallback(async()=>{
     setLoading(true);
@@ -4494,6 +4497,30 @@ function ProcessesPage({ toast }) {
     } catch(e){ toast(e.message,"error"); } finally{ setLoading(false); }
   },[]);
   useEffect(()=>{ load(); },[]);
+  useEffect(()=>{ api.getProcessRuns().then(setRuns).catch(()=>{}); },[]);
+
+  const STATUS_COLORS_RUN = { in_progress:G.caramel, on_hold:"#eab308", completed:G.green, cancelled:G.red };
+
+  const handleRunProcess = async (proc, confirmed=false, ignoreHours=false) => {
+    setStartSaving(true);
+    try {
+      const result = await api.startProcess(proc.procid, { confirmed, ignore_hours:ignoreHours });
+      if (result.requires_confirmation) { setStartDialog({proc, warnings:result.warnings}); return; }
+      setRuns(p=>[result,...p]);
+      toast(`"${proc.name}" started`);
+      setStartDialog(null);
+    } catch(e){ toast(e.message,"error"); }
+    finally{ setStartSaving(false); }
+  };
+
+  const handleRunAction = async (prid, action) => {
+    try {
+      const fns = { pause:api.pauseRun, resume:api.resumeRun, stop:api.stopRun };
+      const updated = await fns[action](prid);
+      setRuns(p=>p.map(r=>r.prid===updated.prid?updated:r));
+    } catch(e){ toast(e.message,"error"); }
+  };
+
 
   const createSkill = async name => {
     try { const s=await api.createSkill({name}); setSkills(p=>[...p,s].sort((a,b)=>a.name.localeCompare(b.name))); return s; }
@@ -4911,9 +4938,81 @@ function ProcessesPage({ toast }) {
               ))}
             </div>
           </div>
-          <button onClick={()=>deleteProcess(proc.procid)} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:18,padding:"4px 8px",flexShrink:0}}>×</button>
+          <div style={{display:"flex",gap:8,alignItems:"center",flexShrink:0,marginLeft:12}}>
+            <Btn size="sm" onClick={()=>handleRunProcess(proc)} loading={startSaving}>▶ Run</Btn>
+            <button onClick={()=>deleteProcess(proc.procid)} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:18,padding:"4px 8px"}}>×</button>
+          </div>
         </div>
       ))}
+
+      {/* ── Executions ───────────────────────────────────────────────────────── */}
+      {runs.length>0&&(
+        <div style={{marginTop:32}}>
+          <h3 style={{fontFamily:G.font,fontSize:18,marginBottom:14,color:G.dark}}>Executions</h3>
+          {runs.map(run=>{
+            const col = STATUS_COLORS_RUN[run.status]||G.muted;
+            return (
+              <div key={run.prid} style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:12,padding:"14px 18px",marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <span style={{fontWeight:700,fontSize:14,color:G.dark}}>{run.process_name}</span>
+                    <span style={{fontSize:12,padding:"2px 10px",borderRadius:20,background:`${col}20`,color:col,fontWeight:600}}>
+                      {run.status.replace('_',' ')}
+                    </span>
+                    <span style={{fontSize:12,color:G.muted}}>
+                      {new Date(run.started_at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}
+                    </span>
+                  </div>
+                  <div style={{display:"flex",gap:6}}>
+                    {run.status==='in_progress'&&<>
+                      <Btn size="sm" variant="secondary" onClick={()=>handleRunAction(run.prid,'pause')}>⏸</Btn>
+                      <Btn size="sm" variant="danger"    onClick={()=>handleRunAction(run.prid,'stop')}>⏹</Btn>
+                    </>}
+                    {run.status==='on_hold'&&<>
+                      <Btn size="sm" onClick={()=>handleRunAction(run.prid,'resume')}>▶</Btn>
+                      <Btn size="sm" variant="danger" onClick={()=>handleRunAction(run.prid,'stop')}>⏹</Btn>
+                    </>}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Start validation dialog ───────────────────────────────────────────── */}
+      {startDialog&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.45)",zIndex:1200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div style={{background:G.white,borderRadius:16,maxWidth:520,width:"100%",boxShadow:"0 20px 60px rgba(44,24,16,0.2)",animation:"fadeIn 0.2s ease",overflow:"hidden"}}>
+            <div style={{padding:"20px 24px",borderBottom:`1px solid ${G.border}`}}>
+              <h3 style={{fontFamily:G.font,fontSize:18}}>Start "{startDialog.proc.name}"</h3>
+            </div>
+            <div style={{padding:"20px 24px",display:"flex",flexDirection:"column",gap:14}}>
+              {startDialog.warnings.map((w,i)=>(
+                <div key={i} style={{background:"#fef3c7",border:"1px solid #fcd34d",borderRadius:8,padding:"12px 14px"}}>
+                  <p style={{fontSize:13,color:"#92400e",fontWeight:600,marginBottom:4}}>
+                    {w.type==='exceeds_hours'?'Working hours':'Employee availability'}
+                  </p>
+                  <p style={{fontSize:13,color:"#92400e"}}>{w.message}</p>
+                </div>
+              ))}
+            </div>
+            <div style={{padding:"16px 24px",borderTop:`1px solid ${G.border}`,display:"flex",gap:10,justifyContent:"flex-end"}}>
+              {startDialog.warnings.some(w=>w.type==='exceeds_hours')&&(
+                <Btn variant="secondary" size="sm" loading={startSaving}
+                  onClick={()=>handleRunProcess(startDialog.proc,true,true)}>
+                  Ignore & start anyway
+                </Btn>
+              )}
+              <Btn size="sm" loading={startSaving}
+                onClick={()=>handleRunProcess(startDialog.proc,true,false)}>
+                Start anyway
+              </Btn>
+              <Btn variant="ghost" size="sm" onClick={()=>setStartDialog(null)}>Cancel</Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </Page>
   );
 }

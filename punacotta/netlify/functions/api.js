@@ -1664,6 +1664,272 @@ async function route(method, segments, body, headers, event) {
       await dbr('DELETE FROM process WHERE procid=$1 AND owner_uid=$2', [r1, user.uid])
       return [200, { deleted: Number(r1) }]
     }
+
+    // POST /processes/:procid/run — start a process execution
+    if (r1 && r2 === 'run' && method === 'POST') {
+      if (!user) return [401, { error: 'Unauthorized' }]
+      const ownerUid = user.is_manufacturer ? user.uid : user.employer_uid
+      if (!ownerUid) return [403, { error: 'Not associated with a restaurant' }]
+      const { scheduled_at, ignore_hours } = body
+
+      const [proc] = await dbq('SELECT * FROM process WHERE procid=$1 AND owner_uid=$2', [r1, ownerUid])
+      if (!proc) return [404, { error: 'Process not found' }]
+
+      // Get all steps with their skill requirements
+      const steps = await dbq(
+        `SELECT ps.*, s.name AS skill_name, s.dep_skid, s.color
+         FROM process_skill ps JOIN skill s ON s.skid=ps.skid
+         WHERE ps.procid=$1 ORDER BY ps.seq`, [r1])
+      if (!steps.length) return [400, { error: 'Process has no steps' }]
+
+      const startAt = scheduled_at ? new Date(scheduled_at) : new Date()
+      const todayStr = startAt.toISOString().split('T')[0]
+      const warnings = []
+
+      // ── Validation 1: Employee availability ───────────────────────────────────
+      for (const step of steps) {
+        // Find employees with this skill on roster today
+        const available = await dbq(
+          `SELECT DISTINCT rs.uid FROM roster_slot rs
+           JOIN employee_skill es ON es.uid=rs.uid
+           WHERE es.skid=$1 AND rs.slot_date=$2
+             AND rs.roid IN (SELECT roid FROM roster WHERE owner_uid=$3 AND status='approved')
+           UNION
+           SELECT DISTINCT er.uid FROM employee_role er
+           JOIN role_skill rs2 ON rs2.rid=er.rid
+           JOIN roster_slot rsl ON rsl.uid=er.uid
+           WHERE rs2.skid=$1 AND rsl.slot_date=$2
+             AND rsl.roid IN (SELECT roid FROM roster WHERE owner_uid=$3 AND status='approved')`,
+          [step.skid, todayStr, ownerUid])
+        if (!available.length) {
+          warnings.push({
+            type: 'employee_unavailable',
+            message: `An employee with the skill "${step.skill_name}" will be unavailable when this step starts.`,
+            action: 'schedule_or_cancel',
+            step: step.skill_name,
+          })
+        }
+      }
+
+      // ── Validation 2: Working hours ───────────────────────────────────────────
+      if (!ignore_hours) {
+        const [owner] = await dbq('SELECT schedule FROM "user" WHERE uid=$1', [ownerUid])
+        const schedule = owner?.schedule || {}
+        const DAY_NAMES = ['sun','mon','tue','wed','thu','fri','sat']
+        const dow = new Date(todayStr+'T00:00:00Z').getUTCDay()
+        const dayKey = DAY_NAMES[dow]
+        const periods = schedule[dayKey]?.periods || []
+        if (periods.length) {
+          const lastClose = periods[periods.length-1].to || '23:59'
+          const [closeH, closeM] = lastClose.split(':').map(Number)
+          const closeMinutes = closeH*60 + closeM
+          const totalDuration = steps.reduce((s,st)=>{
+            const d = Number(st.duration)||0
+            if (st.duration_unit==='hours') return s+d*60
+            if (st.duration_unit==='seconds') return s+d/60
+            return s+d
+          }, 0)
+          const startMinutes = startAt.getUTCHours()*60 + startAt.getUTCMinutes()
+          if (startMinutes + totalDuration > closeMinutes) {
+            warnings.push({
+              type: 'exceeds_hours',
+              message: `The process is due to complete after closing time (${lastClose}). The process will take ${Math.round(totalDuration)} minutes.`,
+              action: 'schedule_or_ignore_or_cancel',
+              suggested_start: new Date(new Date(todayStr+'T00:00:00Z').getTime() + (closeMinutes-totalDuration)*60000).toISOString(),
+            })
+          }
+        }
+      }
+
+      // Return warnings without starting if blocking conditions exist
+      if (warnings.length && !body.confirmed) {
+        return [200, { warnings, requires_confirmation: true }]
+      }
+
+      // Create the run
+      const runRes = await dbr(
+        `INSERT INTO process_run (procid,owner_uid,started_by,status,scheduled_at,started_at)
+         VALUES ($1,$2,$3,'in_progress',$4,NOW()) RETURNING prid`,
+        [r1, ownerUid, user.uid, scheduled_at||null])
+      const prid = runRes.rows[0].prid
+
+      // Create pending steps
+      for (const step of steps) {
+        // Assign employee: find one with this skill on roster
+        const [assignee] = await dbq(
+          `SELECT DISTINCT rs.uid FROM roster_slot rs
+           JOIN employee_skill es ON es.uid=rs.uid
+           WHERE es.skid=$1 AND rs.slot_date=$2
+             AND rs.roid IN (SELECT roid FROM roster WHERE owner_uid=$3 AND status='approved')
+           LIMIT 1`, [step.skid, todayStr, ownerUid])
+        const assignedUid = assignee?.uid || null
+
+        // First step with no dependency starts immediately
+        const stepStatus = (!step.dep_psid && step.seq===1) ? 'in_progress' : 'pending'
+        const startedAt = stepStatus==='in_progress' ? 'NOW()' : 'NULL'
+        await dbr(
+          `INSERT INTO process_run_step (prid,psid,uid,status,started_at)
+           VALUES ($1,$2,$3,$4,${stepStatus==='in_progress'?'NOW()':'NULL'})`,
+          [prid, step.psid, assignedUid, stepStatus])
+      }
+
+      // Notify first step assignee
+      const firstStep = steps[0]
+      const [firstAssignee] = await dbq(
+        `SELECT prs.uid, u.email, u.first_name FROM process_run_step prs
+         JOIN "user" u ON u.uid=prs.uid WHERE prs.prid=$1 AND ps.seq=1
+         AND prs.uid IS NOT NULL LIMIT 1`,
+        [prid])
+
+      const [runData] = await dbq('SELECT pr.*, p.name AS process_name FROM process_run pr JOIN process p ON p.procid=pr.procid WHERE pr.prid=$1', [prid])
+      const allSteps = await dbq(
+        `SELECT prs.*, ps.seq, ps.duration, ps.duration_unit, s.name AS skill_name, s.color,
+                u.first_name, u.last_name
+         FROM process_run_step prs
+         JOIN process_skill ps ON ps.psid=prs.psid
+         JOIN skill s ON s.skid=ps.skid
+         LEFT JOIN "user" u ON u.uid=prs.uid
+         WHERE prs.prid=$1 ORDER BY ps.seq`, [prid])
+      return [201, { ...runData, steps: allSteps, warnings }]
+    }
+  }
+
+  // ── PROCESS RUNS ─────────────────────────────────────────────────────────────
+  if (r0 === 'process-runs') {
+    if (!user) return [401, { error: 'Unauthorized' }]
+    const ownerUid = user.is_manufacturer ? user.uid : user.employer_uid
+    if (!ownerUid) return [403, { error: 'Not associated with a restaurant' }]
+
+    const fetchRun = async (prid) => {
+      const [run] = await dbq('SELECT pr.*, p.name AS process_name FROM process_run pr JOIN process p ON p.procid=pr.procid WHERE pr.prid=$1', [prid])
+      if (!run) return null
+      const steps = await dbq(
+        `SELECT prs.*, ps.seq, ps.duration, ps.duration_unit, ps.dep_type, ps.dep_psid,
+                s.name AS skill_name, s.color, s.dep_skid,
+                u.first_name, u.last_name
+         FROM process_run_step prs
+         JOIN process_skill ps ON ps.psid=prs.psid
+         JOIN skill s ON s.skid=ps.skid
+         LEFT JOIN "user" u ON u.uid=prs.uid
+         WHERE prs.prid=$1 ORDER BY ps.seq`, [prid])
+      return { ...run, steps }
+    }
+
+    // GET /process-runs — list all runs for this restaurant
+    if (!r1 && method === 'GET') {
+      const runs = await dbq(
+        `SELECT pr.*, p.name AS process_name
+         FROM process_run pr JOIN process p ON p.procid=pr.procid
+         WHERE pr.owner_uid=$1 ORDER BY pr.started_at DESC`, [ownerUid])
+      return [200, runs]
+    }
+
+    // GET /process-runs/:prid — single run with steps
+    if (r1 && !r2 && method === 'GET') {
+      const run = await fetchRun(r1)
+      if (!run) return [404, { error: 'Not found' }]
+      return [200, run]
+    }
+
+    // POST /process-runs/:prid/pause
+    if (r1 && r2 === 'pause' && method === 'POST') {
+      const [run] = await dbq('SELECT * FROM process_run WHERE prid=$1 AND owner_uid=$2', [r1, ownerUid])
+      if (!run) return [404, { error: 'Not found' }]
+      if (run.status !== 'in_progress') return [400, { error: 'Can only pause an in-progress run' }]
+      await dbr('UPDATE process_run SET status=$1, held_at=NOW() WHERE prid=$2', ['on_hold', r1])
+      // Also pause any in-progress steps
+      await dbr(`UPDATE process_run_step SET status='on_hold' WHERE prid=$1 AND status='in_progress'`, [r1])
+      return [200, await fetchRun(r1)]
+    }
+
+    // POST /process-runs/:prid/resume
+    if (r1 && r2 === 'resume' && method === 'POST') {
+      const [run] = await dbq('SELECT * FROM process_run WHERE prid=$1 AND owner_uid=$2', [r1, ownerUid])
+      if (!run) return [404, { error: 'Not found' }]
+      if (run.status !== 'on_hold') return [400, { error: 'Can only resume an on-hold run' }]
+      // Accumulate hold time
+      const holdSecs = run.held_at
+        ? Math.floor((Date.now() - new Date(run.held_at).getTime()) / 1000) : 0
+      await dbr(
+        'UPDATE process_run SET status=$1, held_at=NULL, hold_secs=hold_secs+$2 WHERE prid=$3',
+        ['in_progress', holdSecs, r1])
+      await dbr(`UPDATE process_run_step SET status='in_progress' WHERE prid=$1 AND status='on_hold'`, [r1])
+      return [200, await fetchRun(r1)]
+    }
+
+    // POST /process-runs/:prid/stop
+    if (r1 && r2 === 'stop' && method === 'POST') {
+      const [run] = await dbq('SELECT * FROM process_run WHERE prid=$1 AND owner_uid=$2', [r1, ownerUid])
+      if (!run) return [404, { error: 'Not found' }]
+      if (['cancelled','completed'].includes(run.status)) return [400, { error: 'Already finished' }]
+      await dbr('UPDATE process_run SET status=$1, completed_at=NOW() WHERE prid=$2', ['cancelled', r1])
+      await dbr(`UPDATE process_run_step SET status='skipped' WHERE prid=$1 AND status IN ('pending','in_progress','on_hold')`, [r1])
+      return [200, await fetchRun(r1)]
+    }
+
+    // POST /process-runs/:prid/steps/:psrid/start — employee starts a step
+    if (r1 && r2 === 'steps' && segments[3] && segments[4] === 'start' && method === 'POST') {
+      const psrid = segments[3]
+      const [step] = await dbq('SELECT * FROM process_run_step WHERE psrid=$1 AND prid=$2', [psrid, r1])
+      if (!step) return [404, { error: 'Step not found' }]
+      if (step.status !== 'pending') return [400, { error: 'Step is not pending' }]
+      await dbr('UPDATE process_run_step SET status=$1, started_at=NOW(), uid=$2 WHERE psrid=$3',
+        ['in_progress', user.uid, psrid])
+      // Check if this completes all steps → auto-complete run
+      const pending = await dbq(
+        `SELECT psrid FROM process_run_step WHERE prid=$1 AND status IN ('pending')`, [r1])
+      if (!pending.length) {
+        // Notify next step employee if dep type allows
+        // (simplified: just check if any pending steps remain after this one)
+      }
+      return [200, await fetchRun(r1)]
+    }
+
+    // POST /process-runs/:prid/steps/:psrid/complete
+    if (r1 && r2 === 'steps' && segments[3] && segments[4] === 'complete' && method === 'POST') {
+      const psrid = segments[3]
+      await dbr('UPDATE process_run_step SET status=$1, completed_at=NOW() WHERE psrid=$2 AND prid=$3',
+        ['completed', psrid, r1])
+      // Check if all steps completed → complete the run
+      const remaining = await dbq(
+        `SELECT psrid FROM process_run_step WHERE prid=$1 AND status NOT IN ('completed','skipped')`, [r1])
+      if (!remaining.length) {
+        await dbr('UPDATE process_run SET status=$1, completed_at=NOW() WHERE prid=$2', ['completed', r1])
+      } else {
+        // Activate dependent steps whose predecessor just completed
+        await activateDependentSteps(r1, psrid)
+      }
+      return [200, await fetchRun(r1)]
+    }
+  }
+
+  // Helper: activate steps that depend on a just-completed step
+  async function activateDependentSteps(prid, completedPsrid) {
+    // Find the psid of the completed step
+    const [cs] = await dbq('SELECT psid FROM process_run_step WHERE psrid=$1', [completedPsrid])
+    if (!cs) return
+    // Find steps in this run whose dep_psid = completed step's psid
+    const deps = await dbq(
+      `SELECT prs.psrid, prs.uid, ps.dep_type, s.name AS skill_name
+       FROM process_run_step prs
+       JOIN process_skill ps ON ps.psid=prs.psid
+       JOIN skill s ON s.skid=ps.skid
+       WHERE prs.prid=$1 AND prs.status='pending' AND ps.dep_psid=$2`, [prid, cs.psid])
+    for (const dep of deps) {
+      if (dep.dep_type === 'FS') {
+        // Unlock: move to pending-ready (still pending but notifiable)
+        if (dep.uid) {
+          const [emp] = await dbq('SELECT email, first_name FROM "user" WHERE uid=$1', [dep.uid])
+          if (emp?.email) {
+            await sendMail(emp.email,
+              `Your step "${dep.skill_name}" is ready to start`,
+              `Hi ${emp.first_name},\n\nThe preceding step has finished. You can now start "${dep.skill_name}".\n\nTanelu`,
+              mailHtml('Step ready', `The preceding step has finished. You can now start <strong>${dep.skill_name}</strong>.`,
+                `${BASE_URL}/#roster`, 'Open Tanelu'))
+          }
+        }
+      }
+    }
   }
 
   // ── ROSTER ─────────────────────────────────────────────────────────────────
