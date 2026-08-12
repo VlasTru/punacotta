@@ -15,6 +15,182 @@ function getPool() {
 async function dbq(sql, params=[]) { return (await getPool().query(sql, params)).rows }
 async function dbr(sql, params=[]) { return getPool().query(sql, params) }
 
+const BASE_URL = process.env.URL || 'https://punacotta.netlify.app'
+
+// ─── MAIL ─────────────────────────────────────────────────────────────────────
+async function sendMail(to, subject, text, html) {
+  if (process.env.RESEND_API_KEY) {
+    const from = process.env.SMTP_FROM || 'Pun&Cotta <onboarding@resend.dev>'
+    const res = await fetch('https://api.resend.com/emails', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':`Bearer ${process.env.RESEND_API_KEY}`},
+      body: JSON.stringify({ from, to:[to], subject, text, html: html||text.replace(/\n/g,'<br>') }),
+    })
+    if (!res.ok) console.error('Resend error:', await res.text())
+    return
+  }
+  console.log(`📧 [NO MAIL] To:${to} | ${subject}`)
+}
+
+function mailHtml(title, body, cta_url, cta_label) {
+  return `<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:500px;margin:40px auto;color:#2c1810">
+  <h2 style="font-family:Georgia,serif;color:#c8873a">${title}</h2>
+  <p style="line-height:1.6;color:#8b7355">${body}</p>
+  ${cta_url?`<a href="${cta_url}" style="display:inline-block;margin:20px 0;padding:12px 28px;background:#c8873a;color:#fff;border-radius:8px;text-decoration:none;font-weight:600">${cta_label}</a>`:''}
+  <p style="font-size:12px;color:#bbb;margin-top:32px">Tanelu · This is an automated notification.</p>
+  </body></html>`
+}
+
+// ─── ROSTER AUTOMATION ────────────────────────────────────────────────────────
+async function runRosterAutomation() {
+  const now = new Date()
+  const todayStr = now.toISOString().split('T')[0]
+  const utcHour  = now.getUTCHours()
+
+  // Get all restaurants with their schedule
+  const restaurants = await dbq(
+    `SELECT uid, business_name, first_name, schedule FROM "user" WHERE is_manufacturer=true`)
+
+  for (const r of restaurants) {
+    try {
+      await processRosterForRestaurant(r, todayStr, utcHour)
+    } catch(e) {
+      console.error(`Roster automation failed for uid=${r.uid}:`, e.message)
+    }
+  }
+}
+
+function getMondayOf(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00Z')
+  const day = d.getUTCDay()
+  const diff = day===0 ? -6 : 1-day
+  d.setUTCDate(d.getUTCDate()+diff)
+  return d.toISOString().split('T')[0]
+}
+
+function addDays(dateStr, n) {
+  const d = new Date(dateStr + 'T00:00:00Z')
+  d.setUTCDate(d.getUTCDate()+n)
+  return d.toISOString().split('T')[0]
+}
+
+async function processRosterForRestaurant(restaurant, todayStr, utcHour) {
+  const uid = restaurant.uid
+  const restaurantName = restaurant.business_name || restaurant.first_name || 'your restaurant'
+
+  // Current week's Monday
+  const weekStart = getMondayOf(todayStr)
+  const weekEnd   = addDays(weekStart, 6) // Sunday
+
+  // ── 1. Reminder emails: published roster, employees who haven't posted ────────
+  // Run every morning (UTC 08:00)
+  const publishedRosters = await dbq(
+    `SELECT * FROM roster WHERE owner_uid=$1 AND status='published'
+     AND week_start >= $2`, [uid, todayStr])
+
+  for (const roster of publishedRosters) {
+    const allEmps = await dbq(
+      `SELECT uid, email, first_name FROM "user" WHERE employer_uid=$1 AND email IS NOT NULL`, [uid])
+    const posted = await dbq(
+      `SELECT DISTINCT uid FROM roster_slot WHERE roid=$1`, [roster.roid])
+    const postedUids = new Set(posted.map(p=>String(p.uid)))
+    const wk = new Date(roster.week_start+'T00:00:00Z').toLocaleDateString('en-GB',{day:'numeric',month:'short'})
+
+    for (const emp of allEmps) {
+      if (!postedUids.has(String(emp.uid))) {
+        await sendMail(
+          emp.email,
+          `Reminder: post your availability for week of ${wk}`,
+          `Hi ${emp.first_name},\n\nThe roster for the week of ${wk} is published and waiting for your availability. Please log in and post your time slots.\n\nTanelu`,
+          mailHtml(
+            `Reminder: post your availability`,
+            `The roster for the week of <strong>${wk}</strong> at ${restaurantName} is published. You haven't posted your time slots yet — please do so before it is approved.`,
+            `${BASE_URL}/#roster`, 'Open roster'
+          )
+        )
+        console.log(`📧 Reminder sent to ${emp.email} for roster ${roster.roid}`)
+      }
+    }
+  }
+
+  // ── 2. Auto-approve: at end of last working day ───────────────────────────────
+  // Determine last working day and closing hour from restaurant schedule JSON
+  // schedule is stored as {mon:{periods:[{from,to}],...}, tue:...} keyed by lowercase day name
+  const DAY_NAMES = ['mon','tue','wed','thu','fri','sat','sun']
+  const schedule = restaurant.schedule || {}
+
+  // Find which days have any periods defined (i.e. are working days)
+  const workingDayIndices = DAY_NAMES.map((d,i)=>({d,i}))
+    .filter(({d})=> schedule[d] && schedule[d].periods && schedule[d].periods.length>0)
+    .map(({i})=>i)
+  const activeDays = workingDayIndices.length ? workingDayIndices : [0,1,2,3,4]
+
+  // Today's day-of-week index (0=Mon..6=Sun)
+  const todayDow = (new Date(todayStr+'T00:00:00Z').getUTCDay()+6)%7
+  const lastWorkDow = Math.max(...activeDays)
+  const isLastWorkingDay = todayDow === lastWorkDow
+
+  // Last period close time on the last working day
+  const lastDayName = DAY_NAMES[lastWorkDow]
+  const lastDayPeriods = schedule[lastDayName]?.periods || []
+  const lastCloseTime = lastDayPeriods.length
+    ? lastDayPeriods[lastDayPeriods.length-1].to || '18:00'
+    : '18:00'
+  const closeHour = parseInt(lastCloseTime.split(':')[0])
+  const isLastHour = utcHour === Math.max(0, closeHour - 1)
+
+  const currentRoster = await dbq(
+    `SELECT * FROM roster WHERE owner_uid=$1 AND week_start=$2`, [uid, weekStart])
+  const roster = currentRoster[0]
+
+  if (roster && isLastWorkingDay && isLastHour) {
+    // Auto-approve
+    if (roster.auto_approve && roster.status==='published') {
+      await dbr(`UPDATE roster SET status='approved',approved_at=NOW() WHERE roid=$1`, [roster.roid])
+      console.log(`✅ Auto-approved roster ${roster.roid} for uid=${uid}`)
+      const emps = await dbq(
+        `SELECT email, first_name FROM "user" WHERE employer_uid=$1 AND email IS NOT NULL`, [uid])
+      const wk = new Date(weekStart+'T00:00:00Z').toLocaleDateString('en-GB',{day:'numeric',month:'short'})
+      for (const emp of emps) {
+        await sendMail(emp.email,
+          `Roster approved for week of ${wk}`,
+          `Hi ${emp.first_name},\n\nThe roster for week of ${wk} has been auto-approved. Your schedule is now final.\n\nTanelu`,
+          mailHtml('Roster auto-approved',
+            `The roster for the week of <strong>${wk}</strong> at ${restaurantName} has been automatically approved. Your schedule is now final.`,
+            `${BASE_URL}/#roster`, 'View roster'))
+      }
+    }
+
+    // Auto-clone: copy current week → next week if not already cloned
+    if (roster.auto_clone && ['approved','published'].includes(roster.status)) {
+      const nextWeek = addDays(weekStart, 7)
+      const [existingNext] = await dbq(
+        `SELECT roid FROM roster WHERE owner_uid=$1 AND week_start=$2`, [uid, nextWeek])
+      if (!existingNext) {
+        // Create next week roster
+        const res = await dbr(
+          `INSERT INTO roster (owner_uid,week_start,cloned_from,auto_clone,auto_approve)
+           VALUES ($1,$2,$3,$4,$5) RETURNING roid`,
+          [uid, nextWeek, roster.roid, roster.auto_clone, roster.auto_approve])
+        const newRoid = res.rows[0].roid
+        // Copy slots
+        const slots = await dbq('SELECT * FROM roster_slot WHERE roid=$1', [roster.roid])
+        for (const s of slots) {
+          const newDate = addDays(String(s.slot_date).slice(0,10), 7)
+          await dbr(
+            'INSERT INTO roster_slot (roid,uid,slot_date,start_time,end_time) VALUES ($1,$2,$3,$4,$5)',
+            [newRoid, s.uid, newDate, s.start_time, s.end_time])
+        }
+        console.log(`✅ Auto-cloned roster for uid=${uid} → week ${nextWeek}`)
+      } else {
+        console.log(`ℹ️ Auto-clone skipped for uid=${uid}: next week already has a roster`)
+      }
+    }
+  }
+}
+
+
+
 // ─── ARIMA(1,1,1) forecast ────────────────────────────────────────────────────
 function arimaForecast(series, h) {
   if (series.length < 3) return Array(h).fill(series[0]||0)
@@ -102,10 +278,11 @@ export const handler = async () => {
       await runForecastForUser(uid).catch(err=>console.error(`Forecast failed for uid=${uid}:`,err))
       await syncDraftOrdersScheduled(uid).catch(err=>console.error(`Draft sync failed for uid=${uid}:`,err))
     }
-    console.log(`✅ Forecast + draft sync complete for ${users.length} restaurants`)
+    await runRosterAutomation().catch(err=>console.error('Roster automation failed:',err))
+    console.log(`✅ Forecast + draft sync + roster automation complete for ${users.length} restaurants`)
     return { statusCode: 200 }
   } catch(err) {
-    console.error('Scheduled forecast error:', err)
+    console.error('Scheduled error:', err)
     return { statusCode: 500 }
   }
 }

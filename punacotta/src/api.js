@@ -71,6 +71,7 @@ export const api = {
   approveRoster:      (roid)       => req('POST', `/roster/${roid}/approve`),
   unapproveRoster:    (roid)       => req('POST', `/roster/${roid}/unapprove`),
   cloneRoster:        (roid)       => req('POST', `/roster/${roid}/clone`),
+  clonePastRoster:    (week)       => req('POST', `/roster/clone-past`, { week_start: week }),
   saveRosterSlots:    (roid,data)  => req('POST', `/roster/${roid}/slots`, data),
   deleteRosterSlot:   (roid,rsid)  => req('DELETE',`/roster/${roid}/slots`, {rsid}),
   // Staff

@@ -1771,6 +1771,36 @@ async function route(method, segments, body, headers, event) {
       return [200, await fetchRoster(r1)]
     }
 
+    // POST /roster/clone-past — clone previous week's roster into a specified week
+    if (r1 === 'clone-past' && method === 'POST') {
+      if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+      const { week_start } = body
+      if (!week_start) return [400, { error: 'week_start required' }]
+      // Find previous week
+      const tgt = new Date(week_start+'T00:00:00Z')
+      const prev = new Date(tgt); prev.setUTCDate(prev.getUTCDate()-7)
+      const prevStr = prev.toISOString().split('T')[0]
+      const [prevRoster] = await dbq('SELECT * FROM roster WHERE owner_uid=$1 AND week_start=$2', [user.uid, prevStr])
+      if (!prevRoster) return [404, { error: 'No roster found for the previous week to clone from' }]
+      // Create or get target roster
+      const res = await dbr(
+        `INSERT INTO roster (owner_uid,week_start,cloned_from,auto_clone,auto_approve)
+         VALUES ($1,$2,$3,$4,$5) ON CONFLICT (owner_uid,week_start)
+         DO UPDATE SET cloned_from=$3 RETURNING *`,
+        [user.uid, week_start, prevRoster.roid, prevRoster.auto_clone, prevRoster.auto_approve])
+      const newRoid = res.rows[0].roid
+      // Clear any existing slots and copy from previous week
+      await dbr('DELETE FROM roster_slot WHERE roid=$1', [newRoid])
+      const slots = await dbq('SELECT * FROM roster_slot WHERE roid=$1', [prevRoster.roid])
+      for (const s of slots) {
+        const d = new Date(String(s.slot_date).slice(0,10)+'T00:00:00Z')
+        d.setUTCDate(d.getUTCDate()+7)
+        await dbr('INSERT INTO roster_slot (roid,uid,slot_date,start_time,end_time) VALUES ($1,$2,$3,$4,$5)',
+          [newRoid, s.uid, d.toISOString().split('T')[0], s.start_time, s.end_time])
+      }
+      return [201, await fetchRoster(newRoid)]
+    }
+
     if (r1 && r2 === 'clone' && method === 'POST') {
       if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
       const [r] = await dbq('SELECT * FROM roster WHERE roid=$1 AND owner_uid=$2', [r1, user.uid])

@@ -5053,7 +5053,11 @@ function RosterPage({ user, toast, onBack }) {
   };
 
   // ── Restaurant buttons ──────────────────────────────────────────────────────
-  const canClone = roster?.roid && !isFuture && ['published','approved','unapproved'].includes(status);
+  const canClone     = roster?.roid && !isFuture && ['published','approved','unapproved'].includes(status);
+  // Clone Past: current week is displayed, no slots posted yet, not already cloned from prev week
+  const hasSlots     = (roster?.slots||[]).length > 0;
+  const isClonedFrom = !!roster?.cloned_from;
+  const canClonePast = isCurrent && !hasSlots && !isClonedFrom;
 
   const manufButtons = () => {
     if (isPast) return null;
@@ -5062,6 +5066,13 @@ function RosterPage({ user, toast, onBack }) {
       btns.push(<Btn key="pub" size="sm" loading={saving} onClick={async()=>{ const r=await ensureRoster(); rAction(api.publishRoster,r.roid); }}>Publish</Btn>);
     if (status==='published')
       btns.push(<Btn key="unpub" size="sm" variant="secondary" loading={saving} onClick={()=>rAction(api.unpublishRoster,roster.roid)}>Unpublish</Btn>);
+    if (canClonePast)
+      btns.push(<Btn key="clonepast" size="sm" variant="secondary" loading={saving}
+        onClick={async()=>{
+          setSaving(true);
+          try { const r=await api.clonePastRoster(fmt(weekStart)); setRoster(r); toast("Cloned from previous week"); }
+          catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
+        }}>← Clone past</Btn>);
     if (canClone)
       btns.push(<Btn key="clone" size="sm" variant="secondary" loading={saving} onClick={()=>rAction(api.cloneRoster,roster.roid)}>Clone →</Btn>);
     if (['published','unapproved'].includes(status))
@@ -5078,41 +5089,35 @@ function RosterPage({ user, toast, onBack }) {
   const isFinalized = mySlots.some(s=>s.finalized);
   const nextTempId = () => `t${Date.now()}${Math.random()}`;
 
-  const mergeSlots = (slots) => {
-    // Sort by start, then merge overlapping/adjacent slots
-    const sorted = [...slots].sort((a,b) => timeToMins(a.start_time) - timeToMins(b.start_time));
-    const merged = [];
-    for (const s of sorted) {
-      const last = merged[merged.length-1];
-      if (last && timeToMins(s.start_time) <= timeToMins(last.end_time)) {
-        // Overlaps or adjacent — extend end if needed
-        if (timeToMins(s.end_time) > timeToMins(last.end_time)) {
-          last.end_time = s.end_time;
+  const mergeAllSlots = (slots) => {
+    // Group by date, sort each day, merge overlapping/adjacent
+    const byDay = {};
+    slots.forEach(s => { (byDay[s.slot_date] = byDay[s.slot_date]||[]).push(s); });
+    const result = [];
+    Object.entries(byDay).forEach(([date, daySlots]) => {
+      const sorted = [...daySlots].sort((a,b) => timeToMins(a.start_time) - timeToMins(b.start_time));
+      const merged = [];
+      for (const s of sorted) {
+        const last = merged[merged.length-1];
+        if (last && timeToMins(s.start_time) <= timeToMins(last.end_time)) {
+          if (timeToMins(s.end_time) > timeToMins(last.end_time)) last.end_time = s.end_time;
+        } else {
+          merged.push({ ...s });
         }
-      } else {
-        merged.push({ ...s });
       }
-    }
-    return merged.map((s,i) => ({ ...s, tempId: `m${i}${Date.now()}` }));
+      merged.forEach((s,i) => result.push({ ...s, tempId:`${date}-${i}` }));
+    });
+    return result;
   };
 
   const addOrUpdateSlot = (dateStr, startM, endM, tempId=null) => {
     const start_time = minsToHhmm(Math.max(START_H*60, Math.min(startM, END_H*60-SNAP)));
     const end_time   = minsToHhmm(Math.min(END_H*60,  Math.max(endM,   START_H*60+SNAP)));
-    setMySlots(prev => {
-      let updated;
-      if (tempId) {
-        // Extending an existing slot
-        updated = prev.map(s => s.tempId===tempId ? {...s, start_time, end_time} : s);
-      } else {
-        // Adding a new slot
-        updated = [...prev, { tempId: nextTempId(), slot_date:dateStr, start_time, end_time, finalized:false }];
-      }
-      // Separate this day's slots from other days, merge, then recombine
-      const otherDays = updated.filter(s => s.slot_date !== dateStr);
-      const thisDay   = updated.filter(s => s.slot_date === dateStr);
-      return [...otherDays, ...mergeSlots(thisDay)];
-    });
+    if (tempId) {
+      setMySlots(p => p.map(s => s.tempId===tempId ? {...s, start_time, end_time} : s));
+    } else {
+      setMySlots(p => [...p, { tempId:nextTempId(), slot_date:dateStr, start_time, end_time, finalized:false }]);
+    }
   };
 
   const removeSlot = tempId => { setMySlots(p=>p.filter(s=>s.tempId!==tempId)); setTooltip(null); };
@@ -5121,8 +5126,9 @@ function RosterPage({ user, toast, onBack }) {
     if (!roster?.roid) { toast("Roster not published yet","error"); return; }
     setSaving(true);
     try {
+      const merged = mergeAllSlots(mySlots);
       const r = await api.saveRosterSlots(roster.roid, {
-        slots: mySlots.map(s=>({slot_date:s.slot_date,start_time:s.start_time,end_time:s.end_time})),
+        slots: merged.map(s=>({slot_date:s.slot_date,start_time:s.start_time,end_time:s.end_time})),
         finalize: true,
       });
       setRoster(r);
