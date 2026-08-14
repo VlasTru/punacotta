@@ -4152,6 +4152,67 @@ function RoleEditDialog({ role, allSkills, onSave, onClose, createSkill }) {
 }
 
 // ─── STAFF PAGE ────────────────────────────────────────────────────────────────
+// ─── OWNER SKILLS PANEL ───────────────────────────────────────────────────────
+// Lets the restaurant owner assign skills to themselves so they can be
+// assigned to process steps (otherwise they'd never appear in availability checks)
+function OwnerSkillsPanel({ user, skills, createSkill, toast }) {
+  const [mySkills,  setMySkills]  = useState([]);
+  const [saving,    setSaving]    = useState(false);
+  const [expanded,  setExpanded]  = useState(false);
+
+  useEffect(()=>{
+    api.getSkills().then(all=>{
+      // Fetch owner's own employee_skill entries
+      fetch('/api/staff/self-skills', {
+        headers:{ Authorization:`Bearer ${localStorage.getItem("token")}` }
+      }).then(r=>r.json()).then(s=>setMySkills(s||[])).catch(()=>{});
+    }).catch(()=>{});
+  },[]);
+
+  const save = async (newSkills) => {
+    setSaving(true);
+    try {
+      await fetch('/api/staff/self-skills', {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${localStorage.getItem("token")}` },
+        body: JSON.stringify({ skill_ids: newSkills.map(s=>s.skid) })
+      });
+      setMySkills(newSkills);
+      toast("Your skills saved");
+    } catch(e){ toast(e.message||"Error","error"); }
+    finally{ setSaving(false); }
+  };
+
+  return (
+    <div style={{background:G.sand,borderRadius:12,padding:"12px 16px",marginBottom:16,border:`1px solid ${G.border}`}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontSize:13,fontWeight:600,color:G.dark}}>Your skills</span>
+          {mySkills.length>0&&!expanded&&(
+            <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+              {mySkills.map(s=>(
+                <span key={s.skid} style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:`${s.color||G.muted}18`,color:s.color||G.muted,border:`1px solid ${s.color||G.muted}40`}}>
+                  {s.name}
+                </span>
+              ))}
+            </div>
+          )}
+          {mySkills.length===0&&!expanded&&<span style={{fontSize:12,color:G.muted,fontStyle:"italic"}}>None assigned — add skills to be eligible for process steps</span>}
+        </div>
+        <button onClick={()=>setExpanded(e=>!e)} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:G.caramel,fontWeight:600}}>
+          {expanded?"Done":"Edit"}
+        </button>
+      </div>
+      {expanded&&(
+        <div style={{marginTop:12}}>
+          <SkillCombo allSkills={skills} selected={mySkills} onChange={s=>save(s)} onCreateSkill={createSkill}/>
+          <p style={{fontSize:11,color:G.muted,marginTop:6}}>These skills make you eligible to be assigned to process steps.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StaffPage({ user, toast }) {
   const [employees, setEmployees] = useState([]);
   const [roles,     setRoles]     = useState([]);
@@ -4310,6 +4371,9 @@ function StaffPage({ user, toast }) {
         <Btn size="sm" onClick={openNew}>+ Employee</Btn>
       </div>
     }>
+      {/* Owner self-skills — so the owner can be assigned to process steps */}
+      <OwnerSkillsPanel user={user} skills={skills} createSkill={createSkill} toast={toast}/>
+
       {/* Form */}
       {(showNew||editEmp)&&(
         <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
@@ -5170,14 +5234,16 @@ function ProcessesPage({ user, setPage, toast }) {
               {startDialog.warnings.map((w,i)=>(
                 <div key={i} style={{background:"#fef3c7",border:"1px solid #fcd34d",borderRadius:8,padding:"12px 14px"}}>
                   <p style={{fontSize:13,color:"#92400e",fontWeight:600,marginBottom:4}}>
-                    {w.type==='exceeds_hours'?'Working hours':'Employee availability'}
+                    {w.type==='exceeds_hours' ? 'Working hours'
+                     : w.type==='employee_no_slot' ? 'No roster slot today'
+                     : 'Employee availability'}
                   </p>
                   <p style={{fontSize:13,color:"#92400e"}}>{w.message}</p>
                 </div>
               ))}
             </div>
             <div style={{padding:"16px 24px",borderTop:`1px solid ${G.border}`,display:"flex",gap:10,justifyContent:"flex-end"}}>
-              {startDialog.warnings.some(w=>w.type==='exceeds_hours')&&(
+              {startDialog.warnings.some(w=>['exceeds_hours','employee_no_slot'].includes(w.type))&&(
                 <Btn variant="secondary" size="sm" loading={startSaving}
                   onClick={()=>handleRunProcess(startDialog.proc,true,true)}>
                   Ignore & start anyway
@@ -5315,7 +5381,6 @@ function RosterPage({ user, toast, onBack }) {
       btns.push(<Btn key="app" size="sm" loading={saving} onClick={()=>rAction(api.approveRoster,roster.roid)}>Approve</Btn>);
     if (status==='approved') {
       btns.push(<Btn key="unapp" size="sm" variant="secondary" loading={saving} onClick={()=>rAction(api.unapproveRoster,roster.roid)}>Unapprove</Btn>);
-      if (canClone) btns.push(<Btn key="clone2" size="sm" variant="secondary" loading={saving} onClick={()=>rAction(api.cloneRoster,roster.roid)}>Clone →</Btn>);
     }
     return btns;
   };

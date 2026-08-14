@@ -1354,6 +1354,28 @@ async function route(method, segments, body, headers, event) {
       return { ...emp, roles, skills }
     }
 
+    // GET/POST /staff/self-skills — owner assigns skills to themselves
+    if (r1 === 'self-skills') {
+      if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+      if (method === 'GET') {
+        const rows = await dbq(
+          `SELECT s.skid, s.name, s.color FROM employee_skill es
+           JOIN skill s ON s.skid=es.skid WHERE es.uid=$1`, [user.uid])
+        return [200, rows]
+      }
+      if (method === 'POST') {
+        const { skill_ids } = body
+        await dbr('DELETE FROM employee_skill WHERE uid=$1', [user.uid])
+        for (const skid of (skill_ids||[])) {
+          await dbr('INSERT INTO employee_skill (uid,skid) VALUES ($1,$2) ON CONFLICT DO NOTHING', [user.uid, skid])
+        }
+        const rows = await dbq(
+          `SELECT s.skid, s.name, s.color FROM employee_skill es
+           JOIN skill s ON s.skid=es.skid WHERE es.uid=$1`, [user.uid])
+        return [200, rows]
+      }
+    }
+
     // GET /staff/lookup?email=... — check if a Tanelu user exists with this email
     if (r1 === 'lookup' && method === 'GET') {
       const email = event?.queryStringParameters?.email
@@ -1688,8 +1710,8 @@ async function route(method, segments, body, headers, event) {
 
       // ── Validation 1: Employee availability ───────────────────────────────────
       for (const step of steps) {
-        // Find employees with this skill on roster today
-        const available = await dbq(
+        // Tier 1: employees with this skill who have an approved roster slot today
+        const onRoster = await dbq(
           `SELECT DISTINCT rs.uid FROM roster_slot rs
            JOIN employee_skill es ON es.uid=rs.uid
            WHERE es.skid=$1 AND rs.slot_date=$2
@@ -1701,11 +1723,34 @@ async function route(method, segments, body, headers, event) {
            WHERE rs2.skid=$1 AND rsl.slot_date=$2
              AND rsl.roid IN (SELECT roid FROM roster WHERE owner_uid=$3 AND status='approved')`,
           [step.skid, todayStr, ownerUid])
-        if (!available.length) {
+
+        if (onRoster.length) continue  // someone is on roster with this skill — OK
+
+        // Tier 2: any employee OR the owner linked to this restaurant who has the skill
+        const anyEmployee = await dbq(
+          `SELECT DISTINCT u.uid FROM "user" u
+           JOIN employee_skill es ON es.uid=u.uid
+           WHERE es.skid=$1 AND (u.employer_uid=$2 OR u.uid=$2)
+           UNION
+           SELECT DISTINCT u.uid FROM "user" u
+           JOIN employee_role er ON er.uid=u.uid
+           JOIN role_skill rs2 ON rs2.rid=er.rid
+           WHERE rs2.skid=$1 AND (u.employer_uid=$2 OR u.uid=$2)`,
+          [step.skid, ownerUid])
+
+        if (!anyEmployee.length) {
           warnings.push({
             type: 'employee_unavailable',
-            message: `An employee with the skill "${step.skill_name}" will be unavailable when this step starts.`,
+            message: `No employee with the skill "${step.skill_name}" is linked to this restaurant.`,
             action: 'schedule_or_cancel',
+            step: step.skill_name,
+          })
+        } else {
+          // Employees exist but none have a roster slot today — softer warning
+          warnings.push({
+            type: 'employee_no_slot',
+            message: `No employee with the skill "${step.skill_name}" has a roster slot for today. ${anyEmployee.length} employee(s) have this skill.`,
+            action: 'schedule_or_ignore_or_cancel',
             step: step.skill_name,
           })
         }
