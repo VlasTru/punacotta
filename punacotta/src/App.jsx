@@ -4668,6 +4668,7 @@ function SkillComboWithProcesses({ allItems, onAdd, onCreateSkill }) {
 
 
 // ─── PROCESSES PAGE ────────────────────────────────────────────────────────────
+function ProcessesPage({ user, setPage, toast }) {
   const [processes, setProcesses] = useState([]);
   const [skills,    setSkills]    = useState([]);
   const [roles,     setRoles]     = useState([]);
