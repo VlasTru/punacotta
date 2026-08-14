@@ -24,7 +24,6 @@ function useLang() {
   const [lang, setLangState] = useState(getLang);
   const setLang = l => { setLangCookie(l); setLangState(l); };
   return [lang, setLang];
-const durAbbr = u => DUR_UNITS.find(d=>d.value===u)?.label || (u||"min");
 }
 // Global mutable lang ref so non-hook contexts can read it
 let _currentLang = getLang();
@@ -3958,6 +3957,7 @@ const DUR_UNITS = [
   { value:'minutes', label:'min' },
   { value:'hours',   label:'h'   },
 ];
+const durAbbr = u => DUR_UNITS.find(d=>d.value===u)?.label || (u||'min');
 
 // ─── SKILL COMBO ──────────────────────────────────────────────────────────────
 function SkillCombo({ allSkills, selected, excluded=[], onChange, onCreateSkill, onClickPill, pillColor }) {
