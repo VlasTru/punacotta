@@ -4509,7 +4509,6 @@ function RolesPage({ roles, skills, setRoles, setSkills, createSkill, toast, onB
   );
 }
 
-// ─── PROCESSES PAGE (v12) ──────────────────────────────────────────────────────
 // ─── EXECUTIONS CALENDAR ──────────────────────────────────────────────────────
 function ExecutionsCalendar({ runs, onAction }) {
   if (!runs || !runs.length) return null;
@@ -4623,6 +4622,50 @@ function ExecutionsCalendar({ runs, onAction }) {
     </div>
   );
 }
+
+// ─── SKILL COMBO WITH PROCESSES ───────────────────────────────────────────────
+// Variant of SkillCombo that shows processes in bold and doesn't use pills (add-only)
+function SkillComboWithProcesses({ allItems, onAdd, onCreateSkill }) {
+  const [input, setInput] = useState("");
+  const [open, setOpen]   = useState(false);
+
+  const filtered = allItems.filter(s=>s.name.toLowerCase().includes(input.toLowerCase()));
+  const canCreate = onCreateSkill && input.trim() &&
+    !allItems.find(s=>s.name.toLowerCase()===input.trim().toLowerCase() && !s._isProcess && !s._isRole);
+
+  const select = item => { onAdd(item); setInput(""); setOpen(false); };
+
+  return (
+    <div style={{position:"relative"}}>
+      <input value={input} onChange={e=>{ setInput(e.target.value); setOpen(true); }}
+        onFocus={()=>setOpen(true)} onBlur={()=>setTimeout(()=>setOpen(false),150)}
+        onKeyDown={e=>{ if(e.key==="Escape") setOpen(false); if(e.key==="Enter"&&filtered.length) select(filtered[0]); }}
+        placeholder="Type to search processes or skills…"
+        style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}/>
+      {open&&(filtered.length>0||canCreate)&&(
+        <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,background:G.white,border:`1px solid ${G.border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(44,24,16,0.12)",zIndex:500,maxHeight:240,overflowY:"auto"}}>
+          {canCreate&&(
+            <button onMouseDown={async()=>{ const s=await onCreateSkill(input.trim()); if(s) select(s); }}
+              style={{width:"100%",textAlign:"left",padding:"9px 14px",background:"none",border:"none",cursor:"pointer",fontSize:13,fontFamily:G.mono,color:G.caramel,fontWeight:600,borderBottom:`1px solid ${G.border}`}}>
+              + Add skill "{input.trim()}"
+            </button>
+          )}
+          {filtered.map(item=>(
+            <button key={item.skid} onMouseDown={()=>select(item)}
+              style={{width:"100%",textAlign:"left",padding:"9px 14px",background:"none",border:"none",cursor:"pointer",fontSize:13,fontFamily:G.mono,color:G.dark,display:"flex",alignItems:"center",gap:8}}
+              onMouseEnter={e=>e.currentTarget.style.background=G.sand}
+              onMouseLeave={e=>e.currentTarget.style.background="none"}>
+              {item._isProcess&&<span style={{fontSize:10,background:`${G.caramel}20`,color:G.caramel,borderRadius:4,padding:"1px 6px",fontWeight:700,flexShrink:0}}>PROCESS</span>}
+              <span style={{fontWeight:item._isProcess?700:400}}>{item.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 
 // ─── PROCESSES PAGE ────────────────────────────────────────────────────────────
   const [processes, setProcesses] = useState([]);
@@ -5151,49 +5194,6 @@ function ExecutionsCalendar({ runs, onAction }) {
     </Page>
   );
 }
-
-// ─── SKILL COMBO WITH PROCESSES ───────────────────────────────────────────────
-// Variant of SkillCombo that shows processes in bold and doesn't use pills (add-only)
-function SkillComboWithProcesses({ allItems, onAdd, onCreateSkill }) {
-  const [input, setInput] = useState("");
-  const [open, setOpen]   = useState(false);
-
-  const filtered = allItems.filter(s=>s.name.toLowerCase().includes(input.toLowerCase()));
-  const canCreate = onCreateSkill && input.trim() &&
-    !allItems.find(s=>s.name.toLowerCase()===input.trim().toLowerCase() && !s._isProcess && !s._isRole);
-
-  const select = item => { onAdd(item); setInput(""); setOpen(false); };
-
-  return (
-    <div style={{position:"relative"}}>
-      <input value={input} onChange={e=>{ setInput(e.target.value); setOpen(true); }}
-        onFocus={()=>setOpen(true)} onBlur={()=>setTimeout(()=>setOpen(false),150)}
-        onKeyDown={e=>{ if(e.key==="Escape") setOpen(false); if(e.key==="Enter"&&filtered.length) select(filtered[0]); }}
-        placeholder="Type to search processes or skills…"
-        style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}/>
-      {open&&(filtered.length>0||canCreate)&&(
-        <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,background:G.white,border:`1px solid ${G.border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(44,24,16,0.12)",zIndex:500,maxHeight:240,overflowY:"auto"}}>
-          {canCreate&&(
-            <button onMouseDown={async()=>{ const s=await onCreateSkill(input.trim()); if(s) select(s); }}
-              style={{width:"100%",textAlign:"left",padding:"9px 14px",background:"none",border:"none",cursor:"pointer",fontSize:13,fontFamily:G.mono,color:G.caramel,fontWeight:600,borderBottom:`1px solid ${G.border}`}}>
-              + Add skill "{input.trim()}"
-            </button>
-          )}
-          {filtered.map(item=>(
-            <button key={item.skid} onMouseDown={()=>select(item)}
-              style={{width:"100%",textAlign:"left",padding:"9px 14px",background:"none",border:"none",cursor:"pointer",fontSize:13,fontFamily:G.mono,color:G.dark,display:"flex",alignItems:"center",gap:8}}
-              onMouseEnter={e=>e.currentTarget.style.background=G.sand}
-              onMouseLeave={e=>e.currentTarget.style.background="none"}>
-              {item._isProcess&&<span style={{fontSize:10,background:`${G.caramel}20`,color:G.caramel,borderRadius:4,padding:"1px 6px",fontWeight:700,flexShrink:0}}>PROCESS</span>}
-              <span style={{fontWeight:item._isProcess?700:400}}>{item.name}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 
 // ─── ROSTER PAGE ──────────────────────────────────────────────────────────────
 // Used both by Restaurant (full view, publish/approve) and Employees (own slots)
