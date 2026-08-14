@@ -1777,6 +1777,7 @@ async function route(method, segments, body, headers, event) {
       const firstStep = steps[0]
       const [firstAssignee] = await dbq(
         `SELECT prs.uid, u.email, u.first_name FROM process_run_step prs
+         JOIN process_skill ps ON ps.psid=prs.psid
          JOIN "user" u ON u.uid=prs.uid WHERE prs.prid=$1 AND ps.seq=1
          AND prs.uid IS NOT NULL LIMIT 1`,
         [prid])

@@ -5270,8 +5270,9 @@ function RosterPage({ user, toast, onBack }) {
 
   const today = new Date(); today.setHours(0,0,0,0);
   const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate()+6);
-  const isPast   = weekEnd < today;
-  const isFuture = weekStart > today;
+  const isPast    = weekEnd < today;
+  const isFuture  = weekStart > today;
+  const isCurrent = !isPast && !isFuture;
   const status   = roster?.status || 'unpublished';
 
   const rAction = async (fn, ...args) => {
