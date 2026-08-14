@@ -4510,7 +4510,121 @@ function RolesPage({ roles, skills, setRoles, setSkills, createSkill, toast, onB
 }
 
 // ─── PROCESSES PAGE (v12) ──────────────────────────────────────────────────────
-function ProcessesPage({ user, setPage, toast }) {
+// ─── EXECUTIONS CALENDAR ──────────────────────────────────────────────────────
+function ExecutionsCalendar({ runs, onAction }) {
+  if (!runs || !runs.length) return null;
+
+  const RUN_COLS = { in_progress:G.caramel, on_hold:"#eab308", completed:G.green, cancelled:G.red };
+  const dayMins = 600, labelW = 180, W = 920, chartW = W - labelW - 16;
+  const barH = 36, gap = 14, rowH = barH + gap;
+  const svgH = runs.length * rowH + 40;
+
+  // Anchor = earliest started_at rounded down to the hour (UTC)
+  const validRuns = runs.filter(r => r.started_at);
+  if (!validRuns.length) return null;
+  const anchorMs = validRuns.reduce((min, r) => {
+    const t = new Date(r.started_at).getTime();
+    return t < min ? t : min;
+  }, new Date(validRuns[0].started_at).getTime());
+  const anchorHour = Math.floor(anchorMs / 3600000) * 3600000; // round down to hour in UTC
+
+  const minsFromAnchor = iso => {
+    if (!iso) return 0;
+    return Math.max(0, (new Date(iso).getTime() - anchorHour) / 60000);
+  };
+  const minToX = m => Math.min(chartW, Math.max(0, (m / dayMins) * chartW));
+
+  const anchorLabel = new Date(anchorHour).toLocaleTimeString("en-GB", {hour:"2-digit", minute:"2-digit"});
+
+  return (
+    <div style={{overflowX:"auto", background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:16, marginBottom:12}}>
+      <p style={{fontSize:11, color:G.muted, marginBottom:8}}>Timeline from {anchorLabel}</p>
+      <svg width={W} height={svgH}>
+        {Array.from({length:21}, (_,i)=>i*30).map(m=>(
+          <g key={m}>
+            <line x1={labelW+minToX(m)} y1={0} x2={labelW+minToX(m)} y2={svgH}
+              stroke={G.border} strokeWidth={m%60===0?1:0.5}/>
+            {m%60===0&&(
+              <text x={labelW+minToX(m)+3} y={12} fontSize={9} fill={G.muted}>
+                {new Date(anchorHour + m*60000).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}
+              </text>
+            )}
+          </g>
+        ))}
+        {runs.map((run,i)=>{
+          if (!run.started_at) return null;
+          const y   = 20 + i*rowH;
+          const col = RUN_COLS[run.status] || G.muted;
+          const startM = minsFromAnchor(run.started_at);
+          const endM   = run.completed_at ? minsFromAnchor(run.completed_at)
+            : run.status==="in_progress" ? minsFromAnchor(new Date().toISOString())
+            : startM + 30;
+          const x1 = labelW + minToX(startM);
+          const w  = Math.max(6, minToX(endM) - minToX(startM));
+          return (
+            <g key={run.prid}>
+              <text x={labelW-6} y={y+barH/2+4} fontSize={12} fontWeight="600" fill={G.dark}
+                textAnchor="end" dominantBaseline="middle">
+                {(run.process_name||"").slice(0,22)}
+              </text>
+              <rect x={x1} y={y} width={w} height={barH}
+                fill={`${col}28`} stroke={col} strokeWidth={1.5}
+                strokeDasharray={run.status==="on_hold"?"6,3":"none"} rx={5}/>
+              {w>55&&<text x={x1+6} y={y+18} fontSize={10} fill={col} fontWeight="600">
+                {run.status.replace("_"," ")}
+              </text>}
+              {w>80&&<text x={x1+6} y={y+32} fontSize={9} fill={G.muted}>
+                {new Date(run.started_at).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}
+                {run.completed_at&&` → ${new Date(run.completed_at).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}`}
+              </text>}
+            </g>
+          );
+        })}
+      </svg>
+      {/* Legend */}
+      <div style={{display:"flex",gap:16,marginTop:10,flexWrap:"wrap"}}>
+        {Object.entries(RUN_COLS).map(([s,c])=>(
+          <span key={s} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:c}}>
+            <span style={{width:12,height:12,borderRadius:3,background:`${c}30`,border:`1.5px solid ${c}`,display:"inline-block"}}/>
+            {s.replace("_"," ")}
+          </span>
+        ))}
+      </div>
+      {/* Run cards */}
+      <div style={{marginTop:16,display:"flex",flexDirection:"column",gap:8}}>
+        {runs.map(run=>{
+          const col = RUN_COLS[run.status]||G.muted;
+          return (
+            <div key={run.prid} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+              padding:"10px 14px",background:G.sand,borderRadius:8}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <span style={{fontWeight:700,fontSize:14,color:G.dark}}>{run.process_name}</span>
+                <span style={{fontSize:12,padding:"2px 10px",borderRadius:20,background:`${col}20`,color:col,fontWeight:600}}>
+                  {run.status.replace("_"," ")}
+                </span>
+                {run.started_at&&<span style={{fontSize:12,color:G.muted}}>
+                  {new Date(run.started_at).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}
+                </span>}
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                {run.status==="in_progress"&&<>
+                  <Btn size="sm" variant="secondary" onClick={()=>onAction(run.prid,"pause")}>⏸</Btn>
+                  <Btn size="sm" variant="danger"    onClick={()=>onAction(run.prid,"stop")}>⏹</Btn>
+                </>}
+                {run.status==="on_hold"&&<>
+                  <Btn size="sm" onClick={()=>onAction(run.prid,"resume")}>▶</Btn>
+                  <Btn size="sm" variant="danger" onClick={()=>onAction(run.prid,"stop")}>⏹</Btn>
+                </>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── PROCESSES PAGE ────────────────────────────────────────────────────────────
   const [processes, setProcesses] = useState([]);
   const [skills,    setSkills]    = useState([]);
   const [roles,     setRoles]     = useState([]);
@@ -4533,7 +4647,11 @@ function ProcessesPage({ user, setPage, toast }) {
     } catch(e){ toast(e.message,"error"); } finally{ setLoading(false); }
   },[]);
   useEffect(()=>{ load(); },[]);
-  useEffect(()=>{ api.getProcessRuns().then(setRuns).catch(()=>{}); },[]);
+  useEffect(()=>{
+    if (user?.is_manufacturer || user?.employer_uid) {
+      api.getProcessRuns().then(setRuns).catch(()=>{});
+    }
+  },[]);
 
   const STATUS_COLORS_RUN = { in_progress:G.caramel, on_hold:"#eab308", completed:G.green, cancelled:G.red };
 
@@ -4993,119 +5111,7 @@ function ProcessesPage({ user, setPage, toast }) {
         <h3 style={{fontFamily:G.font,fontSize:18,marginBottom:14,color:G.dark}}>Executions</h3>
         {runs.length===0 ? (
           <p style={{fontSize:13,color:G.muted,fontStyle:"italic"}}>No processes have been started yet. Click ▶ Run on any process above to begin.</p>
-        ) : (()=>{
-          // Build PERT-style calendar of actual runs for today
-          const dayMins = 600; // 10h working window
-          const labelW = 180, W = 920, chartW = W - labelW - 16;
-          const barH = 36, gap = 14, rowH = barH + gap;
-          const svgH = runs.length * rowH + 40;
-          const RUN_COLS = { in_progress:G.caramel, on_hold:"#eab308", completed:G.green, cancelled:G.red };
-
-          // Use actual started_at to position bars; width = duration in minutes
-          const earliestStart = runs.reduce((min, r) => {
-            const t = new Date(r.started_at);
-            return t < min ? t : min;
-          }, new Date(runs[0].started_at));
-          const anchor = new Date(earliestStart);
-          anchor.setHours(anchor.getHours(), 0, 0, 0);
-
-          const minsFromAnchor = (iso) => {
-            if (!iso) return 0;
-            return (new Date(iso) - anchor) / 60000;
-          };
-
-          const minToX = m => Math.min(chartW, Math.max(0, (m / dayMins) * chartW));
-
-          return (
-            <div style={{overflowX:"auto",background:G.white,border:`1px solid ${G.border}`,borderRadius:14,padding:16,marginBottom:12}}>
-              <p style={{fontSize:11,color:G.muted,marginBottom:8}}>
-                Timeline from {anchor.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}
-              </p>
-              <svg width={W} height={svgH}>
-                {/* Grid lines every 30 min */}
-                {Array.from({length:21},(_,i)=>i*30).map(m=>(
-                  <g key={m}>
-                    <line x1={labelW+minToX(m)} y1={0} x2={labelW+minToX(m)} y2={svgH} stroke={G.border} strokeWidth={m%60===0?1:0.5}/>
-                    {m%60===0&&<text x={labelW+minToX(m)+3} y={10} fontSize={9} fill={G.muted}>
-                      {`${anchor.getHours()+Math.floor(m/60)}:00`}
-                    </text>}
-                  </g>
-                ))}
-                {runs.map((run,i)=>{
-                  const y = 18 + i*rowH;
-                  const col = RUN_COLS[run.status]||G.muted;
-                  const startM = minsFromAnchor(run.started_at);
-                  const endM = run.completed_at
-                    ? minsFromAnchor(run.completed_at)
-                    : run.status==="in_progress" ? minsFromAnchor(new Date().toISOString())
-                    : startM + 30;
-                  const x1 = labelW + minToX(startM);
-                  const w  = Math.max(6, minToX(endM) - minToX(startM));
-                  return (
-                    <g key={run.prid}>
-                      <text x={labelW-6} y={y+barH/2+4} fontSize={12} fontWeight="600" fill={G.dark} textAnchor="end" dominantBaseline="middle">
-                        {run.process_name?.slice(0,20)}
-                      </text>
-                      <rect x={x1} y={y} width={w} height={barH}
-                        fill={`${col}28`} stroke={col} strokeWidth={1.5}
-                        strokeDasharray={run.status==="on_hold"?"6,3":"none"} rx={5}/>
-                      {w>60&&<text x={x1+6} y={y+22} fontSize={10} fill={col} fontWeight="600">
-                        {run.status.replace("_"," ")}
-                      </text>}
-                      {w>80&&run.started_at&&<text x={x1+6} y={y+34} fontSize={9} fill={G.muted}>
-                        {new Date(run.started_at).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}
-                        {run.completed_at&&` → ${new Date(run.completed_at).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}`}
-                      </text>}
-                    </g>
-                  );
-                })}
-              </svg>
-              {/* Legend */}
-              <div style={{display:"flex",gap:16,marginTop:10,flexWrap:"wrap"}}>
-                {Object.entries(RUN_COLS).map(([s,c])=>(
-                  <span key={s} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:c}}>
-                    <span style={{width:12,height:12,borderRadius:3,background:`${c}30`,border:`1.5px solid ${c}`,display:"inline-block"}}/>
-                    {s.replace("_"," ")}
-                  </span>
-                ))}
-                <span style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:G.muted}}>
-                  <svg width="20" height="12"><rect x="0" y="0" width="20" height="12" fill="transparent" stroke={G.muted} strokeWidth="1.5" strokeDasharray="4,2" rx="2"/></svg>
-                  on hold (paused)
-                </span>
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* Run cards with step-level controls */}
-        {runs.map(run=>{
-          const col = STATUS_COLORS_RUN[run.status]||G.muted;
-          return (
-            <div key={run.prid} style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:12,padding:"14px 18px",marginBottom:10}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <span style={{fontWeight:700,fontSize:14,color:G.dark}}>{run.process_name}</span>
-                  <span style={{fontSize:12,padding:"2px 10px",borderRadius:20,background:`${col}20`,color:col,fontWeight:600}}>
-                    {run.status.replace('_',' ')}
-                  </span>
-                  <span style={{fontSize:12,color:G.muted}}>
-                    {new Date(run.started_at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}
-                  </span>
-                </div>
-                <div style={{display:"flex",gap:6}}>
-                  {run.status==='in_progress'&&<>
-                    <Btn size="sm" variant="secondary" onClick={()=>handleRunAction(run.prid,'pause')}>⏸</Btn>
-                    <Btn size="sm" variant="danger"    onClick={()=>handleRunAction(run.prid,'stop')}>⏹</Btn>
-                  </>}
-                  {run.status==='on_hold'&&<>
-                    <Btn size="sm" onClick={()=>handleRunAction(run.prid,'resume')}>▶</Btn>
-                    <Btn size="sm" variant="danger" onClick={()=>handleRunAction(run.prid,'stop')}>⏹</Btn>
-                  </>}
-                </div>
-              </div>
-            </div>
-          );
-        })}
+        ) : <ExecutionsCalendar runs={runs} onAction={handleRunAction}/>}
       </div>
 
 
