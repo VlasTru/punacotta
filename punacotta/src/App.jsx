@@ -24,6 +24,7 @@ function useLang() {
   const [lang, setLangState] = useState(getLang);
   const setLang = l => { setLangCookie(l); setLangState(l); };
   return [lang, setLang];
+const durAbbr = u => DUR_UNITS.find(d=>d.value===u)?.label || (u||"min");
 }
 // Global mutable lang ref so non-hook contexts can read it
 let _currentLang = getLang();
@@ -572,7 +573,7 @@ function Nav({ user, page, setPage, logout, lang, setLang }) {
   const tl = k => lang==='ru' ? (RU[k]||k) : k;
   const links = isM
     ? [{key:"orders-manuf",label:tl("Orders")},{key:"products",label:tl("Products")},{key:"items",label:tl("Items")},{key:"menus",label:tl("Menus")},{key:"procurement",label:tl("Procurement")},{key:"suppliers",label:tl("Suppliers")},{key:"reports",label:tl("Reports")},{key:"staff",label:"Staff"},{key:"processes",label:"Processes"},{key:"equipment",label:"Equipment"}]
-    : user?.employer_uid ? [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")},{key:"roster-emp",label:"My Roster"}]
+    : user?.employer_uid ? [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")},{key:"roster-emp",label:"My Roster"},{key:"processes-emp",label:"Processes"}]
     : [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")}];
   const navigate = key => { setPage(key); setDropOpen(false); };
   return (
@@ -3952,7 +3953,11 @@ const DEP_TYPES = [
   { value:'FF', label:'Finish-to-Finish (FF)' },
   { value:'SF', label:'Start-to-Finish (SF)' },
 ];
-const DUR_UNITS = ['seconds','minutes','hours'];
+const DUR_UNITS = [
+  { value:'seconds', label:'sec' },
+  { value:'minutes', label:'min' },
+  { value:'hours',   label:'h'   },
+];
 
 // ─── SKILL COMBO ──────────────────────────────────────────────────────────────
 function SkillCombo({ allSkills, selected, excluded=[], onChange, onCreateSkill, onClickPill, pillColor }) {
@@ -4073,7 +4078,7 @@ function SkillEditDialog({ skill, allSkills, onSave, onClose }) {
               <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Unit</label>
               <select value={form.duration_unit} onChange={e=>set("duration_unit",e.target.value)}
                 style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}>
-                {DUR_UNITS.map(u=><option key={u}>{u}</option>)}
+                {DUR_UNITS.map(u=><option key={u.value} value={u.value}>{u.label}</option>)}
               </select>
             </div>
           </div>
@@ -4505,7 +4510,7 @@ function RolesPage({ roles, skills, setRoles, setSkills, createSkill, toast, onB
 }
 
 // ─── PROCESSES PAGE (v12) ──────────────────────────────────────────────────────
-function ProcessesPage({ toast }) {
+function ProcessesPage({ user, setPage, toast }) {
   const [processes, setProcesses] = useState([]);
   const [skills,    setSkills]    = useState([]);
   const [roles,     setRoles]     = useState([]);
@@ -4802,7 +4807,7 @@ function ProcessesPage({ toast }) {
                         fill={`${color}22`} stroke={color} strokeWidth={1.5}
                         strokeDasharray={dashed?"6,3":"none"} rx={5}/>
                       {b.w>24&&<text x={bx+5} y={by+15} fontSize={10} fill={color} fontWeight="600">{sk.name.slice(0,Math.floor(b.w/6.5))}</text>}
-                      {b.w>36&&sk.duration&&<text x={bx+5} y={by+30} fontSize={8.5} fill={G.muted}>{sk.duration}{(sk.duration_unit||"m")[0]}</text>}
+                      {b.w>36&&sk.duration&&<text x={bx+5} y={by+30} fontSize={8.5} fill={G.muted}>{sk.duration}{durAbbr(sk.duration_unit)}</text>}
                     </g>
                   );
                 })}
@@ -4861,7 +4866,14 @@ function ProcessesPage({ toast }) {
   ];
 
   return (
-    <Page title="Processes" actions={<Btn size="sm" onClick={openNew}>+ Process</Btn>}>
+    <Page title="Processes" actions={
+      <div style={{display:"flex",gap:10}}>
+        {user?.employer_uid && (
+          <Btn variant="secondary" size="sm" onClick={()=>setPage("processes-emp")}>Executions →</Btn>
+        )}
+        <Btn size="sm" onClick={openNew}>+ Process</Btn>
+      </div>
+    }>
       <PertChart/>
 
       {showForm&&(
@@ -4903,7 +4915,7 @@ function ProcessesPage({ toast }) {
                             style={{width:52,padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}/>
                           <select value={sk.duration_unit||"minutes"} onChange={e=>updateRow(i,"duration_unit",e.target.value)}
                             style={{padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
-                            {DUR_UNITS.map(u=><option key={u}>{u}</option>)}
+                            {DUR_UNITS.map(u=><option key={u.value} value={u.value}>{u.label}</option>)}
                           </select>
                         </div>
                       </td>
@@ -4963,7 +4975,7 @@ function ProcessesPage({ toast }) {
             <div style={{ display:"flex", flexWrap:"wrap", gap:4 }}>
               {(proc.skills||[]).map(sk=>(
                 <span key={sk.psid} style={{ fontSize:12, padding:"2px 10px", borderRadius:20, background:`${sk.color||G.muted}18`, color:sk.color||G.muted, border:`1px solid ${sk.color||G.muted}40`, display:"flex", alignItems:"center", gap:4 }}>
-                  {sk.name}{sk.duration?` · ${sk.duration}${(sk.duration_unit||"m")[0]}`:""}
+                  {sk.name}{sk.duration?` · ${sk.duration}${durAbbr(sk.duration_unit)}`:""}
                   {sk.dep_type&&<span style={{fontSize:9,opacity:0.75,fontWeight:700}}>{sk.dep_type}</span>}
                 </span>
               ))}
@@ -4976,39 +4988,124 @@ function ProcessesPage({ toast }) {
         </div>
       ))}
 
-      {/* ── Executions ───────────────────────────────────────────────────────── */}
+      {/* ── Executions calendar ──────────────────────────────────────────────── */}
       <div style={{marginTop:32}}>
         <h3 style={{fontFamily:G.font,fontSize:18,marginBottom:14,color:G.dark}}>Executions</h3>
-        {runs.length===0?(
+        {runs.length===0 ? (
           <p style={{fontSize:13,color:G.muted,fontStyle:"italic"}}>No processes have been started yet. Click ▶ Run on any process above to begin.</p>
-        ):runs.map(run=>{
-            const col = STATUS_COLORS_RUN[run.status]||G.muted;
-            return (
-              <div key={run.prid} style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:12,padding:"14px 18px",marginBottom:10}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                  <div style={{display:"flex",alignItems:"center",gap:10}}>
-                    <span style={{fontWeight:700,fontSize:14,color:G.dark}}>{run.process_name}</span>
-                    <span style={{fontSize:12,padding:"2px 10px",borderRadius:20,background:`${col}20`,color:col,fontWeight:600}}>
-                      {run.status.replace('_',' ')}
-                    </span>
-                    <span style={{fontSize:12,color:G.muted}}>
-                      {new Date(run.started_at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}
-                    </span>
-                  </div>
-                  <div style={{display:"flex",gap:6}}>
-                    {run.status==='in_progress'&&<>
-                      <Btn size="sm" variant="secondary" onClick={()=>handleRunAction(run.prid,'pause')}>⏸</Btn>
-                      <Btn size="sm" variant="danger"    onClick={()=>handleRunAction(run.prid,'stop')}>⏹</Btn>
-                    </>}
-                    {run.status==='on_hold'&&<>
-                      <Btn size="sm" onClick={()=>handleRunAction(run.prid,'resume')}>▶</Btn>
-                      <Btn size="sm" variant="danger" onClick={()=>handleRunAction(run.prid,'stop')}>⏹</Btn>
-                    </>}
-                  </div>
+        ) : (()=>{
+          // Build PERT-style calendar of actual runs for today
+          const dayMins = 600; // 10h working window
+          const labelW = 180, W = 920, chartW = W - labelW - 16;
+          const barH = 36, gap = 14, rowH = barH + gap;
+          const svgH = runs.length * rowH + 40;
+          const RUN_COLS = { in_progress:G.caramel, on_hold:"#eab308", completed:G.green, cancelled:G.red };
+
+          // Use actual started_at to position bars; width = duration in minutes
+          const earliestStart = runs.reduce((min, r) => {
+            const t = new Date(r.started_at);
+            return t < min ? t : min;
+          }, new Date(runs[0].started_at));
+          const anchor = new Date(earliestStart);
+          anchor.setHours(anchor.getHours(), 0, 0, 0);
+
+          const minsFromAnchor = (iso) => {
+            if (!iso) return 0;
+            return (new Date(iso) - anchor) / 60000;
+          };
+
+          const minToX = m => Math.min(chartW, Math.max(0, (m / dayMins) * chartW));
+
+          return (
+            <div style={{overflowX:"auto",background:G.white,border:`1px solid ${G.border}`,borderRadius:14,padding:16,marginBottom:12}}>
+              <p style={{fontSize:11,color:G.muted,marginBottom:8}}>
+                Timeline from {anchor.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}
+              </p>
+              <svg width={W} height={svgH}>
+                {/* Grid lines every 30 min */}
+                {Array.from({length:21},(_,i)=>i*30).map(m=>(
+                  <g key={m}>
+                    <line x1={labelW+minToX(m)} y1={0} x2={labelW+minToX(m)} y2={svgH} stroke={G.border} strokeWidth={m%60===0?1:0.5}/>
+                    {m%60===0&&<text x={labelW+minToX(m)+3} y={10} fontSize={9} fill={G.muted}>
+                      {`${anchor.getHours()+Math.floor(m/60)}:00`}
+                    </text>}
+                  </g>
+                ))}
+                {runs.map((run,i)=>{
+                  const y = 18 + i*rowH;
+                  const col = RUN_COLS[run.status]||G.muted;
+                  const startM = minsFromAnchor(run.started_at);
+                  const endM = run.completed_at
+                    ? minsFromAnchor(run.completed_at)
+                    : run.status==="in_progress" ? minsFromAnchor(new Date().toISOString())
+                    : startM + 30;
+                  const x1 = labelW + minToX(startM);
+                  const w  = Math.max(6, minToX(endM) - minToX(startM));
+                  return (
+                    <g key={run.prid}>
+                      <text x={labelW-6} y={y+barH/2+4} fontSize={12} fontWeight="600" fill={G.dark} textAnchor="end" dominantBaseline="middle">
+                        {run.process_name?.slice(0,20)}
+                      </text>
+                      <rect x={x1} y={y} width={w} height={barH}
+                        fill={`${col}28`} stroke={col} strokeWidth={1.5}
+                        strokeDasharray={run.status==="on_hold"?"6,3":"none"} rx={5}/>
+                      {w>60&&<text x={x1+6} y={y+22} fontSize={10} fill={col} fontWeight="600">
+                        {run.status.replace("_"," ")}
+                      </text>}
+                      {w>80&&run.started_at&&<text x={x1+6} y={y+34} fontSize={9} fill={G.muted}>
+                        {new Date(run.started_at).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}
+                        {run.completed_at&&` → ${new Date(run.completed_at).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}`}
+                      </text>}
+                    </g>
+                  );
+                })}
+              </svg>
+              {/* Legend */}
+              <div style={{display:"flex",gap:16,marginTop:10,flexWrap:"wrap"}}>
+                {Object.entries(RUN_COLS).map(([s,c])=>(
+                  <span key={s} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:c}}>
+                    <span style={{width:12,height:12,borderRadius:3,background:`${c}30`,border:`1.5px solid ${c}`,display:"inline-block"}}/>
+                    {s.replace("_"," ")}
+                  </span>
+                ))}
+                <span style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:G.muted}}>
+                  <svg width="20" height="12"><rect x="0" y="0" width="20" height="12" fill="transparent" stroke={G.muted} strokeWidth="1.5" strokeDasharray="4,2" rx="2"/></svg>
+                  on hold (paused)
+                </span>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Run cards with step-level controls */}
+        {runs.map(run=>{
+          const col = STATUS_COLORS_RUN[run.status]||G.muted;
+          return (
+            <div key={run.prid} style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:12,padding:"14px 18px",marginBottom:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <span style={{fontWeight:700,fontSize:14,color:G.dark}}>{run.process_name}</span>
+                  <span style={{fontSize:12,padding:"2px 10px",borderRadius:20,background:`${col}20`,color:col,fontWeight:600}}>
+                    {run.status.replace('_',' ')}
+                  </span>
+                  <span style={{fontSize:12,color:G.muted}}>
+                    {new Date(run.started_at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}
+                  </span>
+                </div>
+                <div style={{display:"flex",gap:6}}>
+                  {run.status==='in_progress'&&<>
+                    <Btn size="sm" variant="secondary" onClick={()=>handleRunAction(run.prid,'pause')}>⏸</Btn>
+                    <Btn size="sm" variant="danger"    onClick={()=>handleRunAction(run.prid,'stop')}>⏹</Btn>
+                  </>}
+                  {run.status==='on_hold'&&<>
+                    <Btn size="sm" onClick={()=>handleRunAction(run.prid,'resume')}>▶</Btn>
+                    <Btn size="sm" variant="danger" onClick={()=>handleRunAction(run.prid,'stop')}>⏹</Btn>
+                  </>}
                 </div>
               </div>
-            );
-          })}
+            </div>
+          );
+        })}
       </div>
 
 
@@ -5610,6 +5707,198 @@ function RosterPage({ user, toast, onBack }) {
 }
 
 
+// ─── EMPLOYEE PROCESSES PAGE ──────────────────────────────────────────────────
+// Shows processes as cards, sorted chronologically by when the employee's step
+// is due. Cards are collapsed if employee has no matching skill, expanded if they do.
+function EmployeeProcessesPage({ user, toast, setPage }) {
+  const [runs,    setRuns]    = useState([]);
+  const [skills,  setSkills]  = useState([]); // employee's skills (skids)
+  const [loading, setLoading] = useState(true);
+  const [saving,  setSaving]  = useState({});
+
+  const ownerUid = user?.employer_uid;
+
+  useEffect(()=>{
+    if (!ownerUid) return;
+    Promise.all([
+      api.getProcessRuns(),
+      api.getSkills(), // all skills for this restaurant
+    ]).then(([r, allSkills])=>{
+      setRuns(r||[]);
+      // Get this employee's skill ids
+      setSkills(allSkills.filter(()=>true)); // we'll filter by employee_skill below
+    }).catch(e=>toast(e.message,"error"))
+    .finally(()=>setLoading(false));
+
+    // Also fetch this employee's own skills
+    fetch(`/api/skills`, { headers:{ Authorization:`Bearer ${localStorage.getItem("token")}` } })
+      .then(r=>r.json()).then(s=>setSkills(s||[])).catch(()=>{});
+  },[]);
+
+  const runAction = async (prid, action, psrid=null) => {
+    setSaving(p=>({...p,[`${prid}-${action}-${psrid}`]:true}));
+    try {
+      let updated;
+      if (action==='pause')    updated = await api.pauseRun(prid);
+      else if (action==='resume') updated = await api.resumeRun(prid);
+      else if (action==='stop')   updated = await api.stopRun(prid);
+      else if (action==='start-step')    updated = await api.startStep(prid, psrid);
+      else if (action==='complete-step') updated = await api.completeStep(prid, psrid);
+      if (updated) setRuns(p=>p.map(r=>r.prid===updated.prid?updated:r));
+    } catch(e){ toast(e.message,"error"); }
+    finally{ setSaving(p=>({...p,[`${prid}-${action}-${psrid}`]:false})); }
+  };
+
+  const mySkidSet = new Set(skills.map(s=>String(s.skid)));
+
+  // Determine if this employee is involved in a run
+  const iInvolved = (run) => (run.steps||[]).some(s=>
+    mySkidSet.has(String(s.skid)) || String(s.uid)===String(user?.uid));
+
+  // Sort: in_progress first, then by started_at
+  const sorted = [...runs].sort((a,b)=>{
+    const order = { in_progress:0, on_hold:1, pending:2, completed:3, cancelled:4 };
+    const ao = order[a.status]??5, bo = order[b.status]??5;
+    if (ao!==bo) return ao-bo;
+    return new Date(a.started_at) - new Date(b.started_at);
+  });
+
+  const STATUS_COL = { in_progress:G.caramel, on_hold:"#eab308", completed:G.green, cancelled:G.red, pending:G.muted };
+  const STEP_COL   = { in_progress:G.caramel, on_hold:"#eab308", completed:G.green, pending:G.muted, skipped:G.muted };
+
+  const fmtDur = (d,u) => {
+    if (!d) return "—";
+    return `${d} ${durAbbr(u)}`;
+  };
+
+  const timeLeft = (step) => {
+    if (step.status!=="in_progress"||!step.started_at) return null;
+    const elapsed = (Date.now()-new Date(step.started_at).getTime())/1000;
+    const durSecs = step.duration_unit==="hours"?Number(step.duration)*3600
+      : step.duration_unit==="seconds"?Number(step.duration)
+      : Number(step.duration)*60;
+    const left = Math.max(0, durSecs - elapsed);
+    if (left<1) return "due";
+    const m = Math.floor(left/60), s = Math.floor(left%60);
+    return m>0?`${m}m left`:`${s}s left`;
+  };
+
+  if (!ownerUid) return (
+    <Page title="Processes">
+      <p style={{color:G.muted,textAlign:"center",padding:40}}>Not associated with a restaurant.</p>
+    </Page>
+  );
+
+  return (
+    <Page title="My Processes" actions={
+      user?.is_manufacturer && (
+        <Btn size="sm" variant="secondary" onClick={()=>setPage("processes")}>← Process design</Btn>
+      )
+    }>
+      {loading ? <Spinner/> : sorted.length===0 ? (
+        <p style={{color:G.muted,textAlign:"center",padding:60,fontStyle:"italic"}}>No active processes. Processes will appear here when started by your restaurant.</p>
+      ) : sorted.map(run=>{
+        const involved = iInvolved(run);
+        const col = STATUS_COL[run.status]||G.muted;
+
+        return (
+          <div key={run.prid} style={{background:G.white,border:`1.5px solid ${involved?col:G.border}`,borderRadius:14,marginBottom:12,overflow:"hidden"}}>
+            {/* Card header */}
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 18px",background:involved?`${col}08`:G.sand}}>
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <span style={{fontWeight:700,fontSize:15,color:G.dark}}>{run.process_name}</span>
+                <span style={{fontSize:12,padding:"2px 10px",borderRadius:20,fontWeight:600,background:`${col}20`,color:col}}>
+                  {run.status.replace("_"," ")}
+                </span>
+                <span style={{fontSize:12,color:G.muted}}>
+                  {new Date(run.started_at).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}
+                </span>
+              </div>
+              {/* Run-level controls (for involved runs) */}
+              {involved && (
+                <div style={{display:"flex",gap:6}}>
+                  {run.status==="in_progress"&&<>
+                    <button onClick={()=>runAction(run.prid,"pause")}
+                      style={{background:"none",border:`1px solid ${G.border}`,borderRadius:7,padding:"4px 10px",cursor:"pointer",fontSize:16}}>⏸</button>
+                    <button onClick={()=>runAction(run.prid,"stop")}
+                      style={{background:"none",border:`1px solid ${G.red}`,borderRadius:7,padding:"4px 10px",cursor:"pointer",fontSize:16,color:G.red}}>⏹</button>
+                  </>}
+                  {run.status==="on_hold"&&<>
+                    <button onClick={()=>runAction(run.prid,"resume")}
+                      style={{background:G.caramel,border:"none",borderRadius:7,padding:"4px 12px",cursor:"pointer",fontSize:16,color:G.white}}>▶</button>
+                    <button onClick={()=>runAction(run.prid,"stop")}
+                      style={{background:"none",border:`1px solid ${G.red}`,borderRadius:7,padding:"4px 10px",cursor:"pointer",fontSize:16,color:G.red}}>⏹</button>
+                  </>}
+                </div>
+              )}
+            </div>
+
+            {/* Steps table — only shown when employee is involved */}
+            {involved && (
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  <thead>
+                    <tr style={{background:G.sand,borderTop:`1px solid ${G.border}`}}>
+                      {["#","Step","Assignee","Duration","Status"].map(h=>(
+                        <th key={h} style={{padding:"8px 14px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,letterSpacing:"0.04em"}}>{h}</th>
+                      ))}
+                      <th style={{width:80}}/>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(run.steps||[]).map((step,i)=>{
+                      const sc  = STEP_COL[step.status]||G.muted;
+                      const isMe = String(step.uid)===String(user?.uid);
+                      const myStep = isMe || mySkidSet.has(String(step.skid));
+                      const tl = timeLeft(step);
+                      return (
+                        <tr key={step.psrid} style={{borderTop:`1px solid ${G.border}`,background:isMe?`${sc}08`:"transparent"}}>
+                          <td style={{padding:"10px 14px",fontSize:12,color:G.muted,fontFamily:G.mono}}>{step.seq}</td>
+                          <td style={{padding:"10px 14px",fontWeight:isMe?700:400,color:isMe?G.dark:G.dark,fontSize:14}}>
+                            {step.skill_name}
+                          </td>
+                          <td style={{padding:"10px 14px",fontSize:13,color:G.muted}}>
+                            {step.first_name?`${step.first_name} ${step.last_name||""}`.trim():"—"}
+                          </td>
+                          <td style={{padding:"10px 14px",fontSize:13,color:G.muted,fontFamily:G.mono}}>
+                            {fmtDur(step.duration, step.duration_unit)}
+                          </td>
+                          <td style={{padding:"10px 14px"}}>
+                            <span style={{fontSize:12,fontWeight:600,color:sc}}>
+                              {step.status.replace("_"," ")}
+                              {tl&&<span style={{fontSize:11,color:G.muted,fontWeight:400,marginLeft:6}}>({tl})</span>}
+                            </span>
+                          </td>
+                          <td style={{padding:"10px 14px"}}>
+                            {myStep && step.status==="pending" && run.status==="in_progress" && (
+                              <Btn size="sm" onClick={()=>runAction(run.prid,"start-step",step.psrid)}>▶ Start</Btn>
+                            )}
+                            {myStep && step.status==="in_progress" && (
+                              <Btn size="sm" onClick={()=>runAction(run.prid,"complete-step",step.psrid)}>✓ Done</Btn>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Collapsed hint for uninvolved processes */}
+            {!involved && (
+              <div style={{padding:"8px 18px",fontSize:12,color:G.muted,fontStyle:"italic"}}>
+                No steps requiring your skills in this process.
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </Page>
+  );
+}
+
+
 // ─── EQUIPMENT PAGE ───────────────────────────────────────────────────────────
 function EquipmentPage({ toast }) {
   const [equipment, setEquipment] = useState([]);
@@ -6033,9 +6322,11 @@ export default function App() {
           {page==="suppliers"    &&<SuppliersPage toast={toast}/>}
           {page==="reports"      &&<ReportsPage   toast={toast}/>}
           {page==="staff"        &&<StaffPage      user={user} toast={toast}/>}
-          {page==="processes"    &&<ProcessesPage  toast={toast}/>}
+          {page==="processes"    &&<ProcessesPage  user={user} setPage={setPage} toast={toast}/>}
+          {page==="processes-emp" &&<EmployeeProcessesPage user={user} setPage={setPage} toast={toast}/>}
           {page==="equipment"    &&<EquipmentPage  toast={toast}/>}
-          {page==="roster-emp"   &&<RosterPage     user={user} toast={toast}/>}
+          {page==="roster-emp"   &&<RosterPage            user={user} toast={toast}/>}
+          {page==="processes-emp"&&<EmployeeProcessesPage user={user} setPage={setPage} toast={toast}/>}
           {page==="embed"        &&<EmbedMenuPage toast={toast}/>}
           {page==="orders-manuf" &&<OrdersManufPage toast={toast}/>}
           {page==="restaurants"  &&<RestaurantsPage setPage={setPage} setActiveMenu={setActiveMenu}/>}
