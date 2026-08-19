@@ -1946,8 +1946,7 @@ function parseLocalDate(isoStr) {
   if (!y||!m||!d) return null;
   return new Date(y, m-1, d);
 }
-function fuzzyMatch(hay, needle) {
-  // 1-char fuzzy: for each position in hay, check if needle fits with ≤1 substitution/deletion
+function fuzzySearch(hay, needle) {
   if (!needle) return true;
   hay = hay.toLowerCase(); needle = needle.toLowerCase();
   if (hay.includes(needle)) return true;
@@ -2352,7 +2351,7 @@ function OrdersManufPage({
       o.status,
       ...(o.items||[]).map(it=>it.name),
     ].filter(Boolean).join(" ");
-    return fuzzyMatch(hay, q);
+    return fuzzySearch(hay, q);
   }) : statusFiltered;
 
   // ── TABLE VIEW ──────────────────────────────────────────────────────────────
