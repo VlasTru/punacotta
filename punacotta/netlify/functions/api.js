@@ -1611,13 +1611,27 @@ async function route(method, segments, body, headers, event) {
       return [200, s]
     }
     if (method === 'DELETE') {
-      const { ids } = body
+      const { ids, force } = body
       if (!Array.isArray(ids)||!ids.length) return [400, { error: 'ids required' }]
+      const blocked = []
       for (const skid of ids) {
+        // Check usage in process steps
+        const [inProcess] = await dbq(
+          `SELECT p.name FROM process_skill ps JOIN process p ON p.procid=ps.procid WHERE ps.skid=$1 LIMIT 1`, [skid])
+        if (inProcess) { blocked.push({ skid, reason: `Used in process "${inProcess.name}"` }); continue; }
+        // Check usage by employees (excluding owner self-assignment)
+        const [inEmployee] = await dbq(
+          `SELECT u.first_name, u.last_name FROM employee_skill es
+           JOIN "user" u ON u.uid=es.uid
+           WHERE es.skid=$1 AND u.employer_uid=$2 LIMIT 1`, [skid, user.uid])
+        if (inEmployee && !force) {
+          blocked.push({ skid, reason: `Assigned to ${inEmployee.first_name} ${inEmployee.last_name}` }); continue;
+        }
         await dbr('DELETE FROM role_skill     WHERE skid=$1', [skid])
         await dbr('DELETE FROM employee_skill WHERE skid=$1', [skid])
         await dbr('DELETE FROM skill WHERE skid=$1 AND owner_uid=$2', [skid, user.uid])
       }
+      if (blocked.length) return [409, { error: 'Some skills are in use', blocked }]
       return [200, { deleted: ids }]
     }
   }
@@ -1967,6 +1981,17 @@ async function route(method, segments, body, headers, event) {
     }
 
     // GET /process-runs/:prid — single run with steps
+    if (r1 && r2 === 'usage' && method === 'GET') {
+      const [{ employee_count }] = await dbq(
+        `SELECT COUNT(*)::int AS employee_count FROM employee_skill es
+         JOIN "user" u ON u.uid=es.uid WHERE es.skid=$1 AND u.employer_uid=$2`,
+        [r1, user.uid])
+      const [{ process_count }] = await dbq(
+        `SELECT COUNT(*)::int AS process_count FROM process_skill ps
+         JOIN process p ON p.procid=ps.procid WHERE ps.skid=$1 AND p.owner_uid=$2`,
+        [r1, user.uid])
+      return [200, { employee_count, process_count }]
+    }
     if (r1 && !r2 && method === 'GET') {
       const run = await fetchRun(r1)
       if (!run) return [404, { error: 'Not found' }]

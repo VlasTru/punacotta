@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, createContext, useContext } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, createContext, useContext } from "react";
 import React from "react";
 import ReactCrop from "react-image-crop";
 import "react-image-crop/dist/ReactCrop.css";
@@ -566,9 +566,285 @@ function RecipeForm({
 }
 
 // ─── NAV ──────────────────────────────────────────────────────────────────────
+// ─── COMMAND PALETTE ──────────────────────────────────────────────────────────
+// Vocabulary: {nouns, verbs} with synonyms → actions
+const CP_NOUNS = [
+  { terms:['item','items','recipe','recipes','dish','dishes'],                    key:'items' },
+  { terms:['procurement','supply','provisioning','purchasing','supplies','purchase'], key:'procurement' },
+  { terms:['report','reports','analytics','analysis'],                            key:'reports' },
+  { terms:['staff','employee','employees','team','users','user','member','members'], key:'staff' },
+  { terms:['product','products','ingredient','ingredients','component','components','content','contents'], key:'products' },
+  { terms:['roster','schedule','rota','shifts','timetable','availability','slot','slots'], key:'roster' },
+  { terms:['skill','skills','action','actions'],                                  key:'skills' },
+  { terms:['menu','menus'],                                                       key:'menus' },
+  { terms:['embedded','embed','website','external'],                              key:'embed' },
+  { terms:['order','orders'],                                                     key:'orders' },
+  { terms:['process','processes','workflow','workflows','operation','operations','procedure','procedures'], key:'processes' },
+  { terms:['supplier','suppliers'],                                               key:'suppliers' },
+  { terms:['equipment','machine','machines','oven','ovens'],                      key:'equipment' },
+  { terms:['forecast','prediction','predict'],                                    key:'forecast' },
+];
+
+const CP_VERBS = [
+  { terms:['new','add','create','make'],      key:'create' },
+  { terms:['delete','remove'],               key:'delete' },
+  { terms:['edit','update','modify','change','fill','complete','slot'], key:'edit' },
+  { terms:['run','execute','start'],         key:'run' },
+  { terms:['submit','place'],               key:'submit' },
+  { terms:['view','open','go','show','find','search','where'], key:'view' },
+];
+
+// All possible actions: {id, label, noun, verb, page, action, icon}
+const CP_ACTIONS = [
+  // Navigation
+  { id:'nav-orders',       label:'Orders',             noun:'orders',       verb:'view',   page:'orders-manuf', icon:'📋', mfOnly:true },
+  { id:'nav-products',     label:'Products',           noun:'products',     verb:'view',   page:'products',     icon:'🧪', mfOnly:true },
+  { id:'nav-items',        label:'Items',              noun:'items',        verb:'view',   page:'items',        icon:'🍮', mfOnly:true },
+  { id:'nav-menus',        label:'Menus',              noun:'menus',        verb:'view',   page:'menus',        icon:'📖', mfOnly:true },
+  { id:'nav-procurement',  label:'Procurement',        noun:'procurement',  verb:'view',   page:'procurement',  icon:'📦', mfOnly:true },
+  { id:'nav-suppliers',    label:'Suppliers',          noun:'suppliers',    verb:'view',   page:'suppliers',    icon:'🏭', mfOnly:true },
+  { id:'nav-reports',      label:'Reports',            noun:'reports',      verb:'view',   page:'reports',      icon:'📊', mfOnly:true },
+  { id:'nav-staff',        label:'Staff',              noun:'staff',        verb:'view',   page:'staff',        icon:'👥', mfOnly:true },
+  { id:'nav-processes',    label:'Processes',          noun:'processes',    verb:'view',   page:'processes',    icon:'⚙️',  mfOnly:true },
+  { id:'nav-equipment',    label:'Equipment',          noun:'equipment',    verb:'view',   page:'equipment',    icon:'🔧', mfOnly:true },
+  { id:'nav-roster',       label:'Roster',             noun:'roster',       verb:'view',   page:'staff',        action:'roster', icon:'📅', mfOnly:true },
+  { id:'nav-skills',       label:'Skills & Roles',     noun:'skills',       verb:'view',   page:'staff',        action:'roles',  icon:'🎯', mfOnly:true },
+  { id:'nav-schedule',     label:'Schedule (hours)',   noun:'roster',       verb:'view',   page:'schedule',     icon:'🕐', mfOnly:true },
+  { id:'nav-embed',        label:'Embedded Menu',      noun:'embed',        verb:'view',   page:'embed',        icon:'🔗', mfOnly:true },
+  { id:'nav-roster-emp',   label:'My Roster',          noun:'roster',       verb:'view',   page:'roster-emp',   icon:'📅', empOnly:true },
+  { id:'nav-proc-emp',     label:'My Processes',       noun:'processes',    verb:'view',   page:'processes-emp',icon:'⚙️',  empOnly:true },
+  // Create actions
+  { id:'new-employee',     label:'New Employee',       noun:'staff',        verb:'create', page:'staff',        action:'new-employee', icon:'➕', mfOnly:true },
+  { id:'new-item',         label:'New Item',           noun:'items',        verb:'create', page:'items',        action:'new',          icon:'➕', mfOnly:true },
+  { id:'new-menu',         label:'New Menu',           noun:'menus',        verb:'create', page:'menus',        action:'new',          icon:'➕', mfOnly:true },
+  { id:'new-order',        label:'New Order',          noun:'orders',       verb:'create', page:'procurement',  action:'new',          icon:'➕', mfOnly:true },
+  { id:'new-process',      label:'New Process',        noun:'processes',    verb:'create', page:'processes',    action:'new',          icon:'➕', mfOnly:true },
+  { id:'new-product',      label:'New Product',        noun:'products',     verb:'create', page:'products',     action:'new',          icon:'➕', mfOnly:true },
+  { id:'new-skill',        label:'New Skill',          noun:'skills',       verb:'create', page:'staff',        action:'new-skill',    icon:'➕', mfOnly:true },
+  { id:'run-process',      label:'Run a Process',      noun:'processes',    verb:'run',    page:'processes',    action:'run',          icon:'▶️',  mfOnly:true },
+  { id:'edit-roster',      label:'Edit Roster',        noun:'roster',       verb:'edit',   page:'staff',        action:'roster',       icon:'✏️',  mfOnly:true },
+  { id:'submit-order',     label:'Submit an Order',    noun:'procurement',  verb:'submit', page:'procurement',  icon:'📤', mfOnly:true },
+  { id:'forecast',         label:'Forecast Products',  noun:'forecast',     verb:'view',   page:'products',     icon:'🔮', mfOnly:true },
+  // Delete
+  { id:'del-employee',     label:'Delete Employee',    noun:'staff',        verb:'delete', page:'staff',        icon:'🗑️',  mfOnly:true },
+  { id:'del-product',      label:'Delete Product',     noun:'products',     verb:'delete', page:'products',     icon:'🗑️',  mfOnly:true },
+  { id:'del-item',         label:'Delete Item',        noun:'items',        verb:'delete', page:'items',        icon:'🗑️',  mfOnly:true },
+];
+
+const CP_DEFAULTS = [
+  'new-employee','new-item','new-menu','new-order','new-process','new-product','new-skill','run-process'
+];
+
+const RECENT_KEY = 'cp_recent';
+function getRecent() {
+  try { return JSON.parse(localStorage.getItem(RECENT_KEY)||'[]'); } catch{ return []; }
+}
+function pushRecent(id) {
+  const prev = getRecent().filter(x=>x!==id);
+  localStorage.setItem(RECENT_KEY, JSON.stringify([id,...prev].slice(0,5)));
+}
+
+function fuzzyMatch(term, query) {
+  // Return true if query is a prefix of or contained in term
+  return term.includes(query) || term.startsWith(query);
+}
+
+function scoreAction(action, nounMatches, verbMatches, query) {
+  const nounHit = nounMatches.has(action.noun);
+  const verbHit = verbMatches.has(action.verb);
+  // Both noun and verb matched → highest priority
+  if (nounHit && verbHit) return 3;
+  // Noun matched → high priority
+  if (nounHit) return 2;
+  // Verb matched → medium priority
+  if (verbHit) return 1;
+  // Direct label match
+  if (action.label.toLowerCase().includes(query)) return 2;
+  return 0;
+}
+
+function CommandPalette({ user, setPage, onClose }) {
+  const [query,   setQuery]   = useState('');
+  const [focused, setFocused] = useState(0);
+  const inputRef = useRef(null);
+  const isM  = user?.is_manufacturer;
+  const isEmp = !!user?.employer_uid;
+
+  // Shift+Space global shortcut
+  useEffect(()=>{
+    const handler = e => {
+      if (e.shiftKey && e.code==='Space') { e.preventDefault(); setTimeout(()=>inputRef.current?.focus(), 50); }
+      if (e.key==='Escape') onClose();
+    };
+    window.addEventListener('keydown', handler);
+    return ()=>window.removeEventListener('keydown', handler);
+  },[onClose]);
+
+  // Filter actions by user role
+  const roleActions = CP_ACTIONS.filter(a=> {
+    if (a.mfOnly && !isM) return false;
+    if (a.empOnly && !isEmp) return false;
+    return true;
+  });
+
+  // Compute results
+  const results = useMemo(()=>{
+    const q = query.trim().toLowerCase();
+    if (!q) {
+      // Default: recent + defaults
+      const recent = getRecent();
+      const recentActions = recent.map(id=>roleActions.find(a=>a.id===id)).filter(Boolean);
+      const defaults = CP_DEFAULTS.map(id=>roleActions.find(a=>a.id===id)).filter(Boolean);
+      const seen = new Set(recentActions.map(a=>a.id));
+      const rest = defaults.filter(a=>!seen.has(a.id));
+      return [
+        ...recentActions.map(a=>({...a,_group:'Recent'})),
+        ...rest.map(a=>({...a,_group:'Suggestions'})),
+      ];
+    }
+
+    // Tokenise and match nouns/verbs
+    const tokens = q.split(/\s+/).filter(t=>t.length>1);
+    const nounMatches = new Set();
+    const verbMatches = new Set();
+
+    for (const token of tokens) {
+      for (const n of CP_NOUNS) {
+        if (n.terms.some(t=>fuzzyMatch(t, token))) nounMatches.add(n.key);
+      }
+      for (const v of CP_VERBS) {
+        if (v.terms.some(t=>fuzzyMatch(t, token))) verbMatches.add(v.key);
+      }
+    }
+
+    // Score and filter
+    const scored = roleActions
+      .map(a=>({ ...a, _score: scoreAction(a, nounMatches, verbMatches, q) }))
+      .filter(a=>a._score>0)
+      .sort((a,b)=>b._score-a._score);
+
+    return scored.map(a=>({...a,_group:''}));
+  }, [query, user]);
+
+  useEffect(()=>setFocused(0),[results]);
+
+  const execute = (action) => {
+    pushRecent(action.id);
+    onClose();
+    setQuery('');
+    setPage(action.page);
+    if (action.action) {
+      setTimeout(()=>{
+        window.dispatchEvent(new CustomEvent('cp-action', { detail: action.action }));
+      }, 80);
+    }
+  };
+
+  const handleKey = e => {
+    if (e.key==='ArrowDown'){ e.preventDefault(); setFocused(f=>Math.min(f+1,results.length-1)); }
+    if (e.key==='ArrowUp'){   e.preventDefault(); setFocused(f=>Math.max(f-1,0)); }
+    if (e.key==='Enter' && results[focused]) execute(results[focused]);
+    if (e.key==='Escape') onClose();
+  };
+
+  if (typeof onClose !== 'function') return null;
+
+  // Group label tracking
+  let lastGroup = null;
+
+  return (
+    <div style={{ position:'fixed', inset:0, zIndex:2000, display:'flex', flexDirection:'column', alignItems:'center', paddingTop:80 }}
+      onClick={e=>{ if(e.target===e.currentTarget) onClose(); }}>
+      {/* Backdrop */}
+      <div style={{ position:'absolute', inset:0, background:'rgba(44,24,16,0.35)', backdropFilter:'blur(2px)' }} onClick={onClose}/>
+      {/* Panel */}
+      <div style={{ position:'relative', width:'100%', maxWidth:580, background:G.white, borderRadius:16,
+        boxShadow:'0 24px 80px rgba(44,24,16,0.22)', overflow:'hidden', animation:'fadeIn 0.15s ease' }}>
+        {/* Input */}
+        <div style={{ display:'flex', alignItems:'center', gap:10, padding:'14px 18px', borderBottom:`1px solid ${G.border}` }}>
+          <span style={{ fontSize:18, flexShrink:0 }}>🔍</span>
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={e=>setQuery(e.target.value)}
+            onKeyDown={handleKey}
+            placeholder="Search or type a command…"
+            autoFocus
+            style={{ flex:1, border:'none', outline:'none', fontSize:16, fontFamily:G.mono, color:G.dark, background:'transparent' }}/>
+          {query&&<button onClick={()=>setQuery('')} style={{ background:'none',border:'none',cursor:'pointer',color:G.muted,fontSize:16 }}>×</button>}
+          <kbd style={{ fontSize:11, padding:'2px 6px', background:G.sand, border:`1px solid ${G.border}`, borderRadius:4, color:G.muted, fontFamily:G.mono, flexShrink:0 }}>Esc</kbd>
+        </div>
+        {/* Results */}
+        <div style={{ maxHeight:420, overflowY:'auto' }}>
+          {results.length===0&&query?(
+            <div style={{ padding:'24px 18px', textAlign:'center', color:G.muted, fontSize:14 }}>No results for "{query}"</div>
+          ):results.map((a,i)=>{
+            const showGroup = a._group && a._group!==lastGroup;
+            lastGroup = a._group||lastGroup;
+            return (
+              <div key={a.id}>
+                {showGroup&&(
+                  <div style={{ padding:'8px 18px 4px', fontSize:11, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.06em', color:G.muted }}>
+                    {a._group}
+                  </div>
+                )}
+                <button
+                  onClick={()=>execute(a)}
+                  onMouseEnter={()=>setFocused(i)}
+                  style={{ width:'100%', textAlign:'left', padding:'10px 18px', border:'none', cursor:'pointer',
+                    background:i===focused?G.sand:'transparent', display:'flex', alignItems:'center', gap:12,
+                    fontFamily:G.mono, fontSize:14, color:G.dark }}>
+                  <span style={{ fontSize:16, width:24, textAlign:'center', flexShrink:0 }}>{a.icon}</span>
+                  <span style={{ flex:1 }}>{a.label}</span>
+                  <span style={{ fontSize:11, color:G.muted, flexShrink:0 }}>
+                    {a.page?.replace('-',' ').replace('manuf','').replace('cust','').replace('emp','').trim()}
+                  </span>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        {/* Footer hint */}
+        <div style={{ padding:'8px 18px', borderTop:`1px solid ${G.border}`, display:'flex', gap:16, fontSize:11, color:G.muted }}>
+          <span><kbd style={{fontFamily:G.mono,background:G.sand,border:`1px solid ${G.border}`,borderRadius:3,padding:'1px 5px'}}>↑↓</kbd> navigate</span>
+          <span><kbd style={{fontFamily:G.mono,background:G.sand,border:`1px solid ${G.border}`,borderRadius:3,padding:'1px 5px'}}>Enter</kbd> open</span>
+          <span><kbd style={{fontFamily:G.mono,background:G.sand,border:`1px solid ${G.border}`,borderRadius:3,padding:'1px 5px'}}>Esc</kbd> close</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Search bar trigger in Nav (collapsed version)
+function NavSearchBar({ onClick }) {
+  return (
+    <button onClick={onClick}
+      style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 12px',
+        background:G.sand, border:`1px solid ${G.border}`, borderRadius:8,
+        cursor:'pointer', fontFamily:G.mono, fontSize:12, color:G.muted,
+        whiteSpace:'nowrap', flexShrink:0, marginRight:8,
+        transition:'all 0.15s' }}
+      onMouseEnter={e=>{ e.currentTarget.style.borderColor=G.caramel; e.currentTarget.style.color=G.caramel; }}
+      onMouseLeave={e=>{ e.currentTarget.style.borderColor=G.border;  e.currentTarget.style.color=G.muted; }}>
+      🔍
+      <span>Click or <kbd style={{fontFamily:G.mono,background:G.white,border:`1px solid ${G.border}`,borderRadius:3,padding:'0 4px',fontSize:10}}>⇧Space</kbd> to search</span>
+    </button>
+  );
+}
+
+
 function Nav({ user, page, setPage, logout, lang, setLang }) {
   const isM = user?.is_manufacturer;
-  const [dropOpen, setDropOpen] = useState(false);
+  const [dropOpen,   setDropOpen]   = useState(false);
+  const [cpOpen,     setCpOpen]     = useState(false);
+
+  useEffect(()=>{
+    const handler = e => {
+      if (e.shiftKey && e.code==='Space') { e.preventDefault(); setCpOpen(true); }
+    };
+    window.addEventListener('keydown', handler);
+    return ()=>window.removeEventListener('keydown', handler);
+  },[]);
   const tl = k => lang==='ru' ? (RU[k]||k) : k;
   const links = isM
     ? [{key:"orders-manuf",label:tl("Orders")},{key:"products",label:tl("Products")},{key:"items",label:tl("Items")},{key:"menus",label:tl("Menus")},{key:"procurement",label:tl("Procurement")},{key:"suppliers",label:tl("Suppliers")},{key:"reports",label:tl("Reports")},{key:"staff",label:"Staff"},{key:"processes",label:"Processes"},{key:"equipment",label:"Equipment"}]
@@ -576,6 +852,7 @@ function Nav({ user, page, setPage, logout, lang, setLang }) {
     : [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")}];
   const navigate = key => { setPage(key); setDropOpen(false); };
   return (
+    <>
     <nav style={{ background:G.white, borderBottom:`1px solid ${G.border}`, padding:"0 20px", display:"flex", alignItems:"center", height:60, position:"sticky", top:0, zIndex:300, boxShadow:"0 1px 12px rgba(44,24,16,0.06)" }}>
       <button onClick={()=>navigate(isM?"orders-manuf":"restaurants")} style={{ fontFamily:G.font, fontSize:20, fontWeight:700, color:G.caramel, background:"none", border:"none", cursor:"pointer", marginRight:20, fontStyle:"italic", flexShrink:0 }}>Pun&Cotta</button>
       <div style={{ display:"flex", gap:2, flex:1, minWidth:0, overflow:"hidden" }}>
@@ -583,6 +860,8 @@ function Nav({ user, page, setPage, logout, lang, setLang }) {
           <button key={l.key} onClick={()=>navigate(l.key)} style={{ background:page===l.key?G.sand:"none", border:"none", padding:"6px 10px", borderRadius:8, fontFamily:G.mono, fontSize:13, fontWeight:page===l.key?600:400, color:page===l.key?G.caramel:G.muted, cursor:"pointer", transition:"all 0.15s", whiteSpace:"nowrap" }}>{l.label}</button>
         ))}
       </div>
+      {/* Search bar */}
+      <NavSearchBar onClick={()=>setCpOpen(true)}/>
       {/* Language toggle */}
       <button onClick={()=>{ const nl=lang==='en'?'ru':'en'; _currentLang=nl; setLang(nl); }}
         style={{ display:"flex", alignItems:"center", gap:3, background:"none", border:`1px solid ${G.border}`, borderRadius:8, cursor:"pointer", fontFamily:G.mono, fontSize:12, color:G.muted, padding:"5px 9px", whiteSpace:"nowrap", marginRight:8, flexShrink:0 }}>
@@ -617,6 +896,8 @@ function Nav({ user, page, setPage, logout, lang, setLang }) {
         )}
       </div>
     </nav>
+    {cpOpen&&<CommandPalette user={user} setPage={key=>{ setPage(key); setCpOpen(false); }} onClose={()=>setCpOpen(false)}/>}
+    </>
   );
 }
 
@@ -4494,10 +4775,27 @@ function StaffPage({ user, toast }) {
 }
 
 // ─── ROLES PAGE ────────────────────────────────────────────────────────────────
+// Shows how many employees have a given skill — fetched lazily
+function SkillUsageCount({ skid }) {
+  const [count, setCount] = useState(null);
+  useEffect(()=>{
+    fetch(`/api/skills/${skid}/usage`, {
+      headers:{ Authorization:`Bearer ${localStorage.getItem("token")}` }
+    }).then(r=>r.json()).then(d=>setCount(d.employee_count??0)).catch(()=>setCount(0));
+  },[skid]);
+  if (count===null) return <span style={{fontSize:12,color:G.muted}}>…</span>;
+  return (
+    <span style={{fontSize:12,color:count>0?G.dark:G.muted,fontStyle:count===0?"italic":"normal"}}>
+      {count===0?"None":`${count} employee${count!==1?"s":""}`}
+    </span>
+  );
+}
+
 function RolesPage({ roles, skills, setRoles, setSkills, createSkill, toast, onBack }) {
   const [selected,   setSelected]   = useState([]);
   const [saving,     setSaving]     = useState(false);
   const [localRoles, setLocalRoles] = useState(roles.map(r=>({...r,_skills:r.skills||[],_name:r.name})));
+  const [deleting,   setDeleting]   = useState({}); // skid → true while deleting
   useEffect(()=>setLocalRoles(roles.map(r=>({...r,_skills:r.skills||[],_name:r.name}))),[roles]);
 
   const toggleSel = rid => setSelected(p=>p.includes(rid)?p.filter(x=>x!==rid):[...p,rid]);
@@ -4526,6 +4824,29 @@ function RolesPage({ roles, skills, setRoles, setSkills, createSkill, toast, onB
 
   const updateLocal = (rid,patch) => setLocalRoles(p=>p.map(r=>r.rid===rid?{...r,...patch}:r));
 
+  const deleteSkill = async (skid, name) => {
+    if (!window.confirm(`Delete skill "${name}"? This will also remove it from all roles.`)) return;
+    setDeleting(p=>({...p,[skid]:true}));
+    try {
+      await api.deleteSkills([skid]);
+      setSkills(p=>p.filter(s=>s.skid!==skid));
+      // Remove from local roles too
+      setLocalRoles(p=>p.map(r=>({...r,_skills:r._skills.filter(s=>s.skid!==skid)})));
+      toast(`"${name}" deleted`);
+    } catch(e){
+      // Parse blocked error
+      if (e.message?.includes('in use') || e.status===409) {
+        toast(e.message||`"${name}" is in use and cannot be deleted`, "error");
+      } else {
+        toast(e.message,"error");
+      }
+    } finally{ setDeleting(p=>({...p,[skid]:false})); }
+  };
+
+  // Build usage map: which roles use each skill
+  const skillRoles = {};
+  roles.forEach(r=>(r.skills||[]).forEach(s=>{ (skillRoles[s.skid]=skillRoles[s.skid]||[]).push(r.name); }));
+
   return (
     <Page title="Roles & Skills" actions={
       <div style={{display:"flex",gap:10}}>
@@ -4534,7 +4855,8 @@ function RolesPage({ roles, skills, setRoles, setSkills, createSkill, toast, onB
         <Btn variant="ghost" size="sm" onClick={onBack}>← Staff</Btn>
       </div>
     }>
-      <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, overflow:"visible" }}>
+      {/* Roles table */}
+      <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, overflow:"visible", marginBottom:24 }}>
         <table style={{ width:"100%", borderCollapse:"collapse" }}>
           <thead>
             <tr style={{ background:G.sand, borderBottom:`1px solid ${G.border}` }}>
@@ -4568,6 +4890,63 @@ function RolesPage({ roles, skills, setRoles, setSkills, createSkill, toast, onB
             ))}
           </tbody>
         </table>
+      </div>
+
+      {/* Skills list with delete */}
+      <h3 style={{fontFamily:G.font,fontSize:16,marginBottom:12,color:G.dark}}>All skills</h3>
+      <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,overflow:"hidden"}}>
+        {skills.length===0?(
+          <p style={{padding:32,textAlign:"center",color:G.muted,fontStyle:"italic"}}>No skills yet. Add them via the Skills column in the Roles table above.</p>
+        ):(
+          <table style={{width:"100%",borderCollapse:"collapse"}}>
+            <thead>
+              <tr style={{background:G.sand,borderBottom:`1px solid ${G.border}`}}>
+                {["Skill","Duration","Used in roles","Used by employees",""].map(h=>(
+                  <th key={h} style={{padding:"9px 14px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,letterSpacing:"0.04em"}}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {skills.map((s,i)=>{
+                const col      = s.color||G.muted;
+                const inRoles  = skillRoles[s.skid]||[];
+                const durStr   = s.duration ? `${s.duration} ${durAbbr(s.duration_unit)}` : "—";
+                const inProcess = false; // would need process data — blocked at API level
+                return (
+                  <tr key={s.skid} style={{borderBottom:i<skills.length-1?`1px solid ${G.border}`:"none"}}>
+                    <td style={{padding:"10px 14px"}}>
+                      <span style={{fontSize:13,fontWeight:600,color:col,display:"flex",alignItems:"center",gap:6}}>
+                        <span style={{width:8,height:8,borderRadius:"50%",background:col,display:"inline-block",flexShrink:0}}/>
+                        {s.name}
+                      </span>
+                    </td>
+                    <td style={{padding:"10px 14px",fontSize:13,color:G.muted,fontFamily:G.mono}}>{durStr}</td>
+                    <td style={{padding:"10px 14px"}}>
+                      {inRoles.length===0
+                        ? <span style={{fontSize:12,color:G.muted,fontStyle:"italic"}}>None</span>
+                        : inRoles.map(r=>(
+                          <span key={r} style={{fontSize:12,padding:"2px 8px",borderRadius:20,background:`${G.caramel}18`,color:G.caramel,marginRight:4}}>{r}</span>
+                        ))}
+                    </td>
+                    <td style={{padding:"10px 14px"}}>
+                      <SkillUsageCount skid={s.skid}/>
+                    </td>
+                    <td style={{padding:"10px 14px"}}>
+                      <button
+                        onClick={()=>deleteSkill(s.skid, s.name)}
+                        disabled={!!deleting[s.skid]}
+                        title="Delete skill"
+                        style={{background:"none",border:`1px solid ${G.border}`,borderRadius:6,cursor:"pointer",color:G.muted,fontSize:12,padding:"3px 10px",fontFamily:G.mono}}
+                      >
+                        {deleting[s.skid]?"…":"Delete"}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
     </Page>
   );
@@ -5243,14 +5622,8 @@ function ProcessesPage({ user, setPage, toast }) {
               ))}
             </div>
             <div style={{padding:"16px 24px",borderTop:`1px solid ${G.border}`,display:"flex",gap:10,justifyContent:"flex-end"}}>
-              {startDialog.warnings.some(w=>['exceeds_hours','employee_no_slot'].includes(w.type))&&(
-                <Btn variant="secondary" size="sm" loading={startSaving}
-                  onClick={()=>handleRunProcess(startDialog.proc,true,true)}>
-                  Ignore & start anyway
-                </Btn>
-              )}
               <Btn size="sm" loading={startSaving}
-                onClick={()=>handleRunProcess(startDialog.proc,true,false)}>
+                onClick={()=>handleRunProcess(startDialog.proc,true,true)}>
                 Start anyway
               </Btn>
               <Btn variant="ghost" size="sm" onClick={()=>setStartDialog(null)}>Cancel</Btn>
