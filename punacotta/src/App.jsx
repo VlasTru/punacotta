@@ -60,7 +60,7 @@ const RU = {
   "Schedule":"График","Time zone":"Часовой пояс","Save":"Сохранить","Cancel":"Отмена",
   "Yes":"Да","No":"Нет","Delete":"Удалить","Edit":"Редактировать",
   "Expiry (hours)":"Срок хранения (часов)","Street address":"Улица, район, дом",
-  "City":"Город","ZIP":"Почтовый индекс","Email":"Email","Phone":"Телефон",
+  "City":"Город","ZIP":"Почтовый индекс","Email":"Электронная почта","Phone":"Телефон",
   "Contact first name":"Имя представителя","Contact last name":"Фамилия представителя",
   "Contact title":"Должность представителя",
   "Delivery terms":"Условия доставки","Term":"Условие",
@@ -1092,10 +1092,10 @@ function SignupPage({ setPage, toast, setLang }) {
       </div>
       <div style={{ display:"flex", flexDirection:"column", gap:13 }}>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:13 }}>
-          <Input label="First name" value={form.first_name} onChange={v=>set("first_name",v)} required error={errors.first_name} />
-          <Input label="Last name"  value={form.last_name}  onChange={v=>set("last_name",v)}  required error={errors.last_name} />
+          <Input label={tl("First name")} value={form.first_name} onChange={v=>set("first_name",v)} required error={errors.first_name} />
+          <Input label={tl("Last name")}  value={form.last_name}  onChange={v=>set("last_name",v)}  required error={errors.last_name} />
         </div>
-        <Input label="Email" type="email" value={form.email} onChange={v=>set("email",v)} required error={errors.email} />
+        <Input label={tl("Email")} type="email" value={form.email} onChange={v=>set("email",v)} required error={errors.email} />
         <Input label={tl("Phone")} value={form.phone} onChange={v=>set("phone",v)} placeholder="+374 91 …" />
         <Input label={tl("Street address")} value={form.street_address} onChange={v=>set("street_address",v)} />
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:13 }}>
@@ -5309,79 +5309,6 @@ function RolesPage({ roles, skills, setRoles, setSkills, createSkill, toast, onB
   );
 }
 
-// ─── PROCESS ITEM COMBO ───────────────────────────────────────────────────────
-function ProcessItemCombo({ recipes, selected, onChange }) {
-  const [input, setInput] = useState('');
-  const [open,  setOpen]  = useState(false);
-  const ref = useRef(null);
-
-  const selectedIds = new Set(selected.map(s => s.rid || s.skid));
-
-  const available = recipes.filter(r =>
-    !selectedIds.has(r.rid) &&
-    r.name.toLowerCase().includes(input.toLowerCase())
-  );
-
-  const add    = r  => { onChange([...selected, { rid:r.rid, item_name:r.name, skid:r.rid }]); setInput(''); };
-  const remove = rid => onChange(selected.filter(s => (s.rid||s.skid) !== rid));
-
-  return (
-    <div style={{ position:'relative', flex:1, minWidth:0 }} ref={ref}>
-      {/* Pills + input row */}
-      <div
-        onClick={() => { setOpen(true); ref.current?.querySelector('input')?.focus(); }}
-        style={{ display:'flex', flexWrap:'wrap', gap:4, padding:'5px 8px', borderRadius:8,
-          border:`1px solid ${G.border}`, minHeight:34, cursor:'text', background:G.white, alignItems:'center' }}>
-        {selected.length === 0 && !open && (
-          <span style={{ fontSize:12, color:G.muted, fontStyle:'italic', padding:'2px 0' }}>please, select item(s)</span>
-        )}
-        {selected.map(s => {
-          const id   = s.rid || s.skid;
-          const name = s.item_name || s.name || '';
-          return (
-            <span key={id} style={{ display:'inline-flex', alignItems:'center', gap:4,
-              background:`${G.caramel}18`, border:`1px solid ${G.caramel}40`, borderRadius:20,
-              padding:'2px 8px 2px 10px', fontSize:12, color:G.caramel, whiteSpace:'nowrap' }}>
-              {name}
-              <button
-                onClick={e => { e.stopPropagation(); remove(id); }}
-                style={{ background:'none', border:'none', cursor:'pointer', color:G.caramel,
-                  fontSize:14, lineHeight:1, padding:0, marginLeft:1, display:'flex', alignItems:'center' }}>
-                ×
-              </button>
-            </span>
-          );
-        })}
-        <input
-          value={input}
-          onChange={e => { setInput(e.target.value); setOpen(true); }}
-          onFocus={() => setOpen(true)}
-          onBlur={() => setTimeout(() => setOpen(false), 150)}
-          onKeyDown={e => { if (e.key==='Escape') setOpen(false); }}
-          placeholder={selected.length ? '' : ''}
-          style={{ border:'none', outline:'none', fontSize:12, fontFamily:G.mono,
-            minWidth:80, flex:1, background:'transparent', padding:'2px 0' }} />
-      </div>
-      {/* Dropdown */}
-      {open && available.length > 0 && (
-        <div style={{ position:'absolute', top:'calc(100% + 4px)', left:0, right:0,
-          background:G.white, border:`1px solid ${G.border}`, borderRadius:8,
-          boxShadow:'0 4px 16px rgba(44,24,16,0.12)', zIndex:500, maxHeight:200, overflowY:'auto' }}>
-          {available.map(r => (
-            <button key={r.rid} onMouseDown={() => add(r)}
-              style={{ width:'100%', textAlign:'left', padding:'8px 12px', background:'none',
-                border:'none', cursor:'pointer', fontSize:13, fontFamily:G.mono, color:G.dark, display:'block' }}
-              onMouseEnter={e => e.currentTarget.style.background = G.sand}
-              onMouseLeave={e => e.currentTarget.style.background = 'none'}>
-              {r.name}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ─── EXECUTIONS CALENDAR ──────────────────────────────────────────────────────
 function ExecutionsCalendar({ runs, onAction }) {
   if (!runs || !runs.length) return null;
@@ -6021,18 +5948,21 @@ function ProcessesPage({ user, setPage, toast }) {
                 ))}
               </div>
               {/* Items selector */}
-              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",flex:1}}>
                 <span style={{fontSize:12,fontWeight:600,color:G.muted,flexShrink:0}}>Items:</span>
-                <ProcessItemCombo
-                  recipes={recipes}
-                  selected={(proc.items||[]).map(it=>({...it,skid:it.rid}))}
-                  onChange={async newSel=>{
-                    try {
-                      const updated = await api.updateProcessItems(proc.procid,{item_ids:newSel.map(s=>s.rid||s.skid)});
-                      setProcesses(p=>p.map(x=>x.procid===updated.procid?updated:x));
-                    } catch(e){ toast(e.message,"error"); }
-                  }}
-                />
+                <div style={{flex:1}}>
+                  <SkillCombo
+                    allSkills={recipes.map(r=>({skid:r.rid, name:r.name, color:G.caramel}))}
+                    selected={(proc.items||[]).map(it=>({skid:it.rid, name:it.item_name}))}
+                    onChange={async newSel=>{
+                      try {
+                        const updated = await api.updateProcessItems(proc.procid,{item_ids:newSel.map(s=>s.skid)});
+                        setProcesses(p=>p.map(x=>x.procid===updated.procid?updated:x));
+                      } catch(e){ toast(e.message,"error"); }
+                    }}
+                    pillColor={G.caramel}
+                  />
+                </div>
               </div>
             </div>
             {/* Actions */}
