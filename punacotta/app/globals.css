@@ -1,0 +1,99 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-zilla), Georgia, serif;
+  --font-mono: var(--font-mono-jb), ui-monospace, monospace;
+
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+}
+
+:root {
+  color-scheme: light;
+
+  /* Warm paper background */
+  --background: oklch(0.96 0.008 85);
+  --foreground: oklch(0.18 0.03 320);
+
+  --card: oklch(0.98 0.006 85);
+  --card-foreground: oklch(0.18 0.03 320);
+
+  --popover: oklch(0.98 0.006 85);
+  --popover-foreground: oklch(0.18 0.03 320);
+
+  /* Deep aubergine (brand) */
+  --primary: oklch(0.27 0.11 322);
+  --primary-foreground: oklch(0.97 0.01 85);
+
+  --secondary: oklch(0.92 0.01 85);
+  --secondary-foreground: oklch(0.27 0.11 322);
+
+  --muted: oklch(0.92 0.01 85);
+  --muted-foreground: oklch(0.44 0.04 320);
+
+  /* Warm ochre accent */
+  --accent: oklch(0.74 0.15 62);
+  --accent-foreground: oklch(0.2 0.03 320);
+
+  --destructive: oklch(0.55 0.2 27);
+
+  --border: oklch(0.22 0.04 320);
+  --input: oklch(0.22 0.04 320);
+  --ring: oklch(0.27 0.11 322);
+
+  --radius: 0px;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Rugged utility helpers */
+@layer utilities {
+  .grid-lines {
+    background-image:
+      linear-gradient(to right, color-mix(in oklch, var(--border) 12%, transparent) 1px, transparent 1px),
+      linear-gradient(to bottom, color-mix(in oklch, var(--border) 12%, transparent) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+  .shadow-hard {
+    box-shadow: 6px 6px 0 0 var(--border);
+  }
+  .shadow-hard-sm {
+    box-shadow: 4px 4px 0 0 var(--border);
+  }
+  .shadow-hard-accent {
+    box-shadow: 6px 6px 0 0 var(--accent);
+  }
+}
