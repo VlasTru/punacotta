@@ -85,9 +85,12 @@ const RU = {
   "Create account":"Зарегистрироваться","Welcome back":"И снова здравствуйте",
   "password":"пароль","Reset password":"Сбросить пароль",
   "Send recovery link":"Отправить ссылку","Back to login":"Обратно к авторизации",
-  "I am a…":"Я…","Manufacturer":"Ресторан / Производитель","Customer":"Покупатель",
-  "Already have an account? Log in →":"У вас уже есть учётная запись? Войдите с ней",
-  "Min 6 characters":"Не меньше 6 знаков","Required":"Обязательное поле",
+  "I am a…":"Я","Manufacturer":"Производитель","Customer":"Покупатель",
+  "Already have an account? Log in →":"Уже есть учётная запись? Войти →",
+  "Already have an account?":"Уже есть учётная запись?",
+  "Log in →":"Войти →",
+  "Min 6 characters":"мин. 6 знаков","Required":"Обязательное поле",
+  "Business name":"Название организации",
   "Create your account":"Создайте себе учётную запись",
   "This action may not be undone.":"Действие необратимо.",
   "No products added yet.":"Пока в составе ничего нет.",
@@ -1035,7 +1038,7 @@ function LoginPage({ onLogin, setPage, setLang }) {
       <h2 style={{ fontFamily:G.font, fontSize:22, marginBottom:24 }}>Welcome back</h2>
       <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
         <Input label={tl("Email")} type="email" value={email} onChange={setEmail} placeholder="you@example.com" required />
-        <Input label="Password" type="password" value={pw} onChange={setPw} placeholder="••••••••" required error={err} />
+        <Input label={tl("Password")} type="password" value={pw} onChange={setPw} placeholder="••••••••" required error={err} />
         <Btn size="lg" onClick={submit} loading={loading}>Log in</Btn>
         <div style={{ display:"flex", justifyContent:"space-between" }}>
           <button onClick={()=>setPage("forgot")} style={{ background:"none", border:"none", color:G.caramel, cursor:"pointer", fontSize:13 }}>Forgot password?</button>
@@ -1098,18 +1101,18 @@ function SignupPage({ setPage, toast, setLang }) {
           <Input label={tl("City")} value={form.city} onChange={v=>set("city",v)} />
           <Input label={tl("ZIP")}  value={form.zip}  onChange={v=>set("zip",v)} />
         </div>
-        <Input label="Password" type="password" value={form.password} onChange={v=>set("password",v)} required error={errors.password} hint="Min 6 characters" />
+        <Input label={tl("Password")} type="password" value={form.password} onChange={v=>set("password",v)} required error={errors.password} hint={tl("Min 6 characters")} />
         <div style={{ padding:"14px 16px", background:G.sand, borderRadius:10, border:`1px solid ${G.border}` }}>
-          <p style={{ fontSize:13, fontWeight:600, marginBottom:10 }}>I am a…</p>
+          <p style={{ fontSize:13, fontWeight:600, marginBottom:10 }}>{tl("I am a…")}</p>
           <div style={{ display:"flex", gap:10 }}>
-            {[{label:"Customer",val:false},{label:"Manufacturer",val:true}].map(opt=>(
+            {[{label:tl("Customer"),val:false},{label:tl("Manufacturer"),val:true}].map(opt=>(
               <button key={opt.label} onClick={()=>set("is_manufacturer",opt.val)} style={{ flex:1, padding:"10px 0", borderRadius:8, border:"none", cursor:"pointer", fontFamily:G.mono, fontWeight:600, fontSize:14, transition:"all 0.2s", background:form.is_manufacturer===opt.val?G.caramel:G.white, color:form.is_manufacturer===opt.val?G.white:G.muted }}>{opt.label}</button>
             ))}
           </div>
         </div>
-        {form.is_manufacturer&&<Input label="Business name" value={form.business_name} onChange={v=>set("business_name",v)} required error={errors.business_name} />}
-        <Btn size="lg" onClick={submit} loading={loading} style={{marginTop:4}}>Create account</Btn>
-        <button onClick={()=>setPage("login")} style={{ background:"none", border:"none", color:G.muted, cursor:"pointer", fontSize:13, textAlign:"center" }}>Already have an account? Log in →</button>
+        {form.is_manufacturer&&<Input label={tl("Business name")} value={form.business_name} onChange={v=>set("business_name",v)} required error={errors.business_name} />}
+        <Btn size="lg" onClick={submit} loading={loading} style={{marginTop:4}}>{tl("Create account")}</Btn>
+        <button onClick={()=>setPage("login")} style={{ background:"none", border:"none", color:G.muted, cursor:"pointer", fontSize:13, textAlign:"center" }}>{tl("Already have an account?")} {tl("Log in →")}</button>
       </div>
     </AuthLayout>
   );
@@ -5300,52 +5303,69 @@ function RolesPage({ roles, skills, setRoles, setSkills, createSkill, toast, onB
 }
 
 // ─── PROCESS ITEM COMBO ───────────────────────────────────────────────────────
-// Multi-select pill combo for linking menu items to a process
 function ProcessItemCombo({ recipes, selected, onChange }) {
   const [input, setInput] = useState('');
   const [open,  setOpen]  = useState(false);
   const ref = useRef(null);
 
-  const available = recipes.filter(r=>
-    !selected.find(s=>(s.rid||s.skid)===r.rid) &&
+  const selectedIds = new Set(selected.map(s => s.rid || s.skid));
+
+  const available = recipes.filter(r =>
+    !selectedIds.has(r.rid) &&
     r.name.toLowerCase().includes(input.toLowerCase())
   );
 
-  const add = r => { onChange([...selected, {...r, skid:r.rid}]); setInput(''); setOpen(false); };
-  const remove = rid => onChange(selected.filter(s=>(s.rid||s.skid)!==rid));
+  const add    = r  => { onChange([...selected, { rid:r.rid, item_name:r.name, skid:r.rid }]); setInput(''); };
+  const remove = rid => onChange(selected.filter(s => (s.rid||s.skid) !== rid));
 
   return (
-    <div style={{position:'relative', flex:1}} ref={ref}>
-      <div onClick={()=>{ setOpen(true); ref.current?.querySelector('input')?.focus(); }}
-        style={{display:'flex',flexWrap:'wrap',gap:4,padding:'5px 8px',borderRadius:8,
-          border:`1px solid ${G.border}`,minHeight:32,cursor:'text',background:G.white,alignItems:'center'}}>
-        {selected.length===0&&!open&&(
-          <span style={{fontSize:12,color:G.muted,fontStyle:'italic'}}>please, select item(s)</span>
+    <div style={{ position:'relative', flex:1, minWidth:0 }} ref={ref}>
+      {/* Pills + input row */}
+      <div
+        onClick={() => { setOpen(true); ref.current?.querySelector('input')?.focus(); }}
+        style={{ display:'flex', flexWrap:'wrap', gap:4, padding:'5px 8px', borderRadius:8,
+          border:`1px solid ${G.border}`, minHeight:34, cursor:'text', background:G.white, alignItems:'center' }}>
+        {selected.length === 0 && !open && (
+          <span style={{ fontSize:12, color:G.muted, fontStyle:'italic', padding:'2px 0' }}>please, select item(s)</span>
         )}
-        {selected.map(s=>(
-          <span key={s.rid||s.skid} style={{display:'flex',alignItems:'center',gap:3,
-            background:`${G.caramel}18`,border:`1px solid ${G.caramel}40`,borderRadius:20,
-            padding:'2px 8px',fontSize:11,color:G.caramel}}>
-            {s.item_name||s.name}
-            <button onClick={e=>{e.stopPropagation();remove(s.rid||s.skid);}}
-              style={{background:'none',border:'none',cursor:'pointer',color:G.caramel,fontSize:12,lineHeight:1,padding:0}}>×</button>
-          </span>
-        ))}
-        <input value={input} onChange={e=>{setInput(e.target.value);setOpen(true);}}
-          onFocus={()=>setOpen(true)} onBlur={()=>setTimeout(()=>setOpen(false),150)}
-          placeholder={selected.length?'':'search items…'}
-          style={{border:'none',outline:'none',fontSize:12,fontFamily:G.mono,minWidth:80,flex:1,background:'transparent'}}/>
+        {selected.map(s => {
+          const id   = s.rid || s.skid;
+          const name = s.item_name || s.name || '';
+          return (
+            <span key={id} style={{ display:'inline-flex', alignItems:'center', gap:4,
+              background:`${G.caramel}18`, border:`1px solid ${G.caramel}40`, borderRadius:20,
+              padding:'2px 8px 2px 10px', fontSize:12, color:G.caramel, whiteSpace:'nowrap' }}>
+              {name}
+              <button
+                onClick={e => { e.stopPropagation(); remove(id); }}
+                style={{ background:'none', border:'none', cursor:'pointer', color:G.caramel,
+                  fontSize:14, lineHeight:1, padding:0, marginLeft:1, display:'flex', alignItems:'center' }}>
+                ×
+              </button>
+            </span>
+          );
+        })}
+        <input
+          value={input}
+          onChange={e => { setInput(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          onKeyDown={e => { if (e.key==='Escape') setOpen(false); }}
+          placeholder={selected.length ? '' : ''}
+          style={{ border:'none', outline:'none', fontSize:12, fontFamily:G.mono,
+            minWidth:80, flex:1, background:'transparent', padding:'2px 0' }} />
       </div>
-      {open&&available.length>0&&(
-        <div style={{position:'absolute',top:'calc(100% + 4px)',left:0,right:0,background:G.white,
-          border:`1px solid ${G.border}`,borderRadius:8,boxShadow:'0 4px 16px rgba(44,24,16,0.12)',
-          zIndex:500,maxHeight:200,overflowY:'auto'}}>
-          {available.map(r=>(
-            <button key={r.rid} onMouseDown={()=>add(r)}
-              style={{width:'100%',textAlign:'left',padding:'8px 12px',background:'none',border:'none',
-                cursor:'pointer',fontSize:12,fontFamily:G.mono,color:G.dark,display:'block'}}
-              onMouseEnter={e=>e.currentTarget.style.background=G.sand}
-              onMouseLeave={e=>e.currentTarget.style.background='none'}>
+      {/* Dropdown */}
+      {open && available.length > 0 && (
+        <div style={{ position:'absolute', top:'calc(100% + 4px)', left:0, right:0,
+          background:G.white, border:`1px solid ${G.border}`, borderRadius:8,
+          boxShadow:'0 4px 16px rgba(44,24,16,0.12)', zIndex:500, maxHeight:200, overflowY:'auto' }}>
+          {available.map(r => (
+            <button key={r.rid} onMouseDown={() => add(r)}
+              style={{ width:'100%', textAlign:'left', padding:'8px 12px', background:'none',
+                border:'none', cursor:'pointer', fontSize:13, fontFamily:G.mono, color:G.dark, display:'block' }}
+              onMouseEnter={e => e.currentTarget.style.background = G.sand}
+              onMouseLeave={e => e.currentTarget.style.background = 'none'}>
               {r.name}
             </button>
           ))}
