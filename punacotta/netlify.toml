@@ -12,13 +12,38 @@
 [functions."forecast-scheduled"]
   schedule = "0 8 * * *"
 
-# Rewrite all /api/* calls to Netlify Functions
+# API functions — must come before SPA catch-all
 [[redirects]]
   from   = "/api/*"
   to     = "/.netlify/functions/api/:splat"
   status = 200
+  force  = true
 
-# SPA fallback — all other routes serve index.html
+# Landing page at root — force so it wins over /* catch-all
+[[redirects]]
+  from   = "/"
+  to     = "/landing.html"
+  status = 200
+  force  = true
+
+# Board of Arrivals
+[[redirects]]
+  from   = "/order"
+  to     = "/index.html"
+  status = 200
+
+# App — all /app/* routes serve the SPA
+[[redirects]]
+  from   = "/app/*"
+  to     = "/index.html"
+  status = 200
+
+[[redirects]]
+  from   = "/app"
+  to     = "/index.html"
+  status = 200
+
+# SPA fallback for hash-routed pages (invite, reset, verify tokens)
 [[redirects]]
   from   = "/*"
   to     = "/index.html"
