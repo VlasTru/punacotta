@@ -5485,12 +5485,20 @@ function ProcessesPage({ user, setPage, toast }) {
   const [runs,      setRuns]      = useState([]);
   const [startDialog, setStartDialog] = useState(null); // {proc, warnings}
   const [startSaving, setStartSaving] = useState(false);
+  // Local optimistic item selections per process: procid → [{skid, name}]
+  const [processItems, setProcessItems] = useState({});
 
   const load = useCallback(async()=>{
     setLoading(true);
     try {
       const [p,s,r,rec] = await Promise.all([api.getProcesses(), api.getSkills(), api.getRoles(), api.getRecipes()]);
       setProcesses(p||[]); setSkills(s||[]); setRoles(r||[]); setRecipes(rec||[]);
+      // Seed local item selections from server data
+      const itemMap = {};
+      (p||[]).forEach(proc => {
+        itemMap[proc.procid] = (proc.items||[]).map(it=>({skid:it.rid, name:it.item_name}));
+      });
+      setProcessItems(itemMap);
     } catch(e){ toast(e.message,"error"); } finally{ setLoading(false); }
   },[]);
   useEffect(()=>{ load(); },[]);
@@ -5953,12 +5961,20 @@ function ProcessesPage({ user, setPage, toast }) {
                 <div style={{flex:1}}>
                   <SkillCombo
                     allSkills={recipes.map(r=>({skid:r.rid, name:r.name, color:G.caramel}))}
-                    selected={(proc.items||[]).map(it=>({skid:it.rid, name:it.item_name}))}
+                    selected={processItems[proc.procid] || []}
                     onChange={async newSel=>{
+                      // Update locally first (optimistic)
+                      setProcessItems(p=>({...p,[proc.procid]:newSel}));
                       try {
                         const updated = await api.updateProcessItems(proc.procid,{item_ids:newSel.map(s=>s.skid)});
-                        setProcesses(p=>p.map(x=>x.procid===updated.procid?updated:x));
-                      } catch(e){ toast(e.message,"error"); }
+                        // Sync back from server
+                        setProcessItems(p=>({...p,[proc.procid]:(updated.items||[]).map(it=>({skid:it.rid,name:it.item_name}))}));
+                        setProcesses(prev=>prev.map(x=>x.procid===updated.procid?updated:x));
+                      } catch(e){
+                        // Revert on error
+                        setProcessItems(p=>({...p,[proc.procid]:(proc.items||[]).map(it=>({skid:it.rid,name:it.item_name}))}));
+                        toast(e.message,"error");
+                      }
                     }}
                     pillColor={G.caramel}
                   />
