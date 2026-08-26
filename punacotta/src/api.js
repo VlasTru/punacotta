@@ -59,6 +59,7 @@ export const api = {
   unlinkSupplierProduct: (sid, psid) => req('DELETE', `/suppliers/${sid}/products/${psid}`),
 
   lookupUserByEmail: (email) => req('GET', `/staff/lookup?email=${encodeURIComponent(email)}`),
+  getArrivals:        ()          => req('GET',  '/arrivals'),
   // Invite
   getInvite:          (token)      => req('GET',  `/invite/${token}`),
   completeInvite:     (token,data) => req('POST', `/invite/${token}`, data),
@@ -108,6 +109,7 @@ export const api = {
   getProcesses:   ()          => req('GET',    '/processes'),
   createProcess:  (data)      => req('POST',   '/processes', data),
   updateProcess:  (id,data)   => req('PATCH',  `/processes/${id}`, data),
+  updateProcessItems: (id,data)   => req('PATCH',  `/processes/${id}/items`, data),
   deleteProcess:  (id)        => req('DELETE', `/processes/${id}`),
   // Embed settings
   getEmbedSettings:    ()     => req('GET',   '/embed/settings'),

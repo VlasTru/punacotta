@@ -1647,7 +1647,14 @@ async function route(method, segments, body, headers, event) {
                 s.skid, s.name, s.color
          FROM process_skill ps JOIN skill s ON s.skid=ps.skid
          WHERE ps.procid=$1 ORDER BY ps.seq`, [procid])
-      return { ...proc, skills }
+      const items = await dbq(
+        `SELECT pi.piid, pi.rid, r.name AS item_name, r.price, r.currency,
+                u.name AS units
+         FROM process_item pi
+         JOIN recipe r ON r.rid=pi.rid
+         LEFT JOIN units u ON u.unid=r.unid
+         WHERE pi.procid=$1 ORDER BY r.name`, [procid])
+      return { ...proc, skills, items }
     }
     if (!r1 && method === 'GET') {
       const procs = await dbq('SELECT * FROM process WHERE owner_uid=$1 ORDER BY name', [user.uid])
@@ -1697,8 +1704,21 @@ async function route(method, segments, body, headers, event) {
     }
     if (r1 && method === 'DELETE') {
       await dbr('DELETE FROM process_skill WHERE procid=$1', [r1])
+      await dbr('DELETE FROM process_item  WHERE procid=$1', [r1])
       await dbr('DELETE FROM process WHERE procid=$1 AND owner_uid=$2', [r1, user.uid])
       return [200, { deleted: Number(r1) }]
+    }
+
+    // PATCH /processes/:procid/items — set items for a process
+    if (r1 && r2 === 'items' && method === 'PATCH') {
+      const [proc] = await dbq('SELECT procid FROM process WHERE procid=$1 AND owner_uid=$2', [r1, user.uid])
+      if (!proc) return [404, { error: 'Not found' }]
+      const { item_ids } = body
+      await dbr('DELETE FROM process_item WHERE procid=$1', [r1])
+      for (const rid of (item_ids||[])) {
+        await dbr('INSERT INTO process_item (procid,rid) VALUES ($1,$2) ON CONFLICT DO NOTHING', [r1, rid])
+      }
+      return [200, await fetchProcess(r1)]
     }
 
     // POST /processes/:procid/run — start a process execution
@@ -2305,6 +2325,89 @@ async function route(method, segments, body, headers, event) {
       if (auto_approve !== undefined) await dbr('UPDATE roster SET auto_approve=$1 WHERE roid=$2 AND owner_uid=$3', [!!auto_approve, r1, user.uid])
       return [200, await fetchRoster(r1)]
     }
+  }
+
+  // ── BOARD OF ARRIVALS (public) ────────────────────────────────────────────────
+  // GET /arrivals — list items currently in production or recently completed
+  if (r0 === 'arrivals' && method === 'GET') {
+    const now = new Date();
+    const oneHourAgo = new Date(now.getTime() - 3600000);
+
+    // Find active/recently completed runs with associated items
+    const rows = await dbq(`
+      SELECT
+        r.rid, r.name AS item_name, r.price, r.currency,
+        u.name AS units,
+        owner.business_name AS sold_by,
+        owner.uid AS owner_uid,
+        pr.prid, pr.status AS run_status,
+        pr.started_at, pr.completed_at, pr.hold_secs,
+        -- Total planned duration in minutes
+        COALESCE((
+          SELECT SUM(
+            CASE ps.duration_unit
+              WHEN 'hours'   THEN ps.duration * 60
+              WHEN 'seconds' THEN ps.duration / 60
+              ELSE ps.duration
+            END
+          )
+          FROM process_skill ps WHERE ps.procid=pr.procid
+        ), 0) AS planned_mins,
+        -- Current stock
+        COALESCE((
+          SELECT SUM(ps2.quantity)
+          FROM product_stock ps2
+          JOIN recipe_product rp ON rp.pid=ps2.pid
+          WHERE rp.rid=r.rid
+        ), 0) AS stock_qty
+      FROM process_run pr
+      JOIN process_item pi ON pi.procid=pr.procid
+      JOIN recipe r ON r.rid=pi.rid
+      LEFT JOIN units u ON u.unid=r.unid
+      JOIN "user" owner ON owner.uid=pr.owner_uid
+      WHERE pr.status IN ('in_progress','on_hold','completed')
+        AND (
+          pr.status IN ('in_progress','on_hold')
+          OR pr.completed_at > $1
+        )
+      ORDER BY r.name, pr.started_at
+    `, [oneHourAgo.toISOString()])
+
+    // Calculate ETA for each row
+    const results = rows.map(row => {
+      const startedAt = new Date(row.started_at);
+      const plannedMs = row.planned_mins * 60000;
+      const holdMs    = (row.hold_secs||0) * 1000;
+      const etaMs     = startedAt.getTime() + plannedMs + holdMs;
+      const eta       = new Date(etaMs);
+      const minsLeft  = Math.max(0, Math.round((etaMs - now.getTime()) / 60000));
+      const etaHHMM   = eta.toTimeString().slice(0,5);
+      // Delivery ETA = pickup + 30min estimated
+      const etaDelivery = new Date(etaMs + 1800000).toTimeString().slice(0,5);
+      // Freshness 0=just started, 1=ready/overdue
+      const freshness = row.run_status==='completed'
+        ? Math.min(1, (now.getTime()-new Date(row.completed_at).getTime()) / 3600000)
+        : 0;
+
+      return {
+        rid:         row.rid,
+        item_name:   row.item_name,
+        sold_by:     row.sold_by||'Restaurant',
+        owner_uid:   row.owner_uid,
+        price:       row.price,
+        currency:    row.currency||'AMD',
+        units:       row.units||'pcs',
+        eta_pickup:  etaHHMM,
+        eta_delivery:etaDelivery,
+        mins_left:   minsLeft,
+        run_status:  row.run_status,
+        freshness,
+        stock_qty:   Number(row.stock_qty)||0,
+        prid:        row.prid,
+      };
+    });
+
+    return [200, results];
   }
 
   // ── EMBED SETTINGS (authenticated, manufacturer only) ─────────────────────

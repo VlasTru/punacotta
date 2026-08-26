@@ -111,6 +111,84 @@ const RU = {
   "+ Add product":"+ Добавить продукт","Remove":"Убрать",
   "No terms yet.":"Условий пока нет.",
   "New Supplier":"Новый поставщик","Edit Supplier":"Редактировать поставщика",
+  // v12-v13 additions
+  "Accept invitation":"Принять приглашение",
+  "Accept order?":"Принять заказ?",
+  "Add":"Добавить",
+  "Add at least one product":"Добавьте хотя бы один продукт",
+  "All skills":"Все навыки",
+  "Allowed domains":"Разрешённые домены",
+  "API key":"API-ключ",
+  "API key rotated":"Новый API-ключ сформирован",
+  "Apply":"Применить",
+  "Availability hours saved":"Рабочие часы сохранены",
+  "Check your inbox":"Проверьте входящую почту",
+  "Cloned from previous week":"Рабочий график скопирован из предыдущей недели",
+  "Copied!":"Скопировано",
+  "Create account & join":"Зарегистрироваться",
+  "Delete this equipment?":"Удалить оборудование?",
+  "Delete this order? This cannot be undone.":"Удалить заказ? Восстановить его будет невозможно.",
+  "Delete this process?":"Удалить этот процесс?",
+  "Deleted":"Удалено",
+  "Delivery address":"Адрес доставки",
+  "Discard order?":"Сбросить заказ?",
+  "Edit Product":"Изменить продукт",
+  "Edit role":"Изменить роль",
+  "Email confirmed!":"Адрес электронной почты подтверждён",
+  "Embed snippets":"Код встраиваемого меню",
+  "Embedded Menu":"Внешнее меню",
+  "Embedded menu":"Внешнее меню",
+  "Equipment":"Оборудование",
+  "Executions":"Прогоны процессов",
+  "Expiry saved":"Дата истечения сохранена",
+  "First and last name required":"Не хватает имени и фамилии",
+  "Forecast":"Прогноз",
+  "Forecast updated":"Прогноз обновлён",
+  "Hours cleared":"Время возвращено к исходным значениям",
+  "Invalid or expired invite":"Приглашение недействительно или срок его действия истёк",
+  "Link":"Привязать",
+  "Link expired or invalid":"Ссылка недействительна или срок её действия истёк",
+  "Menu":"Меню",
+  "My Processes":"Мои процессы",
+  "Name required":"Не хватает названия",
+  "New Menu":"Новое меню",
+  "New Product":"Новый продукт",
+  "New Supplier Order":"Новый заказ поставщику",
+  "No existing account found for this email — a new employee record will be created.":"Учётная запись с таким адресом электронной почты не найдена — будет добавлена новая.",
+  "Order confirmed as delivered!":"Доставка заказа подтверждена клиентом",
+  "Order deleted":"Заказ удалён",
+  "Order saved":"Заказ сохранён",
+  "Order settings":"Параметры заказа",
+  "Orders created from forecast":"Заказы на основе прогноза сформированы",
+  "Password must be at least 6 characters":"Пароль должен быть как минимум шестизначным",
+  "Password updated":"Пароль обновлён",
+  "Passwords do not match":"Значения паролей в двух полях не совпадают",
+  "Please enter a delivery address":"Укажите адрес доставки",
+  "Please enter your name":"Укажите своё имя",
+  "Please select pickup or delivery":"Вы не указали, заберёте ли вы заказ самостоятельно или вам нужна доставка.",
+  "Price per unit":"Цена за единицу",
+  "Processes":"Процессы",
+  "Removed from menu":"Блюдо исключено из меню",
+  "Role name:":"Название роли:",
+  "Roles & Skills":"Роли и способности",
+  "Roster not published yet":"Рабочий график ещё не опубликован",
+  "Rotate":"Обновить",
+  "Rotate the API key? Your existing embed snippets will stop working until updated.":"Обновить API-ключ? Пока вы не обновите значение ключа на внешнем сайте, заказать с него ничего будет невозможно.",
+  "Sales":"Продажи",
+  "Saved":"Сохранено",
+  "saved":"сохранено",
+  "Schedule saved":"График обновлён",
+  "Select a supplier":"Поставщик",
+  "Set new password":"Новый пароль",
+  "Set password":"Установить пароль",
+  "Slots saved":"Рабочие интервалы сохранены",
+  "Staff":"Сотрудники",
+  "Stock":"Склад",
+  "Supplier linked":"Поставщик привязан",
+  "Supplier unlinked":"Связь с поставщиком разорвана",
+  "Test connectivity":"Проверить связь",
+  "You're all set!":"Готово!",
+  "Your skills saved":"Ваши навыки сохранены",
 }
 
 function T({ children }) {
@@ -4038,6 +4116,275 @@ function SuppliersPage({
   );
 }
 
+// ─── BOARD OF ARRIVALS ────────────────────────────────────────────────────────
+function BoardOfArrivals({ toast }) {
+  const [arrivals, setArrivals] = useState([]);
+  const [loading,  setLoading]  = useState(true);
+  const [cart,     setCart]     = useState({}); // rid → qty
+  const [sortKey,  setSortKey]  = useState('item_name');
+  const [sortDir,  setSortDir]  = useState('asc');
+  const [page,     setPage]     = useState(1);
+  const [filterItems,   setFilterItems]   = useState([]);
+  const [filterSellers, setFilterSellers] = useState([]);
+  const [readyOnly,     setReadyOnly]     = useState(false);
+  const [itemSearch,    setItemSearch]    = useState('');
+  const PER_PAGE = 20;
+
+  const RECENT_KEY = 'boa_recent_items';
+  const getRecent = () => { try { return JSON.parse(localStorage.getItem(RECENT_KEY)||'[]'); } catch{ return []; } };
+  const pushRecent = name => {
+    const prev = getRecent().filter(x=>x!==name);
+    localStorage.setItem(RECENT_KEY, JSON.stringify([name,...prev].slice(0,10)));
+  };
+
+  const load = useCallback(async()=>{
+    setLoading(true);
+    try { setArrivals(await api.getArrivals()); }
+    catch(e){ toast(e.message,"error"); }
+    finally{ setLoading(false); }
+  },[]);
+
+  useEffect(()=>{ load(); const t=setInterval(load,60000); return()=>clearInterval(t); },[]);
+
+  // Unique filter options
+  const allItemNames  = [...new Set(arrivals.map(a=>a.item_name))].sort();
+  const allSellers    = [...new Set(arrivals.map(a=>a.sold_by))].sort();
+
+  // Apply filters
+  let filtered = arrivals.filter(a=>{
+    if (filterItems.length   && !filterItems.includes(a.item_name)) return false;
+    if (filterSellers.length && !filterSellers.includes(a.sold_by)) return false;
+    if (readyOnly && a.run_status!=='completed') return false;
+    return true;
+  });
+
+  // Sort
+  filtered = [...filtered].sort((a,b)=>{
+    let va = a[sortKey]??'', vb = b[sortKey]??'';
+    if (typeof va==='number') return sortDir==='asc'?va-vb:vb-va;
+    return sortDir==='asc'?String(va).localeCompare(String(vb)):String(vb).localeCompare(String(va));
+  });
+
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(filtered.length/PER_PAGE));
+  const pageRows   = filtered.slice((page-1)*PER_PAGE, page*PER_PAGE);
+
+  const toggleSort = key => {
+    if (sortKey===key) setSortDir(d=>d==='asc'?'desc':'asc');
+    else { setSortKey(key); setSortDir('asc'); }
+    setPage(1);
+  };
+
+  const setQty = (rid, delta) => setCart(p=>{
+    const cur = p[rid]||0;
+    const next = Math.max(0, cur+delta);
+    return next===0 ? Object.fromEntries(Object.entries(p).filter(([k])=>k!==String(rid))) : {...p,[rid]:next};
+  });
+
+  // Freshness colour: white→amber→red over 60 minutes
+  const freshnessColor = f => {
+    if (f<=0) return 'transparent';
+    const r = Math.round(255);
+    const g = Math.round(255*(1-f));
+    const b = Math.round(255*(1-f));
+    return `rgba(${r},${g},${b},${Math.min(0.35, f*0.5)})`;
+  };
+
+  const cartTotal = Object.entries(cart).reduce((sum,[rid,qty])=>{
+    const item = arrivals.find(a=>String(a.rid)===rid);
+    return sum + (item?item.price*qty:0);
+  },0);
+  const cartCurrency = arrivals.find(a=>cart[a.rid])?.currency||'AMD';
+
+  const SortTh = ({label, k, style={}}) => (
+    <th onClick={()=>toggleSort(k)}
+      style={{padding:"10px 12px",textAlign:"left",fontSize:11,fontWeight:700,
+        textTransform:"uppercase",letterSpacing:"0.04em",color:G.muted,cursor:"pointer",
+        userSelect:"none",whiteSpace:"nowrap",...style}}>
+      {label}{sortKey===k?(sortDir==='asc'?' ▴':' ▾'):''}
+    </th>
+  );
+
+  const recentItems = getRecent();
+
+  return (
+    <div style={{minHeight:"100vh",background:G.cream,fontFamily:G.mono}}>
+      {/* Header */}
+      <div style={{background:G.white,borderBottom:`1px solid ${G.border}`,padding:"0 24px",height:56,display:"flex",alignItems:"center",gap:16}}>
+        <span style={{fontFamily:G.font,fontSize:20,fontWeight:700,color:G.caramel,fontStyle:"italic"}}>Pun&Cotta</span>
+        <span style={{fontSize:14,color:G.muted}}>Board of Arrivals</span>
+        <button onClick={load} style={{marginLeft:"auto",background:"none",border:`1px solid ${G.border}`,borderRadius:7,cursor:"pointer",padding:"5px 12px",fontSize:12,color:G.muted}}>↻ Refresh</button>
+      </div>
+
+      <div style={{display:"flex",maxWidth:1300,margin:"0 auto",padding:24,gap:20}}>
+        {/* Main */}
+        <div style={{flex:1,minWidth:0}}>
+          {/* Filters */}
+          <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:12,padding:"14px 16px",marginBottom:16,display:"flex",flexWrap:"wrap",gap:16,alignItems:"flex-end"}}>
+            {/* Item name filter */}
+            <div style={{flex:"1 1 220px"}}>
+              <label style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,display:"block",marginBottom:5}}>Item name</label>
+              <div style={{position:"relative"}}>
+                <input value={itemSearch} onChange={e=>setItemSearch(e.target.value)}
+                  placeholder="Search items…"
+                  style={{width:"100%",padding:"7px 10px",borderRadius:7,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}/>
+                {itemSearch&&(
+                  <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,background:G.white,border:`1px solid ${G.border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(44,24,16,0.1)",zIndex:50,maxHeight:200,overflowY:"auto"}}>
+                    {allItemNames.filter(n=>n.toLowerCase().includes(itemSearch.toLowerCase())).map(n=>(
+                      <button key={n} onMouseDown={()=>{
+                        setFilterItems(p=>p.includes(n)?p:([...p,n]));
+                        pushRecent(n); setItemSearch(''); setPage(1);
+                      }} style={{width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",cursor:"pointer",fontSize:13,fontFamily:G.mono,color:G.dark,display:"flex",justifyContent:"space-between"}}
+                        onMouseEnter={e=>e.currentTarget.style.background=G.sand}
+                        onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                        {n}
+                        {recentItems.includes(n)&&<span style={{fontSize:10,color:G.muted}}>recent</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {filterItems.length>0&&(
+                <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:6}}>
+                  {filterItems.map(n=>(
+                    <span key={n} style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:`${G.caramel}18`,color:G.caramel,display:"flex",alignItems:"center",gap:4}}>
+                      {n}<button onClick={()=>setFilterItems(p=>p.filter(x=>x!==n))} style={{background:"none",border:"none",cursor:"pointer",color:G.caramel,fontSize:12,padding:0}}>×</button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* Sold by filter */}
+            <div style={{flex:"1 1 180px"}}>
+              <label style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,display:"block",marginBottom:5}}>Sold by</label>
+              <select multiple value={filterSellers}
+                onChange={e=>{ const sel=[...e.target.selectedOptions].map(o=>o.value); setFilterSellers(sel); setPage(1); }}
+                style={{width:"100%",padding:"6px 8px",borderRadius:7,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",minHeight:36}}>
+                {allSellers.map(s=><option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            {/* Ready only */}
+            <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,cursor:"pointer",whiteSpace:"nowrap"}}>
+              <input type="checkbox" checked={readyOnly} onChange={e=>{setReadyOnly(e.target.checked);setPage(1);}} style={{accentColor:G.caramel}}/>
+              Display only ready items
+            </label>
+          </div>
+
+          {loading ? <Spinner/> : (
+            <>
+              {pageRows.length===0 ? (
+                <div style={{textAlign:"center",padding:60,color:G.muted,fontStyle:"italic"}}>
+                  No items currently in production or recently completed.
+                </div>
+              ) : (
+                <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:12,overflow:"hidden"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse"}}>
+                    <thead>
+                      <tr style={{background:G.sand,borderBottom:`1px solid ${G.border}`}}>
+                        <SortTh label="Item name"       k="item_name"/>
+                        <SortTh label="Sold by"         k="sold_by"/>
+                        <SortTh label="Unit price"      k="price"/>
+                        <SortTh label="ETA pickup"      k="eta_pickup"/>
+                        <SortTh label="ETA delivery"    k="eta_delivery"/>
+                        <th style={{padding:"10px 12px",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted}}>Qty</th>
+                        <SortTh label="Units"           k="units"/>
+                        <th style={{padding:"10px 12px",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted}}>Cost</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pageRows.map((a,i)=>{
+                        const qty     = cart[a.rid]||0;
+                        const isReady = a.run_status==='completed';
+                        const rowBg   = freshnessColor(a.freshness);
+                        return (
+                          <tr key={`${a.rid}-${a.prid}`}
+                            style={{borderBottom:i<pageRows.length-1?`1px solid ${G.border}`:"none",background:rowBg,transition:"background 0.5s"}}>
+                            <td style={{padding:"10px 12px",fontWeight:600,fontSize:14,color:G.dark}}>{a.item_name}</td>
+                            <td style={{padding:"10px 12px",fontSize:13,color:G.muted}}>{a.sold_by}</td>
+                            <td style={{padding:"10px 12px",fontSize:13,fontFamily:G.mono}}>{a.price} {a.currency}</td>
+                            <td style={{padding:"10px 12px",fontFamily:G.mono,fontSize:13,
+                              color:isReady?G.green:a.mins_left<15?G.red:G.dark,fontWeight:isReady?700:400}}>
+                              {isReady?<span style={{color:G.green}}>✓ Ready</span>:a.eta_pickup}
+                            </td>
+                            <td style={{padding:"10px 12px",fontFamily:G.mono,fontSize:13,color:G.muted}}>{a.eta_delivery}</td>
+                            <td style={{padding:"10px 12px"}}>
+                              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                                <button onClick={()=>setQty(a.rid,-1)}
+                                  style={{width:24,height:24,borderRadius:6,border:`1px solid ${G.border}`,background:G.sand,cursor:"pointer",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
+                                <span style={{minWidth:28,textAlign:"center",fontSize:14,fontFamily:G.mono,fontWeight:600}}>{qty||0}</span>
+                                <button onClick={()=>setQty(a.rid,1)}
+                                  style={{width:24,height:24,borderRadius:6,border:`1px solid ${G.border}`,background:G.sand,cursor:"pointer",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                              </div>
+                            </td>
+                            <td style={{padding:"10px 12px",fontSize:13,color:G.muted}}>{a.units}</td>
+                            <td style={{padding:"10px 12px",fontFamily:G.mono,fontSize:13,fontWeight:qty>0?700:400,color:qty>0?G.caramel:G.muted}}>
+                              {qty>0 ? `${(a.price*qty).toLocaleString()} ${a.currency}` : '—'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {/* Pagination */}
+              {totalPages>1&&(
+                <div style={{display:"flex",justifyContent:"center",gap:6,marginTop:16}}>
+                  <button onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page===1}
+                    style={{padding:"5px 12px",borderRadius:7,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",opacity:page===1?0.4:1}}>←</button>
+                  {Array.from({length:totalPages},(_,i)=>i+1).map(p=>(
+                    <button key={p} onClick={()=>setPage(p)}
+                      style={{padding:"5px 12px",borderRadius:7,border:`1px solid ${G.border}`,
+                        background:page===p?G.caramel:G.white,color:page===p?G.white:G.dark,cursor:"pointer",fontWeight:page===p?700:400}}>
+                      {p}
+                    </button>
+                  ))}
+                  <button onClick={()=>setPage(p=>Math.min(totalPages,p+1))} disabled={page===totalPages}
+                    style={{padding:"5px 12px",borderRadius:7,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",opacity:page===totalPages?0.4:1}}>→</button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Cart sidebar */}
+        <div style={{width:280,flexShrink:0}}>
+          <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:12,padding:16,position:"sticky",top:24}}>
+            <h3 style={{fontFamily:G.font,fontSize:16,marginBottom:14,color:G.dark}}>Your selection</h3>
+            {Object.keys(cart).length===0 ? (
+              <p style={{fontSize:13,color:G.muted,fontStyle:"italic"}}>Add items using the + buttons.</p>
+            ) : <>
+              {Object.entries(cart).map(([rid,qty])=>{
+                const item = arrivals.find(a=>String(a.rid)===rid);
+                if (!item) return null;
+                return (
+                  <div key={rid} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${G.border}`}}>
+                    <div>
+                      <p style={{fontSize:13,fontWeight:600,color:G.dark,marginBottom:2}}>{item.item_name}</p>
+                      <p style={{fontSize:12,color:G.muted}}>{qty} × {item.price} {item.currency}</p>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:4}}>
+                      <button onClick={()=>setQty(Number(rid),-1)} style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.sand,cursor:"pointer",fontSize:12}}>−</button>
+                      <span style={{fontSize:13,fontFamily:G.mono,fontWeight:600,minWidth:20,textAlign:"center"}}>{qty}</span>
+                      <button onClick={()=>setQty(Number(rid),1)} style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.sand,cursor:"pointer",fontSize:12}}>+</button>
+                    </div>
+                  </div>
+                );
+              })}
+              <div style={{display:"flex",justifyContent:"space-between",fontWeight:700,fontSize:14,paddingTop:8}}>
+                <span>Total</span>
+                <span style={{color:G.caramel}}>{cartTotal.toLocaleString()} {cartCurrency}</span>
+              </div>
+              <Btn style={{width:"100%",marginTop:12}} onClick={()=>alert("Order flow coming soon!")}>Place order</Btn>
+            </>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 // ─── INVITE PAGE ─────────────────────────────────────────────────────────────
 function InvitePage({ token, setPage, toast, onLogin }) {
   const [info,    setInfo]    = useState(null);   // {email, employer_name, already_registered}
@@ -4951,6 +5298,62 @@ function RolesPage({ roles, skills, setRoles, setSkills, createSkill, toast, onB
   );
 }
 
+// ─── PROCESS ITEM COMBO ───────────────────────────────────────────────────────
+// Multi-select pill combo for linking menu items to a process
+function ProcessItemCombo({ recipes, selected, onChange }) {
+  const [input, setInput] = useState('');
+  const [open,  setOpen]  = useState(false);
+  const ref = useRef(null);
+
+  const available = recipes.filter(r=>
+    !selected.find(s=>(s.rid||s.skid)===r.rid) &&
+    r.name.toLowerCase().includes(input.toLowerCase())
+  );
+
+  const add = r => { onChange([...selected, {...r, skid:r.rid}]); setInput(''); setOpen(false); };
+  const remove = rid => onChange(selected.filter(s=>(s.rid||s.skid)!==rid));
+
+  return (
+    <div style={{position:'relative', flex:1}} ref={ref}>
+      <div onClick={()=>{ setOpen(true); ref.current?.querySelector('input')?.focus(); }}
+        style={{display:'flex',flexWrap:'wrap',gap:4,padding:'5px 8px',borderRadius:8,
+          border:`1px solid ${G.border}`,minHeight:32,cursor:'text',background:G.white,alignItems:'center'}}>
+        {selected.length===0&&!open&&(
+          <span style={{fontSize:12,color:G.muted,fontStyle:'italic'}}>please, select item(s)</span>
+        )}
+        {selected.map(s=>(
+          <span key={s.rid||s.skid} style={{display:'flex',alignItems:'center',gap:3,
+            background:`${G.caramel}18`,border:`1px solid ${G.caramel}40`,borderRadius:20,
+            padding:'2px 8px',fontSize:11,color:G.caramel}}>
+            {s.item_name||s.name}
+            <button onClick={e=>{e.stopPropagation();remove(s.rid||s.skid);}}
+              style={{background:'none',border:'none',cursor:'pointer',color:G.caramel,fontSize:12,lineHeight:1,padding:0}}>×</button>
+          </span>
+        ))}
+        <input value={input} onChange={e=>{setInput(e.target.value);setOpen(true);}}
+          onFocus={()=>setOpen(true)} onBlur={()=>setTimeout(()=>setOpen(false),150)}
+          placeholder={selected.length?'':'search items…'}
+          style={{border:'none',outline:'none',fontSize:12,fontFamily:G.mono,minWidth:80,flex:1,background:'transparent'}}/>
+      </div>
+      {open&&available.length>0&&(
+        <div style={{position:'absolute',top:'calc(100% + 4px)',left:0,right:0,background:G.white,
+          border:`1px solid ${G.border}`,borderRadius:8,boxShadow:'0 4px 16px rgba(44,24,16,0.12)',
+          zIndex:500,maxHeight:200,overflowY:'auto'}}>
+          {available.map(r=>(
+            <button key={r.rid} onMouseDown={()=>add(r)}
+              style={{width:'100%',textAlign:'left',padding:'8px 12px',background:'none',border:'none',
+                cursor:'pointer',fontSize:12,fontFamily:G.mono,color:G.dark,display:'block'}}
+              onMouseEnter={e=>e.currentTarget.style.background=G.sand}
+              onMouseLeave={e=>e.currentTarget.style.background='none'}>
+              {r.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── EXECUTIONS CALENDAR ──────────────────────────────────────────────────────
 function ExecutionsCalendar({ runs, onAction }) {
   if (!runs || !runs.length) return null;
@@ -5114,6 +5517,7 @@ function ProcessesPage({ user, setPage, toast }) {
   const [processes, setProcesses] = useState([]);
   const [skills,    setSkills]    = useState([]);
   const [roles,     setRoles]     = useState([]);
+  const [recipes,   setRecipes]   = useState([]);
   const [loading,   setLoading]   = useState(true);
   const [showForm,  setShowForm]  = useState(false);
   const [editProc,  setEditProc]  = useState(null);
@@ -5128,8 +5532,8 @@ function ProcessesPage({ user, setPage, toast }) {
   const load = useCallback(async()=>{
     setLoading(true);
     try {
-      const [p,s,r] = await Promise.all([api.getProcesses(), api.getSkills(), api.getRoles()]);
-      setProcesses(p||[]); setSkills(s||[]); setRoles(r||[]);
+      const [p,s,r,rec] = await Promise.all([api.getProcesses(), api.getSkills(), api.getRoles(), api.getRecipes()]);
+      setProcesses(p||[]); setSkills(s||[]); setRoles(r||[]); setRecipes(rec||[]);
     } catch(e){ toast(e.message,"error"); } finally{ setLoading(false); }
   },[]);
   useEffect(()=>{ load(); },[]);
@@ -5570,24 +5974,42 @@ function ProcessesPage({ user, setPage, toast }) {
 
       {/* Saved processes list */}
       {processes.map(proc=>(
-        <div key={proc.procid} style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:12, padding:"14px 18px", marginBottom:10, display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-          <div style={{flex:1,minWidth:0}}>
-            <button onClick={()=>{ openEdit(proc); window.scrollTo({top:0,behavior:"smooth"}); }}
-              style={{background:"none",border:"none",cursor:"pointer",fontWeight:700,fontSize:15,color:G.caramel,padding:0,textDecoration:"underline dotted",textUnderlineOffset:3,marginBottom:6,display:"block",textAlign:"left"}}>
-              {proc.name}
-            </button>
-            <div style={{ display:"flex", flexWrap:"wrap", gap:4 }}>
-              {(proc.skills||[]).map(sk=>(
-                <span key={sk.psid} style={{ fontSize:12, padding:"2px 10px", borderRadius:20, background:`${sk.color||G.muted}18`, color:sk.color||G.muted, border:`1px solid ${sk.color||G.muted}40`, display:"flex", alignItems:"center", gap:4 }}>
-                  {sk.name}{sk.duration?` · ${sk.duration}${durAbbr(sk.duration_unit)}`:""}
-                  {sk.dep_type&&<span style={{fontSize:9,opacity:0.75,fontWeight:700}}>{sk.dep_type}</span>}
-                </span>
-              ))}
+        <div key={proc.procid} style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:12, padding:"14px 18px", marginBottom:10 }}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
+            {/* Name + skills */}
+            <div style={{flex:1,minWidth:0}}>
+              <button onClick={()=>{ openEdit(proc); window.scrollTo({top:0,behavior:"smooth"}); }}
+                style={{background:"none",border:"none",cursor:"pointer",fontWeight:700,fontSize:15,color:G.caramel,padding:0,textDecoration:"underline dotted",textUnderlineOffset:3,marginBottom:6,display:"block",textAlign:"left"}}>
+                {proc.name}
+              </button>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginBottom:8 }}>
+                {(proc.skills||[]).map(sk=>(
+                  <span key={sk.psid} style={{ fontSize:12, padding:"2px 10px", borderRadius:20, background:`${sk.color||G.muted}18`, color:sk.color||G.muted, border:`1px solid ${sk.color||G.muted}40`, display:"flex", alignItems:"center", gap:4 }}>
+                    {sk.name}{sk.duration?` · ${sk.duration}${durAbbr(sk.duration_unit)}`:""}
+                    {sk.dep_type&&<span style={{fontSize:9,opacity:0.75,fontWeight:700}}>{sk.dep_type}</span>}
+                  </span>
+                ))}
+              </div>
+              {/* Items selector */}
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                <span style={{fontSize:12,fontWeight:600,color:G.muted,flexShrink:0}}>Items:</span>
+                <ProcessItemCombo
+                  recipes={recipes}
+                  selected={(proc.items||[]).map(it=>({...it,skid:it.rid}))}
+                  onChange={async newSel=>{
+                    try {
+                      const updated = await api.updateProcessItems(proc.procid,{item_ids:newSel.map(s=>s.rid||s.skid)});
+                      setProcesses(p=>p.map(x=>x.procid===updated.procid?updated:x));
+                    } catch(e){ toast(e.message,"error"); }
+                  }}
+                />
+              </div>
             </div>
-          </div>
-          <div style={{display:"flex",gap:8,alignItems:"center",flexShrink:0,marginLeft:12}}>
-            <Btn size="sm" onClick={()=>handleRunProcess(proc)} loading={startSaving}>▶ Run</Btn>
-            <button onClick={()=>deleteProcess(proc.procid)} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:18,padding:"4px 8px"}}>×</button>
+            {/* Actions */}
+            <div style={{display:"flex",gap:8,alignItems:"center",flexShrink:0}}>
+              <Btn size="sm" onClick={()=>handleRunProcess(proc)} loading={startSaving}>▶ Run</Btn>
+              <button onClick={()=>deleteProcess(proc.procid)} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:18,padding:"4px 8px"}}>×</button>
+            </div>
           </div>
         </div>
       ))}
@@ -6711,6 +7133,7 @@ export default function App() {
     if (h.startsWith("#reset/"))  return { type:"reset",  token:h.slice(7) };
     if (h.startsWith("#verify/")) return { type:"verify", token:h.slice(8) };
     if (h.startsWith("#invite/")) return { type:"invite", token:h.slice(8) };
+    if (h === "#order" || h.startsWith("#order")) return { type:"order" };
     return null;
   });
 
@@ -6724,6 +7147,13 @@ export default function App() {
   const onLogin=u=>{setUser(u);setHashPage(null);setPage(u.is_manufacturer?"orders-manuf":"restaurants");};
 
   // If a hash token is present, show the appropriate page regardless of auth state
+  if (hashPage?.type === "order") return (
+    <LangContext.Provider value={lang}>
+      <style>{css}</style>
+      <Toast toasts={toasts} remove={remove}/>
+      <BoardOfArrivals toast={toast}/>
+    </LangContext.Provider>
+  );
   if (hashPage?.type === "invite") return (
     <LangContext.Provider value={lang}>
       <style>{css}</style>

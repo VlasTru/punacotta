@@ -427,6 +427,13 @@ CREATE TABLE IF NOT EXISTS equipment_item (
 
 -- Link recipe to a production process
 ALTER TABLE recipe ADD COLUMN IF NOT EXISTS procid INTEGER REFERENCES process(procid) ON DELETE SET NULL;
+
+CREATE TABLE IF NOT EXISTS process_item (
+  piid    SERIAL PRIMARY KEY,
+  procid  INTEGER NOT NULL REFERENCES process(procid) ON DELETE CASCADE,
+  rid     INTEGER NOT NULL REFERENCES recipe(rid) ON DELETE CASCADE,
+  UNIQUE(procid, rid)
+);
 `
 
 await client.connect()
