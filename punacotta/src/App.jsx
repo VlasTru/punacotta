@@ -5967,8 +5967,12 @@ function ProcessesPage({ user, setPage, toast }) {
                       setProcessItems(p=>({...p,[proc.procid]:newSel}));
                       try {
                         const updated = await api.updateProcessItems(proc.procid,{item_ids:newSel.map(s=>s.skid)});
-                        // Sync back from server
-                        setProcessItems(p=>({...p,[proc.procid]:(updated.items||[]).map(it=>({skid:it.rid,name:it.item_name}))}));
+                        const serverItems = (updated.items||[]).map(it=>({skid:it.rid,name:it.item_name}));
+                        // Only overwrite local state if server returned items, or we sent none
+                        if (serverItems.length > 0 || newSel.length === 0) {
+                          setProcessItems(p=>({...p,[proc.procid]:serverItems}));
+                        }
+                        // else: server returned empty but we selected items — keep local state
                         setProcesses(prev=>prev.map(x=>x.procid===updated.procid?updated:x));
                       } catch(e){
                         // Revert on error

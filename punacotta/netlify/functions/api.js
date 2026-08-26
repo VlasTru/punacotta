@@ -1713,12 +1713,22 @@ async function route(method, segments, body, headers, event) {
     if (r1 && r2 === 'items' && method === 'PATCH') {
       const [proc] = await dbq('SELECT procid FROM process WHERE procid=$1 AND owner_uid=$2', [r1, user.uid])
       if (!proc) return [404, { error: 'Not found' }]
+      // Ensure table exists (safe to run every time)
+      await dbr(`CREATE TABLE IF NOT EXISTS process_item (
+        piid   SERIAL PRIMARY KEY,
+        procid INTEGER NOT NULL REFERENCES process(procid) ON DELETE CASCADE,
+        rid    INTEGER NOT NULL REFERENCES recipe(rid) ON DELETE CASCADE,
+        UNIQUE(procid, rid)
+      )`)
       const { item_ids } = body
+      console.log('process_item PATCH procid=%s item_ids=%j', r1, item_ids)
       await dbr('DELETE FROM process_item WHERE procid=$1', [r1])
       for (const rid of (item_ids||[])) {
-        await dbr('INSERT INTO process_item (procid,rid) VALUES ($1,$2) ON CONFLICT DO NOTHING', [r1, rid])
+        await dbr('INSERT INTO process_item (procid,rid) VALUES ($1,$2) ON CONFLICT DO NOTHING', [r1, Number(rid)])
       }
-      return [200, await fetchProcess(r1)]
+      const result = await fetchProcess(r1)
+      console.log('process_item result items=%j', result?.items)
+      return [200, result]
     }
 
     // POST /processes/:procid/run — start a process execution
