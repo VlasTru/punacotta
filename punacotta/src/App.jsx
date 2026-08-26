@@ -4787,6 +4787,8 @@ function RoleEditDialog({ role, allSkills, onSave, onClose, createSkill }) {
 // Lets the restaurant owner assign skills to themselves so they can be
 // assigned to process steps (otherwise they'd never appear in availability checks)
 function OwnerSkillsPanel({ user, skills, createSkill, toast }) {
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
   const [mySkills,  setMySkills]  = useState([]);
   const [saving,    setSaving]    = useState(false);
   const [expanded,  setExpanded]  = useState(false);
@@ -4845,6 +4847,8 @@ function OwnerSkillsPanel({ user, skills, createSkill, toast }) {
 }
 
 function StaffPage({ user, toast }) {
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
   const [employees, setEmployees] = useState([]);
   const [roles,     setRoles]     = useState([]);
   const [skills,    setSkills]    = useState([]);
@@ -5142,6 +5146,8 @@ function SkillUsageCount({ skid }) {
 }
 
 function RolesPage({ roles, skills, setRoles, setSkills, createSkill, toast, onBack }) {
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
   const [selected,   setSelected]   = useState([]);
   const [saving,     setSaving]     = useState(false);
   const [localRoles, setLocalRoles] = useState(roles.map(r=>({...r,_skills:r.skills||[],_name:r.name})));
@@ -5535,6 +5541,8 @@ function SkillComboWithProcesses({ allItems, onAdd, onCreateSkill }) {
 
 // ─── PROCESSES PAGE ────────────────────────────────────────────────────────────
 function ProcessesPage({ user, setPage, toast }) {
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
   const [processes, setProcesses] = useState([]);
   const [skills,    setSkills]    = useState([]);
   const [roles,     setRoles]     = useState([]);
@@ -6789,6 +6797,8 @@ function EmployeeProcessesPage({ user, toast, setPage }) {
 
 // ─── EQUIPMENT PAGE ───────────────────────────────────────────────────────────
 function EquipmentPage({ toast }) {
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
   const [equipment, setEquipment] = useState([]);
   const [recipes,   setRecipes]   = useState([]);
   const [loading,   setLoading]   = useState(true);
