@@ -7135,10 +7135,14 @@ export default function App() {
     if (h.startsWith("#verify/")) return { type:"verify", token:h.slice(8) };
     if (h.startsWith("#invite/")) return { type:"invite", token:h.slice(8) };
     if (h === "#order" || h.startsWith("#order")) return { type:"order" };
+    if (h === "#signup") return { type:"signup" };
     return null;
   });
 
-  const [page, setPage] = useState(()=>user?(user.is_manufacturer?"orders-manuf":"restaurants"):"login");
+  const [page, setPage] = useState(()=>{
+    if (window.location.hash === "#signup") return "signup";
+    return user ? (user.is_manufacturer ? "orders-manuf" : "restaurants") : "login";
+  });
   const [activeMenu, setActiveMenu] = useState(null);
   const [storeSchedule, setStoreSchedule] = useState(DEFAULT_STORE);
   const [lang, setLang] = useLang();
@@ -7146,6 +7150,10 @@ export default function App() {
   const {toasts,toast,remove} = useToast();
   const logout=()=>{localStorage.removeItem("token");setUser(null);setPage("login");};
   const onLogin=u=>{setUser(u);setHashPage(null);setPage(u.is_manufacturer?"orders-manuf":"restaurants");};
+  // Clear #signup hash from URL after reading it
+  useEffect(()=>{
+    if (window.location.hash==="#signup") history.replaceState(null,"",window.location.pathname);
+  },[]);
 
   // If a hash token is present, show the appropriate page regardless of auth state
   if (hashPage?.type === "order") return (
