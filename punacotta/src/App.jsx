@@ -150,6 +150,7 @@ const RU = {
   "Link expired or invalid":"Ссылка недействительна или срок её действия истёк",
   "Menu":"Меню",
   "My Processes":"Мои процессы",
+  "My Roster":"Мой график",
   "Name required":"Не хватает названия",
   "New Menu":"Новое меню",
   "New Product":"Новый продукт",
@@ -925,8 +926,8 @@ function Nav({ user, page, setPage, logout, lang, setLang }) {
   },[]);
   const tl = k => lang==='ru' ? (RU[k]||k) : k;
   const links = isM
-    ? [{key:"orders-manuf",label:tl("Orders")},{key:"products",label:tl("Products")},{key:"items",label:tl("Items")},{key:"menus",label:tl("Menus")},{key:"procurement",label:tl("Procurement")},{key:"suppliers",label:tl("Suppliers")},{key:"reports",label:tl("Reports")},{key:"staff",label:"Staff"},{key:"processes",label:"Processes"},{key:"equipment",label:"Equipment"}]
-    : user?.employer_uid ? [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")},{key:"roster-emp",label:"My Roster"},{key:"processes-emp",label:"Processes"}]
+    ? [{key:"orders-manuf",label:tl("Orders")},{key:"products",label:tl("Products")},{key:"items",label:tl("Items")},{key:"menus",label:tl("Menus")},{key:"procurement",label:tl("Procurement")},{key:"suppliers",label:tl("Suppliers")},{key:"reports",label:tl("Reports")},{key:"staff",label:tl("Staff")},{key:"processes",label:tl("Processes")},{key:"equipment",label:tl("Equipment")}]
+    : user?.employer_uid ? [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")},{key:"roster-emp",label:tl("My Roster")},{key:"processes-emp",label:tl("Processes")}]
     : [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")}];
   const navigate = key => { setPage(key); setDropOpen(false); };
   return (
@@ -4814,7 +4815,7 @@ function OwnerSkillsPanel({ user, skills, createSkill, toast }) {
     <div style={{background:G.sand,borderRadius:12,padding:"12px 16px",marginBottom:16,border:`1px solid ${G.border}`}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <span style={{fontSize:13,fontWeight:600,color:G.dark}}>Your skills</span>
+          <span style={{fontSize:13,fontWeight:600,color:G.dark}}>{tl("Your skills")}</span>
           {mySkills.length>0&&!expanded&&(
             <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
               {mySkills.map(s=>(
@@ -4990,7 +4991,7 @@ function StaffPage({ user, toast }) {
   if (showRoles)  return <RolesPage roles={roles} skills={skills} setRoles={setRoles} setSkills={setSkills} createSkill={createSkill} toast={toast} onBack={()=>setShowRoles(false)} />;
 
   return (
-    <Page title="Staff" actions={
+    <Page title={tl("Staff")} actions={
       <div style={{display:"flex",gap:10}}>
         {selected.length>0&&<Btn variant="danger" size="sm" onClick={doDelete}>Delete ({selected.length})</Btn>}
         <Btn variant="secondary" size="sm" onClick={()=>setShowRoster(true)}>Roster →</Btn>
@@ -5194,7 +5195,7 @@ function RolesPage({ roles, skills, setRoles, setSkills, createSkill, toast, onB
   roles.forEach(r=>(r.skills||[]).forEach(s=>{ (skillRoles[s.skid]=skillRoles[s.skid]||[]).push(r.name); }));
 
   return (
-    <Page title="Roles & Skills" actions={
+    <Page title={tl("Roles & Skills")} actions={
       <div style={{display:"flex",gap:10}}>
         {selected.length>0&&<Btn variant="danger" size="sm" onClick={deleteSelected}>Delete ({selected.length})</Btn>}
         <Btn variant="secondary" size="sm" onClick={addRole}>+ Role</Btn>
@@ -5239,7 +5240,7 @@ function RolesPage({ roles, skills, setRoles, setSkills, createSkill, toast, onB
       </div>
 
       {/* Skills list with delete */}
-      <h3 style={{fontFamily:G.font,fontSize:16,marginBottom:12,color:G.dark}}>All skills</h3>
+      <h3 style={{fontFamily:G.font,fontSize:16,marginBottom:12,color:G.dark}}>{tl("All skills")}</h3>
       <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,overflow:"hidden"}}>
         {skills.length===0?(
           <p style={{padding:32,textAlign:"center",color:G.muted,fontStyle:"italic"}}>No skills yet. Add them via the Skills column in the Roles table above.</p>
@@ -5874,7 +5875,7 @@ function ProcessesPage({ user, setPage, toast }) {
   ];
 
   return (
-    <Page title="Processes" actions={
+    <Page title={tl("Processes")} actions={
       <div style={{display:"flex",gap:10}}>
         {user?.employer_uid && (
           <Btn variant="secondary" size="sm" onClick={()=>setPage("processes-emp")}>Executions →</Btn>
@@ -6016,7 +6017,7 @@ function ProcessesPage({ user, setPage, toast }) {
 
       {/* ── Executions calendar ──────────────────────────────────────────────── */}
       <div style={{marginTop:32}}>
-        <h3 style={{fontFamily:G.font,fontSize:18,marginBottom:14,color:G.dark}}>Executions</h3>
+        <h3 style={{fontFamily:G.font,fontSize:18,marginBottom:14,color:G.dark}}>{tl("Executions")}</h3>
         {runs.length===0 ? (
           <p style={{fontSize:13,color:G.muted,fontStyle:"italic"}}>No processes have been started yet. Click ▶ Run on any process above to begin.</p>
         ) : <ExecutionsCalendar runs={runs} onAction={handleRunAction}/>}
@@ -6651,13 +6652,13 @@ function EmployeeProcessesPage({ user, toast, setPage }) {
   };
 
   if (!ownerUid) return (
-    <Page title="Processes">
+    <Page title={tl("Processes")}>
       <p style={{color:G.muted,textAlign:"center",padding:40}}>Not associated with a restaurant.</p>
     </Page>
   );
 
   return (
-    <Page title="My Processes" actions={
+    <Page title={tl("My Processes")} actions={
       user?.is_manufacturer && (
         <Btn size="sm" variant="secondary" onClick={()=>setPage("processes")}>← Process design</Btn>
       )
@@ -6836,10 +6837,10 @@ function EquipmentPage({ toast }) {
   const removeItem = i => setForm(p=>({...p,items:p.items.filter((_,j)=>j!==i)}));
   const setItemField = (i,k,v) => setForm(p=>({...p,items:p.items.map((it,j)=>j===i?{...it,[k]:v}:it)}));
 
-  if (loading) return <Page title="Equipment"><Spinner/></Page>;
+  if (loading) return <Page title={tl("Equipment")}><Spinner/></Page>;
 
   return (
-    <Page title="Equipment" actions={<Btn size="sm" onClick={openNew}>+ Equipment</Btn>}>
+    <Page title={tl("Equipment")} actions={<Btn size="sm" onClick={openNew}>+ Equipment</Btn>}>
 
       {/* New / Edit form */}
       {editItem&&(
