@@ -5483,22 +5483,15 @@ function ProcessesPage({ user, setPage, toast }) {
   const [saving,    setSaving]    = useState(false);
   const [nameError, setNameError] = useState("");
   const [runs,      setRuns]      = useState([]);
-  const [startDialog, setStartDialog] = useState(null); // {proc, warnings}
+  const [startDialog, setStartDialog] = useState(null);
+  // startDialog shape: {proc, step:'items'|'warnings', suggestedItems, selectedItems, warnings}
   const [startSaving, setStartSaving] = useState(false);
-  // Local optimistic item selections per process: procid → [{skid, name}]
-  const [processItems, setProcessItems] = useState({});
 
   const load = useCallback(async()=>{
     setLoading(true);
     try {
       const [p,s,r,rec] = await Promise.all([api.getProcesses(), api.getSkills(), api.getRoles(), api.getRecipes()]);
       setProcesses(p||[]); setSkills(s||[]); setRoles(r||[]); setRecipes(rec||[]);
-      // Seed local item selections from server data
-      const itemMap = {};
-      (p||[]).forEach(proc => {
-        itemMap[proc.procid] = (proc.items||[]).map(it=>({skid:it.rid, name:it.item_name}));
-      });
-      setProcessItems(itemMap);
     } catch(e){ toast(e.message,"error"); } finally{ setLoading(false); }
   },[]);
   useEffect(()=>{ load(); },[]);
@@ -5510,11 +5503,31 @@ function ProcessesPage({ user, setPage, toast }) {
 
   const STATUS_COLORS_RUN = { in_progress:G.caramel, on_hold:"#eab308", completed:G.green, cancelled:G.red };
 
-  const handleRunProcess = async (proc, confirmed=false, ignoreHours=false) => {
+  const handleRunProcess = async (proc) => {
+    // Step 1: fetch suggested items and show item selection dialog
     setStartSaving(true);
     try {
-      const result = await api.startProcess(proc.procid, { confirmed, ignore_hours:ignoreHours });
-      if (result.requires_confirmation) { setStartDialog({proc, warnings:result.warnings}); return; }
+      const suggested = await api.getSuggestedItems(proc.procid);
+      setStartDialog({ proc, step:'items', suggestedItems:suggested,
+        selectedItems: suggested.map(s=>({rid:s.rid, name:s.name, qty:s.volume||1, units:s.units, equipment_name:s.equipment_name})),
+        warnings:[] });
+    } catch(e){ toast(e.message,"error"); }
+    finally{ setStartSaving(false); }
+  };
+
+  const handleStartConfirm = async (ignoreAll=false) => {
+    const { proc, selectedItems } = startDialog;
+    setStartSaving(true);
+    try {
+      const result = await api.startProcess(proc.procid, {
+        confirmed: ignoreAll,
+        ignore_hours: ignoreAll,
+        run_items: selectedItems.map(s=>({rid:s.rid, qty:Number(s.qty)||1})),
+      });
+      if (result.requires_confirmation) {
+        setStartDialog(d=>({...d, step:'warnings', warnings:result.warnings}));
+        return;
+      }
       setRuns(p=>[result,...p]);
       toast(`"${proc.name}" started`);
       setStartDialog(null);
@@ -5940,14 +5953,13 @@ function ProcessesPage({ user, setPage, toast }) {
       {/* Saved processes list */}
       {processes.map(proc=>(
         <div key={proc.procid} style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:12, padding:"14px 18px", marginBottom:10 }}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
-            {/* Name + skills */}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12}}>
             <div style={{flex:1,minWidth:0}}>
               <button onClick={()=>{ openEdit(proc); window.scrollTo({top:0,behavior:"smooth"}); }}
                 style={{background:"none",border:"none",cursor:"pointer",fontWeight:700,fontSize:15,color:G.caramel,padding:0,textDecoration:"underline dotted",textUnderlineOffset:3,marginBottom:6,display:"block",textAlign:"left"}}>
                 {proc.name}
               </button>
-              <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginBottom:8 }}>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:4 }}>
                 {(proc.skills||[]).map(sk=>(
                   <span key={sk.psid} style={{ fontSize:12, padding:"2px 10px", borderRadius:20, background:`${sk.color||G.muted}18`, color:sk.color||G.muted, border:`1px solid ${sk.color||G.muted}40`, display:"flex", alignItems:"center", gap:4 }}>
                     {sk.name}{sk.duration?` · ${sk.duration}${durAbbr(sk.duration_unit)}`:""}
@@ -5955,37 +5967,7 @@ function ProcessesPage({ user, setPage, toast }) {
                   </span>
                 ))}
               </div>
-              {/* Items selector */}
-              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",flex:1}}>
-                <span style={{fontSize:12,fontWeight:600,color:G.muted,flexShrink:0}}>Items:</span>
-                <div style={{flex:1}}>
-                  <SkillCombo
-                    allSkills={recipes.map(r=>({skid:r.rid, name:r.name, color:G.caramel}))}
-                    selected={processItems[proc.procid] || []}
-                    onChange={async newSel=>{
-                      // Update locally first (optimistic)
-                      setProcessItems(p=>({...p,[proc.procid]:newSel}));
-                      try {
-                        const updated = await api.updateProcessItems(proc.procid,{item_ids:newSel.map(s=>s.skid)});
-                        const serverItems = (updated.items||[]).map(it=>({skid:it.rid,name:it.item_name}));
-                        // Only overwrite local state if server returned items, or we sent none
-                        if (serverItems.length > 0 || newSel.length === 0) {
-                          setProcessItems(p=>({...p,[proc.procid]:serverItems}));
-                        }
-                        // else: server returned empty but we selected items — keep local state
-                        setProcesses(prev=>prev.map(x=>x.procid===updated.procid?updated:x));
-                      } catch(e){
-                        // Revert on error
-                        setProcessItems(p=>({...p,[proc.procid]:(proc.items||[]).map(it=>({skid:it.rid,name:it.item_name}))}));
-                        toast(e.message,"error");
-                      }
-                    }}
-                    pillColor={G.caramel}
-                  />
-                </div>
-              </div>
             </div>
-            {/* Actions */}
             <div style={{display:"flex",gap:8,alignItems:"center",flexShrink:0}}>
               <Btn size="sm" onClick={()=>handleRunProcess(proc)} loading={startSaving}>▶ Run</Btn>
               <button onClick={()=>deleteProcess(proc.procid)} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:18,padding:"4px 8px"}}>×</button>
@@ -6006,29 +5988,80 @@ function ProcessesPage({ user, setPage, toast }) {
       {/* ── Start validation dialog ───────────────────────────────────────────── */}
       {startDialog&&(
         <div style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.45)",zIndex:1200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-          <div style={{background:G.white,borderRadius:16,maxWidth:520,width:"100%",boxShadow:"0 20px 60px rgba(44,24,16,0.2)",animation:"fadeIn 0.2s ease",overflow:"hidden"}}>
+          <div style={{background:G.white,borderRadius:16,maxWidth:560,width:"100%",boxShadow:"0 20px 60px rgba(44,24,16,0.2)",animation:"fadeIn 0.2s ease",overflow:"hidden"}}>
             <div style={{padding:"20px 24px",borderBottom:`1px solid ${G.border}`}}>
-              <h3 style={{fontFamily:G.font,fontSize:18}}>Start "{startDialog.proc.name}"</h3>
+              <h3 style={{fontFamily:G.font,fontSize:18}}>▶ Run "{startDialog.proc.name}"</h3>
             </div>
-            <div style={{padding:"20px 24px",display:"flex",flexDirection:"column",gap:14}}>
-              {startDialog.warnings.map((w,i)=>(
-                <div key={i} style={{background:"#fef3c7",border:"1px solid #fcd34d",borderRadius:8,padding:"12px 14px"}}>
-                  <p style={{fontSize:13,color:"#92400e",fontWeight:600,marginBottom:4}}>
-                    {w.type==='exceeds_hours' ? 'Working hours'
-                     : w.type==='employee_no_slot' ? 'No roster slot today'
-                     : 'Employee availability'}
+
+            {startDialog.step==='items'&&(
+              <>
+                <div style={{padding:"20px 24px",maxHeight:420,overflowY:"auto"}}>
+                  <p style={{fontSize:13,color:G.muted,marginBottom:16}}>
+                    Select what you are producing in this run and set the quantity.
+                    {startDialog.suggestedItems.length>0 && " Items from your equipment are pre-populated."}
                   </p>
-                  <p style={{fontSize:13,color:"#92400e"}}>{w.message}</p>
+                  {startDialog.selectedItems.length===0&&(
+                    <p style={{fontSize:13,color:G.muted,fontStyle:"italic",marginBottom:12}}>No items selected — add from the list below.</p>
+                  )}
+                  {/* Selected items with qty */}
+                  {startDialog.selectedItems.map((it,i)=>(
+                    <div key={it.rid} style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,padding:"10px 14px",background:G.sand,borderRadius:8}}>
+                      <span style={{flex:1,fontSize:14,fontWeight:600,color:G.dark}}>{it.name}</span>
+                      {it.equipment_name&&<span style={{fontSize:11,color:G.muted}}>{it.equipment_name}</span>}
+                      <input type="number" min="0.01" step="any" value={it.qty}
+                        onChange={e=>setStartDialog(d=>({...d,selectedItems:d.selectedItems.map((s,j)=>j===i?{...s,qty:e.target.value}:s)}))}
+                        style={{width:70,padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",textAlign:"right"}}/>
+                      <span style={{fontSize:12,color:G.muted,minWidth:28}}>{it.units||"pcs"}</span>
+                      <button onClick={()=>setStartDialog(d=>({...d,selectedItems:d.selectedItems.filter((_,j)=>j!==i)}))}
+                        style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:16,lineHeight:1}}>×</button>
+                    </div>
+                  ))}
+                  {/* Add more items */}
+                  <div style={{marginTop:12}}>
+                    <label style={{fontSize:12,fontWeight:600,color:G.muted,display:"block",marginBottom:6}}>Add item</label>
+                    <SkillCombo
+                      allSkills={recipes.filter(r=>!startDialog.selectedItems.find(s=>s.rid===r.rid)).map(r=>({skid:r.rid,name:r.name,color:G.caramel}))}
+                      selected={[]}
+                      onChange={newSel=>{
+                        if (!newSel.length) return;
+                        const r = recipes.find(x=>x.rid===newSel[newSel.length-1].skid);
+                        if (!r) return;
+                        setStartDialog(d=>({...d,selectedItems:[...d.selectedItems,{rid:r.rid,name:r.name,qty:1,units:r.units,equipment_name:null}]}));
+                      }}
+                      pillColor={G.caramel}
+                    />
+                  </div>
                 </div>
-              ))}
-            </div>
-            <div style={{padding:"16px 24px",borderTop:`1px solid ${G.border}`,display:"flex",gap:10,justifyContent:"flex-end"}}>
-              <Btn size="sm" loading={startSaving}
-                onClick={()=>handleRunProcess(startDialog.proc,true,true)}>
-                Start anyway
-              </Btn>
-              <Btn variant="ghost" size="sm" onClick={()=>setStartDialog(null)}>Cancel</Btn>
-            </div>
+                <div style={{padding:"16px 24px",borderTop:`1px solid ${G.border}`,display:"flex",gap:10,justifyContent:"flex-end"}}>
+                  <Btn size="sm" loading={startSaving}
+                    onClick={()=>handleStartConfirm(false)}
+                    disabled={startDialog.selectedItems.length===0}>
+                    Start process
+                  </Btn>
+                  <Btn variant="ghost" size="sm" onClick={()=>setStartDialog(null)}>Cancel</Btn>
+                </div>
+              </>
+            )}
+
+            {startDialog.step==='warnings'&&(
+              <>
+                <div style={{padding:"20px 24px",display:"flex",flexDirection:"column",gap:14}}>
+                  {startDialog.warnings.map((w,i)=>(
+                    <div key={i} style={{background:"#fef3c7",border:"1px solid #fcd34d",borderRadius:8,padding:"12px 14px"}}>
+                      <p style={{fontSize:13,color:"#92400e",fontWeight:600,marginBottom:4}}>
+                        {w.type==='exceeds_hours'?'Working hours':w.type==='employee_no_slot'?'No roster slot today':'Employee availability'}
+                      </p>
+                      <p style={{fontSize:13,color:"#92400e"}}>{w.message}</p>
+                    </div>
+                  ))}
+                </div>
+                <div style={{padding:"16px 24px",borderTop:`1px solid ${G.border}`,display:"flex",gap:10,justifyContent:"flex-end"}}>
+                  <Btn size="sm" loading={startSaving} onClick={()=>handleStartConfirm(true)}>Start anyway</Btn>
+                  <Btn variant="ghost" size="sm" onClick={()=>setStartDialog(d=>({...d,step:'items'}))}>← Back</Btn>
+                  <Btn variant="ghost" size="sm" onClick={()=>setStartDialog(null)}>Cancel</Btn>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -7115,7 +7148,7 @@ export default function App() {
     if (h.startsWith("#reset/"))  return { type:"reset",  token:h.slice(7) };
     if (h.startsWith("#verify/")) return { type:"verify", token:h.slice(8) };
     if (h.startsWith("#invite/")) return { type:"invite", token:h.slice(8) };
-    if (h === "#order" || h.startsWith("#order")) return { type:"order" };
+    if (h === "#order" || h.startsWith("#order") || window.location.pathname === "/order") return { type:"order" };
     if (h === "#signup") return { type:"signup" };
     return null;
   });

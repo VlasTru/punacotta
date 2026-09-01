@@ -109,6 +109,7 @@ export const api = {
   getProcesses:   ()          => req('GET',    '/processes'),
   createProcess:  (data)      => req('POST',   '/processes', data),
   updateProcess:  (id,data)   => req('PATCH',  `/processes/${id}`, data),
+  getSuggestedItems:  (procid)     => req('GET',  `/processes/${procid}/suggested-items`),
   updateProcessItems: (id,data)   => req('PATCH',  `/processes/${id}/items`, data),
   deleteProcess:  (id)        => req('DELETE', `/processes/${id}`),
   // Embed settings

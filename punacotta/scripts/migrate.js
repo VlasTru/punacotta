@@ -434,6 +434,13 @@ CREATE TABLE IF NOT EXISTS process_item (
   rid     INTEGER NOT NULL REFERENCES recipe(rid) ON DELETE CASCADE,
   UNIQUE(procid, rid)
 );
+
+CREATE TABLE IF NOT EXISTS process_run_item (
+  prid  INTEGER NOT NULL REFERENCES process_run(prid) ON DELETE CASCADE,
+  rid   INTEGER NOT NULL REFERENCES recipe(rid) ON DELETE CASCADE,
+  qty   NUMERIC(10,3) NOT NULL DEFAULT 1,
+  PRIMARY KEY (prid, rid)
+);
 `
 
 await client.connect()

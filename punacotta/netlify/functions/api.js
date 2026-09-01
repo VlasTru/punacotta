@@ -1702,7 +1702,34 @@ async function route(method, segments, body, headers, event) {
       }
       return [200, await fetchProcess(r1)]
     }
+    // GET /processes/:procid/suggested-items
+    if (r1 && r2 === 'suggested-items' && method === 'GET') {
+      const ownerUid = user?.is_manufacturer ? user.uid : user?.employer_uid
+      if (!ownerUid) return [403, { error: 'Not associated with a restaurant' }]
+      const byProcid = await dbq(
+        `SELECT r.rid, r.name, r.price, r.currency, u.name AS units, NULL AS volume, NULL AS equipment_name
+         FROM recipe r LEFT JOIN units u ON u.unid=r.unid
+         WHERE r.procid=$1 ORDER BY r.name`, [r1])
+      const byEquipment = await dbq(
+        `SELECT DISTINCT r.rid, r.name, r.price, r.currency, u.name AS units,
+                ei.volume, eq.name AS equipment_name
+         FROM equipment_item ei
+         JOIN recipe r ON r.rid=ei.rid
+         JOIN equipment eq ON eq.eid=ei.eid
+         LEFT JOIN units u ON u.unid=r.unid
+         WHERE eq.owner_uid=$1 ORDER BY r.name`, [ownerUid])
+      const seen = new Set(); const items = []
+      for (const row of [...byProcid, ...byEquipment]) {
+        if (!seen.has(row.rid)) { seen.add(row.rid); items.push(row); }
+      }
+      return [200, items]
+    }
+
     if (r1 && method === 'DELETE') {
+      // process_run_step → process_run → process_skill → process_item → process
+      await dbr(`DELETE FROM process_run_step WHERE prid IN (
+        SELECT prid FROM process_run WHERE procid=$1)`, [r1])
+      await dbr('DELETE FROM process_run   WHERE procid=$1', [r1])
       await dbr('DELETE FROM process_skill WHERE procid=$1', [r1])
       await dbr('DELETE FROM process_item  WHERE procid=$1', [r1])
       await dbr('DELETE FROM process WHERE procid=$1 AND owner_uid=$2', [r1, user.uid])
@@ -1880,6 +1907,22 @@ async function route(method, segments, body, headers, event) {
          JOIN skill s ON s.skid=ps.skid
          LEFT JOIN "user" u ON u.uid=prs.uid
          WHERE prs.prid=$1 ORDER BY ps.seq`, [prid])
+
+      // Store selected items + quantities for this run
+      const { run_items } = body  // [{rid, qty}]
+      if (Array.isArray(run_items) && run_items.length) {
+        await dbr(`CREATE TABLE IF NOT EXISTS process_run_item (
+          prid INTEGER NOT NULL REFERENCES process_run(prid) ON DELETE CASCADE,
+          rid  INTEGER NOT NULL REFERENCES recipe(rid) ON DELETE CASCADE,
+          qty  NUMERIC(10,3) NOT NULL DEFAULT 1,
+          PRIMARY KEY (prid, rid)
+        )`)
+        for (const it of run_items) {
+          await dbr('INSERT INTO process_run_item (prid,rid,qty) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING',
+            [prid, it.rid, it.qty||1])
+        }
+      }
+
       return [201, { ...runData, steps: allSteps, warnings }]
     }
   }
@@ -2352,7 +2395,7 @@ async function route(method, segments, body, headers, event) {
         owner.uid AS owner_uid,
         pr.prid, pr.status AS run_status,
         pr.started_at, pr.completed_at, pr.hold_secs,
-        -- Total planned duration in minutes
+        pri.qty AS run_qty,
         COALESCE((
           SELECT SUM(
             CASE ps.duration_unit
@@ -2363,16 +2406,15 @@ async function route(method, segments, body, headers, event) {
           )
           FROM process_skill ps WHERE ps.procid=pr.procid
         ), 0) AS planned_mins,
-        -- Current stock
         COALESCE((
-          SELECT SUM(ps2.quantity)
+          SELECT SUM(ps2.qty)
           FROM product_stock ps2
           JOIN recipe_product rp ON rp.pid=ps2.pid
           WHERE rp.rid=r.rid
         ), 0) AS stock_qty
       FROM process_run pr
-      JOIN process_item pi ON pi.procid=pr.procid
-      JOIN recipe r ON r.rid=pi.rid
+      JOIN process_run_item pri ON pri.prid=pr.prid
+      JOIN recipe r ON r.rid=pri.rid
       LEFT JOIN units u ON u.unid=r.unid
       JOIN "user" owner ON owner.uid=pr.owner_uid
       WHERE pr.status IN ('in_progress','on_hold','completed')
