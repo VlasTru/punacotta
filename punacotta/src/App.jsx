@@ -7252,7 +7252,6 @@ function EmbedMenuPage({ toast }) {
               );
             }
             return (
-            return (
             <div key={label} style={{ marginBottom:20 }}>
               <p style={{ fontSize:13, fontWeight:600, color:G.dark, marginBottom:8 }}>{label}</p>
               <div style={{ position:"relative" }}>
