@@ -441,6 +441,11 @@ CREATE TABLE IF NOT EXISTS process_run_item (
   qty   NUMERIC(10,3) NOT NULL DEFAULT 1,
   PRIMARY KEY (prid, rid)
 );
+
+-- Location for proximity search
+ALTER TABLE "user" ADD COLUMN IF NOT EXISTS lat NUMERIC(10,7);
+ALTER TABLE "user" ADD COLUMN IF NOT EXISTS lng NUMERIC(10,7);
+ALTER TABLE "user" ADD COLUMN IF NOT EXISTS address_display VARCHAR(300);
 `
 
 await client.connect()

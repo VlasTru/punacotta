@@ -3147,19 +3147,29 @@ function SchedulePage({
   const [latestOrder, setLatestOrder] = useState("01:00");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [lat,     setLat]     = useState(null);
+  const [lng,     setLng]     = useState(null);
+  const [addressDisplay, setAddressDisplay] = useState('');
+  const [addrQuery,      setAddrQuery]      = useState('');
+  const [addrResults,    setAddrResults]    = useState([]);
+  const [addrLoading,    setAddrLoading]    = useState(false);
+  const addrTimer = useRef(null);
 
   useEffect(()=>{
     api.getSchedule().then(s=>{
       if (s?.schedule) { setSchedule(s.schedule); setStoreSchedule(s.schedule); }
       if (s?.timezone) setTimezone(s.timezone);
       if (s?.latest_order_before) setLatestOrder(s.latest_order_before);
+      if (s?.lat) setLat(Number(s.lat));
+      if (s?.lng) setLng(Number(s.lng));
+      if (s?.address_display) { setAddressDisplay(s.address_display); setAddrQuery(s.address_display); }
     }).catch(()=>{}).finally(()=>setLoading(false));
   },[]);
 
   const save = async () => {
     setSaving(true);
     try {
-      await api.saveSchedule({ schedule, timezone, latest_order_before: latestOrder });
+      await api.saveSchedule({ schedule, timezone, latest_order_before: latestOrder, lat, lng, address_display: addressDisplay });
       setStoreSchedule(schedule);
 
       // Check all menus with hours against the new store schedule
@@ -3203,6 +3213,68 @@ function SchedulePage({
 
   return (
     <Page title={tl("Schedule")} actions={<Btn onClick={save} loading={saving}>{tl("Save schedule")}</Btn>}>
+      {/* Address section */}
+      <div style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, padding:24, marginBottom:16 }}>
+        <h3 style={{ fontFamily:G.font, fontSize:16, marginBottom:14, color:G.dark }}>Restaurant address</h3>
+        <p style={{ fontSize:13, color:G.muted, marginBottom:12 }}>
+          Used to show your restaurant's distance from customers on the Board of Arrivals.
+        </p>
+        <div style={{ position:"relative" }}>
+          <input
+            value={addrQuery}
+            onChange={e=>{
+              setAddrQuery(e.target.value);
+              clearTimeout(addrTimer.current);
+              if (e.target.value.length < 3) { setAddrResults([]); return; }
+              addrTimer.current = setTimeout(async ()=>{
+                setAddrLoading(true);
+                try {
+                  const res = await fetch(
+                    `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(e.target.value)}&format=json&limit=6&addressdetails=1`,
+                    { headers:{ 'Accept-Language': lang==='ru'?'ru':'en' } }
+                  );
+                  const data = await res.json();
+                  setAddrResults(data||[]);
+                } catch{}
+                finally{ setAddrLoading(false); }
+              }, 400);
+            }}
+            placeholder="Start typing your address…"
+            style={{ width:"100%", padding:"10px 14px", borderRadius:8, border:`1px solid ${G.border}`,
+              fontSize:14, fontFamily:G.mono, outline:"none", boxSizing:"border-box" }}
+          />
+          {addrLoading&&<span style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", color:G.muted, fontSize:12 }}>…</span>}
+          {lat&&lng&&!addrResults.length&&(
+            <span style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", color:G.green, fontSize:12 }}>✓ {lat.toFixed(4)}, {lng.toFixed(4)}</span>
+          )}
+          {addrResults.length>0&&(
+            <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, background:G.white,
+              border:`1px solid ${G.border}`, borderRadius:8, boxShadow:"0 4px 16px rgba(44,24,16,0.12)",
+              zIndex:200, maxHeight:260, overflowY:"auto" }}>
+              {addrResults.map((r,i)=>(
+                <button key={i} onMouseDown={()=>{
+                  setAddrQuery(r.display_name);
+                  setAddressDisplay(r.display_name);
+                  setLat(Number(r.lat));
+                  setLng(Number(r.lon));
+                  setAddrResults([]);
+                }}
+                style={{ width:"100%", textAlign:"left", padding:"10px 14px", background:"none",
+                  border:"none", borderBottom:`1px solid ${G.border}`, cursor:"pointer",
+                  fontSize:13, fontFamily:G.mono, color:G.dark, display:"block" }}
+                onMouseEnter={e=>e.currentTarget.style.background=G.sand}
+                onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                  {r.display_name}
+                </button>
+              ))}
+              <p style={{ fontSize:10, color:G.muted, padding:"4px 10px", textAlign:"right" }}>
+                © OpenStreetMap contributors
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+
       <div style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, padding:24, marginBottom:16 }}>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20, alignItems:"end" }}>
           <Select label="Time zone" value={timezone} onChange={setTimezone}
@@ -4194,6 +4266,10 @@ function BoardOfArrivals({ toast }) {
   const [sellerSearch,  setSellerSearch]  = useState('');
   const [readyOnly,     setReadyOnly]     = useState(false);
   const [itemSearch,    setItemSearch]    = useState('');
+  const [distanceKm,    setDistanceKm]    = useState(null); // null = all
+  const [userLat,       setUserLat]       = useState(null);
+  const [userLng,       setUserLng]       = useState(null);
+  const [geoStatus,     setGeoStatus]     = useState('idle'); // idle|loading|granted|denied
   const sellerRef = useRef(null);
 
   // Language support for Board of Arrivals — reads from localStorage
@@ -4225,12 +4301,50 @@ function BoardOfArrivals({ toast }) {
 
   useEffect(()=>{ load(); const t=setInterval(load,60000); return()=>clearInterval(t); },[]);
 
-  // Unique filter options
-  const allItemNames  = [...new Set(arrivals.map(a=>a.item_name))].sort();
-  const allSellers    = [...new Set(arrivals.map(a=>a.sold_by))].sort();
+  // Request geolocation on mount
+  useEffect(()=>{
+    if (!navigator.geolocation) { setGeoStatus('denied'); return; }
+    setGeoStatus('loading');
+    navigator.geolocation.getCurrentPosition(
+      pos=>{ setUserLat(pos.coords.latitude); setUserLng(pos.coords.longitude); setGeoStatus('granted'); },
+      ()=>setGeoStatus('denied'),
+      { timeout:8000 }
+    );
+  },[]);
+
+  // Haversine distance in km
+  const haversine = (lat1, lng1, lat2, lng2) => {
+    const R = 6371;
+    const dLat = (lat2-lat1)*Math.PI/180;
+    const dLng = (lng2-lng1)*Math.PI/180;
+    const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  };
+
+  // Sellers within distance
+  const nearbySellerSet = useMemo(()=>{
+    if (!distanceKm || !userLat || !userLng) return null; // null = no filter
+    const set = new Set();
+    arrivals.forEach(a=>{
+      if (a.owner_lat && a.owner_lng) {
+        const d = haversine(userLat, userLng, a.owner_lat, a.owner_lng);
+        if (d <= distanceKm) set.add(a.sold_by);
+      }
+    });
+    return set;
+  },[arrivals, distanceKm, userLat, userLng]);
+
+  // Unique filter options — restricted by distance if active
+  const allItemNames  = [...new Set(arrivals
+    .filter(a=>!nearbySellerSet || nearbySellerSet.has(a.sold_by))
+    .map(a=>a.item_name))].sort();
+  const allSellers    = [...new Set(arrivals
+    .filter(a=>!nearbySellerSet || nearbySellerSet.has(a.sold_by))
+    .map(a=>a.sold_by))].sort();
 
   // Apply filters
   let filtered = arrivals.filter(a=>{
+    if (nearbySellerSet && !nearbySellerSet.has(a.sold_by)) return false;
     if (filterItems.length   && !filterItems.includes(a.item_name)) return false;
     if (filterSellers.length && !filterSellers.includes(a.sold_by)) return false;
     if (readyOnly && a.run_status!=='completed') return false;
@@ -4384,6 +4498,28 @@ function BoardOfArrivals({ toast }) {
                 </div>
               )}
             </div>
+            {/* Distance filter */}
+            <div style={{flex:"0 0 auto"}}>
+              <label style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,display:"block",marginBottom:5}}>
+                {boaTl("Distance within")}, km
+              </label>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <select
+                  value={distanceKm||''}
+                  disabled={geoStatus==='denied'}
+                  onChange={e=>{ setDistanceKm(e.target.value?Number(e.target.value):null); setPage(1); }}
+                  style={{padding:"7px 10px",borderRadius:7,border:`1px solid ${G.border}`,
+                    fontSize:13,fontFamily:G.mono,outline:"none",
+                    opacity:geoStatus==='denied'?0.4:1,cursor:geoStatus==='denied'?'not-allowed':'pointer'}}>
+                  <option value="">All</option>
+                  {[1,5,10,20,30,40,50].map(d=><option key={d} value={d}>{d} km</option>)}
+                </select>
+                {geoStatus==='loading'&&<span style={{fontSize:11,color:G.muted}}>Locating…</span>}
+                {geoStatus==='denied'&&<span style={{fontSize:11,color:G.red}}>Location denied</span>}
+                {geoStatus==='granted'&&<span style={{fontSize:11,color:G.green}}>✓</span>}
+              </div>
+            </div>
+
             {/* Ready only */}
             <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,cursor:"pointer",whiteSpace:"nowrap"}}>
               <input type="checkbox" checked={readyOnly} onChange={e=>{setReadyOnly(e.target.checked);setPage(1);}} style={{accentColor:G.caramel}}/>

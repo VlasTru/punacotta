@@ -559,12 +559,12 @@ async function route(method, segments, body, headers, event) {
   if (r0 === 'schedule') {
     if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
     if (method === 'GET') {
-      const [row] = await dbq('SELECT schedule FROM "user" WHERE uid=$1', [user.uid])
+      const [row] = await dbq('SELECT schedule, lat, lng, address_display FROM "user" WHERE uid=$1', [user.uid])
       const stored = row?.schedule
+      const location = { lat: row?.lat||null, lng: row?.lng||null, address_display: row?.address_display||null }
       if (stored && typeof stored === 'object' && stored.schedule) {
-        return [200, stored]
+        return [200, { ...stored, ...location }]
       }
-      // Return sensible defaults if nothing saved yet
       return [200, {
         schedule: {
           monday:[{start:"09:00",end:"21:00"}], tuesday:[{start:"09:00",end:"21:00"}],
@@ -573,16 +573,23 @@ async function route(method, segments, body, headers, event) {
           sunday:[]
         },
         timezone: 'Asia/Yerevan',
-        latest_order_before: '01:00'
+        latest_order_before: '01:00',
+        ...location
       }]
     }
     if (method === 'PUT') {
-      const { schedule, timezone, latest_order_before } = body
+      const { schedule, timezone, latest_order_before, lat, lng, address_display } = body
       await dbr(
         'UPDATE "user" SET schedule=$1 WHERE uid=$2',
         [JSON.stringify({ schedule, timezone, latest_order_before }), user.uid]
       )
-      return [200, { schedule, timezone, latest_order_before }]
+      if (lat !== undefined || lng !== undefined || address_display !== undefined) {
+        await dbr(
+          'UPDATE "user" SET lat=$1, lng=$2, address_display=$3 WHERE uid=$4',
+          [lat||null, lng||null, address_display||null, user.uid]
+        )
+      }
+      return [200, { schedule, timezone, latest_order_before, lat, lng, address_display }]
     }
   }
 
@@ -2404,6 +2411,9 @@ async function route(method, segments, body, headers, event) {
         u.name AS units,
         owner.business_name AS sold_by,
         owner.uid AS owner_uid,
+        owner.lat AS owner_lat,
+        owner.lng AS owner_lng,
+        owner.address_display AS owner_address,
         pr.prid, pr.status AS run_status,
         pr.started_at, pr.completed_at, pr.hold_secs,
         pri.qty AS run_qty,
@@ -2457,6 +2467,9 @@ async function route(method, segments, body, headers, event) {
         item_name:   row.item_name,
         sold_by:     row.sold_by||'Restaurant',
         owner_uid:   row.owner_uid,
+        owner_lat:   row.owner_lat ? Number(row.owner_lat) : null,
+        owner_lng:   row.owner_lng ? Number(row.owner_lng) : null,
+        owner_address: row.owner_address||null,
         price:       row.price,
         currency:    row.currency||'AMD',
         units:       row.units||'pcs',
