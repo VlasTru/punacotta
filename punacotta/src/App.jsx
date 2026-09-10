@@ -194,6 +194,65 @@ const RU = {
   "Test connectivity":"Проверить связь",
   "You're all set!":"Готово!",
   "Your skills saved":"Ваши навыки сохранены",
+  // v15 app translations
+  "Roster":"Расписание",
+  "Your skills":"Собственные навыки",
+  "First name":"Имя",
+  "Last name":"Фамилия",
+  "Role(s)":"Роли",
+  "Skill(s)":"Навыки",
+  "Edit":"Изменить",
+  "Roles & Skills":"Роли и навыки",
+  "Employee":"Сотрудник",
+  "Process":"Процесс",
+  "Dashed = parallel successor":"Одновременно выполняемая следующая задача",
+  "Items (capacity)":"Производительность",
+  "Item":"Блюдо",
+  "Finish-to-Start (FS)":"Сначала завершится А, потом начнётся Б.",
+  "Start-to-Start (SS)":"А и Б начнутся одновременно",
+  "Finish-to-Finish (FF)":"А и Б закончатся одновременно",
+  "Start-to-Finish (SF)":"Как только начнётся Б, завершится А",
+  "Add processes / skills":"Добавьте процессы / навыки",
+  "Skill / Step":"Навык / шаг",
+  "Duration":"Продолжительность",
+  "Dep. type":"Связь",
+  "Depends on":"Связано с",
+  "Total":"Итого",
+  "Run":"Выполнить",
+  "Select what you are producing in this run and set the quantity. Items from your equipment are pre-populated.":"Укажите, что будет на выходе процесса и количество. Здесь уже подставлены те блюда, которые может производить оборудование в данном процессе.",
+  "Add item":"Добавить блюдо",
+  "Start process":"Выполнить",
+  "Cancel":"Отменить",
+  "in progress":"выполняется",
+  "on hold":"на паузе",
+  "completed":"выполнено",
+  "cancelled":"отменено",
+  "Name / Model":"Название / модель",
+  "Status":"Статус",
+  "Items":"Блюда",
+  "If a unit with this name already exists, a sequence number will be appended automatically.":"Если оборудование с таким названием уже существует, то новое будет добавлено с порядковым номером.",
+  "Disable":"Выключить",
+  "Enable":"Включить",
+  "Wastage":"Списание",
+  "Confirm":"Подтвердить",
+  "Min. inventory":"Мин. остаток",
+  "Add Employee":"Добавить сотрудника",
+  "Delete Employee":"Удалить сотрудника",
+  // Board of Arrivals translations
+  "Your selection":"Вы выбрали",
+  "Add items using the + buttons.":"Добавляйте блюда кнопкой +",
+  "Item name":"Наименование",
+  "Sold by":"Поставляется",
+  "Display only ready items":"Показывать только готовые блюда",
+  "Unit price":"Цена",
+  "ETA pickup":"Можно забирать в",
+  "ETA delivery":"Будет передано курьеру в",
+  "Qty":"Кол-во",
+  "Units":"ед. изм",
+  "Cost":"Стоимость",
+  "Place order":"Оформить заказ",
+  "Board of Arrivals":"Готовые блюда",
+  "Distance within":"В пределах, км",
 }
 
 function T({ children }) {
@@ -2333,7 +2392,7 @@ function EditOrderModal({ order, toast, onClose, onSaved }) {
           <table style={{ width:"100%", borderCollapse:"collapse" }}>
             <thead>
               <tr style={{ background:G.sand, borderBottom:`1px solid ${G.border}` }}>
-                {["Item","Qty","Price / unit","Total"].map(h=>(
+                {["Item",tl("Qty"),"Price / unit","Total"].map(h=>(
                   <th key={h} style={{ padding:"8px 12px", textAlign:"left", fontSize:11, fontWeight:700, textTransform:"uppercase", color:G.muted, letterSpacing:"0.04em" }}>{h}</th>
                 ))}
               </tr>
@@ -3400,7 +3459,7 @@ function ProcurementPage({
           {/* Product rows */}
           <div style={{ background:G.sand, borderRadius:10, padding:14, marginBottom:14 }}>
             <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr auto", gap:8, marginBottom:8 }}>
-              {["Product","Qty","Unit Price","Total",""].map(h=><span key={h} style={{fontSize:11,fontWeight:700,color:G.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>{h}</span>)}
+              {["Product",tl("Qty"),"Unit Price","Total",""].map(h=><span key={h} style={{fontSize:11,fontWeight:700,color:G.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>{h}</span>)}
             </div>
             {newRows.map((r,i)=>{
               const tot = (parseFloat(r.qty)||0)*(parseFloat(r.unit_price)||0);
@@ -3539,7 +3598,7 @@ function ProcurementPage({
                 <thead>
                   <tr style={{ background:G.sand, borderBottom:`1px solid ${G.border}` }}>
                     {(viewOrder.status==="New"
-                      ? ["Product","SKU","Qty","Unit Price","Total",""]
+                      ? ["Product","SKU",tl("Qty"),"Unit Price","Total",""]
                       : ["Product","SKU","Qty (ordered)","Qty (actual)","Unit Price","Total (ord/act)",""]
                     ).map(h=>(
                       <th key={h} style={{padding:"9px 12px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,letterSpacing:"0.04em"}}>{h}</th>
@@ -4131,8 +4190,23 @@ function BoardOfArrivals({ toast }) {
   const [page,     setPage]     = useState(1);
   const [filterItems,   setFilterItems]   = useState([]);
   const [filterSellers, setFilterSellers] = useState([]);
+  const [sellerOpen,    setSellerOpen]    = useState(false);
+  const [sellerSearch,  setSellerSearch]  = useState('');
   const [readyOnly,     setReadyOnly]     = useState(false);
   const [itemSearch,    setItemSearch]    = useState('');
+  const sellerRef = useRef(null);
+
+  // Language support for Board of Arrivals — reads from localStorage
+  const [boaLang, setBoaLang] = useState(()=>localStorage.getItem('lang')||'en');
+  const BOA_RU = RU; // reuse same dictionary
+  const boaTl = k => boaLang==='ru' ? (BOA_RU[k]||k) : k;
+
+  // Close seller dropdown on outside click
+  useEffect(()=>{
+    const handler = e => { if (sellerRef.current && !sellerRef.current.contains(e.target)) setSellerOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return ()=>document.removeEventListener('mousedown', handler);
+  },[]);
   const PER_PAGE = 20;
 
   const RECENT_KEY = 'boa_recent_items';
@@ -4218,7 +4292,11 @@ function BoardOfArrivals({ toast }) {
       <div style={{background:G.white,borderBottom:`1px solid ${G.border}`,padding:"0 24px",height:56,display:"flex",alignItems:"center",gap:16}}>
         <span style={{fontFamily:G.font,fontSize:20,fontWeight:700,color:G.caramel,fontStyle:"italic"}}>Pun&Cotta</span>
         <span style={{fontSize:14,color:G.muted}}>Board of Arrivals</span>
-        <button onClick={load} style={{marginLeft:"auto",background:"none",border:`1px solid ${G.border}`,borderRadius:7,cursor:"pointer",padding:"5px 12px",fontSize:12,color:G.muted}}>↻ Refresh</button>
+        <button onClick={load} style={{marginLeft:"auto",background:"none",border:`1px solid ${G.border}`,borderRadius:7,cursor:"pointer",padding:"5px 12px",fontSize:12,color:G.muted}}>↻ {boaTl("Refresh")||"Refresh"}</button>
+        <button onClick={()=>{ const nl=boaLang==='en'?'ru':'en'; setBoaLang(nl); localStorage.setItem('lang',nl); }}
+          style={{background:"none",border:`1px solid ${G.border}`,borderRadius:7,cursor:"pointer",padding:"5px 10px",fontSize:12,color:G.muted}}>
+          🌐 {boaLang==='en'?'RU':'EN'}
+        </button>
       </div>
 
       <div style={{display:"flex",maxWidth:1300,margin:"0 auto",padding:24,gap:20}}>
@@ -4259,19 +4337,57 @@ function BoardOfArrivals({ toast }) {
                 </div>
               )}
             </div>
-            {/* Sold by filter */}
-            <div style={{flex:"1 1 180px"}}>
-              <label style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,display:"block",marginBottom:5}}>Sold by</label>
-              <select multiple value={filterSellers}
-                onChange={e=>{ const sel=[...e.target.selectedOptions].map(o=>o.value); setFilterSellers(sel); setPage(1); }}
-                style={{width:"100%",padding:"6px 8px",borderRadius:7,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",minHeight:36}}>
-                {allSellers.map(s=><option key={s} value={s}>{s}</option>)}
-              </select>
+            {/* Sold by filter — searchable dropdown, default = all */}
+            <div style={{flex:"1 1 220px",position:"relative"}} ref={sellerRef}>
+              <label style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,display:"block",marginBottom:5}}>
+                {boaTl("Sold by")}
+              </label>
+              <div onClick={()=>setSellerOpen(o=>!o)}
+                style={{padding:"7px 10px",borderRadius:7,border:`1px solid ${G.border}`,fontSize:13,
+                  fontFamily:G.mono,cursor:"pointer",background:G.white,minHeight:34,
+                  display:"flex",flexWrap:"wrap",gap:4,alignItems:"center"}}>
+                {filterSellers.length===0
+                  ? <span style={{color:G.muted}}>All restaurants</span>
+                  : filterSellers.map(s=>(
+                    <span key={s} style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:`${G.caramel}18`,
+                      color:G.caramel,display:"flex",alignItems:"center",gap:3}}>
+                      {s}
+                      <button onClick={e=>{e.stopPropagation();setFilterSellers(p=>p.filter(x=>x!==s));setPage(1);}}
+                        style={{background:"none",border:"none",cursor:"pointer",color:G.caramel,fontSize:12,padding:0,lineHeight:1}}>×</button>
+                    </span>
+                  ))
+                }
+                <span style={{marginLeft:"auto",color:G.muted,fontSize:11}}>▾</span>
+              </div>
+              {sellerOpen&&(
+                <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,background:G.white,
+                  border:`1px solid ${G.border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(44,24,16,0.12)",
+                  zIndex:100,maxHeight:200,overflowY:"auto"}}>
+                  <div style={{padding:"6px 8px",borderBottom:`1px solid ${G.border}`}}>
+                    <input autoFocus value={sellerSearch} onChange={e=>setSellerSearch(e.target.value)}
+                      placeholder="Search…"
+                      style={{width:"100%",border:"none",outline:"none",fontSize:13,fontFamily:G.mono}}/>
+                  </div>
+                  {allSellers.filter(s=>s.toLowerCase().includes(sellerSearch.toLowerCase())).map(s=>(
+                    <label key={s} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",cursor:"pointer",
+                      background:filterSellers.includes(s)?`${G.caramel}10`:G.white,fontSize:13}}
+                      onMouseEnter={e=>e.currentTarget.style.background=G.sand}
+                      onMouseLeave={e=>e.currentTarget.style.background=filterSellers.includes(s)?`${G.caramel}10`:G.white}>
+                      <input type="checkbox" checked={filterSellers.includes(s)}
+                        onChange={e=>{
+                          setFilterSellers(p=>e.target.checked?[...p,s]:p.filter(x=>x!==s));
+                          setPage(1);
+                        }} style={{accentColor:G.caramel}}/>
+                      {s}
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
             {/* Ready only */}
             <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,cursor:"pointer",whiteSpace:"nowrap"}}>
               <input type="checkbox" checked={readyOnly} onChange={e=>{setReadyOnly(e.target.checked);setPage(1);}} style={{accentColor:G.caramel}}/>
-              Display only ready items
+              {boaTl("Display only ready items")}
             </label>
           </div>
 
@@ -4286,13 +4402,13 @@ function BoardOfArrivals({ toast }) {
                   <table style={{width:"100%",borderCollapse:"collapse"}}>
                     <thead>
                       <tr style={{background:G.sand,borderBottom:`1px solid ${G.border}`}}>
-                        <SortTh label="Item name"       k="item_name"/>
-                        <SortTh label="Sold by"         k="sold_by"/>
-                        <SortTh label="Unit price"      k="price"/>
-                        <SortTh label="ETA pickup"      k="eta_pickup"/>
-                        <SortTh label="ETA delivery"    k="eta_delivery"/>
+                        <SortTh label={boaTl("Item name")}       k="item_name"/>
+                        <SortTh label={boaTl("Sold by")}         k="sold_by"/>
+                        <SortTh label={boaTl("Unit price")}      k="price"/>
+                        <SortTh label={boaTl("ETA pickup")}      k="eta_pickup"/>
+                        <SortTh label={boaTl("ETA delivery")}    k="eta_delivery"/>
                         <th style={{padding:"10px 12px",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted}}>Qty</th>
-                        <SortTh label="Units"           k="units"/>
+                        <SortTh label={boaTl("Units")}           k="units"/>
                         <th style={{padding:"10px 12px",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted}}>Cost</th>
                       </tr>
                     </thead>
@@ -7118,7 +7234,25 @@ function EmbedMenuPage({ toast }) {
             ["Menu (table)", "puncotta-menu", ` mid="${menus[0]?.mid||"MENU_ID"}" view="table"`],
             ["All active menus", "puncotta-menu", ` view="carousel"`],
             ["Floating cart", "puncotta-cart", ` float="bottom-right"`],
-          ].map(([label, tag, params])=>(
+            ["Board of Arrivals", "iframe", ``],
+          ].map(([label, tag, params])=>{
+            if (tag === "iframe") {
+              const iframeSnippet = `<iframe\n  src="https://tanelu.com/order"\n  width="100%"\n  height="600"\n  frameborder="0"\n  style="border-radius:12px;border:1px solid #e8dcc8"\n  title="Board of Arrivals"\n></iframe>`;
+              return (
+                <div key={label} style={{ marginBottom:20 }}>
+                  <p style={{ fontSize:13, fontWeight:600, color:G.dark, marginBottom:8 }}>{label}</p>
+                  <div style={{ position:"relative" }}>
+                    <pre style={{ background:G.sand, borderRadius:8, padding:"12px 14px", fontSize:12, fontFamily:G.mono, overflowX:"auto", margin:0, whiteSpace:"pre-wrap", wordBreak:"break-all", color:G.dark }}>{iframeSnippet}</pre>
+                    <button onClick={()=>{ navigator.clipboard.writeText(iframeSnippet); toast("Copied!"); }}
+                      style={{ position:"absolute", top:8, right:8, background:G.white, border:`1px solid ${G.border}`, borderRadius:6, cursor:"pointer", fontSize:11, fontFamily:G.mono, padding:"3px 8px", color:G.muted }}>
+                      Copy
+                    </button>
+                  </div>
+                </div>
+              );
+            }
+            return (
+            return (
             <div key={label} style={{ marginBottom:20 }}>
               <p style={{ fontSize:13, fontWeight:600, color:G.dark, marginBottom:8 }}>{label}</p>
               <div style={{ position:"relative" }}>
@@ -7129,7 +7263,8 @@ function EmbedMenuPage({ toast }) {
                 </button>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </>)}
     </Page>

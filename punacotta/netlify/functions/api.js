@@ -76,6 +76,13 @@ function safe(u) { const { password_hash, ...r } = u; return r }
 const BASE_URL = process.env.URL || 'https://punacotta.netlify.app'
 
 async function sendMail(to, subject, text, html) {
+  // Skip sending to obviously fake/test domains — log instead
+  const skipDomains = ['example.com','example.org','example.net','test.com','localhost']
+  const domain = to?.split('@')[1]?.toLowerCase()
+  if (!domain || skipDomains.includes(domain)) {
+    console.log(`📧 [SKIP] Not sending to "${to}" (test/fake domain) | ${subject}`)
+    return
+  }
   // Option 1: Resend API — set RESEND_API_KEY in Netlify environment variables
   // Sign up free at resend.com, create an API key, add it to Netlify env vars.
   // Without a verified domain, emails can only be sent to your own Resend account email.
@@ -97,7 +104,11 @@ async function sendMail(to, subject, text, html) {
       }),
     })
     const data = await res.json().catch(()=>({}))
-    if (!res.ok) throw new Error(`Email send failed: ${data.message || res.status}`)
+    if (!res.ok) {
+      // Don't throw — log and continue so the main operation isn't blocked by email failure
+      console.error(`Email send failed to ${to}: ${data.message || res.status}`)
+      return
+    }
     console.log(`📧 Sent via Resend to ${to}: ${data.id}`)
     return
   }
