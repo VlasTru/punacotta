@@ -4350,6 +4350,7 @@ function BoardOfArrivals({ toast }) {
 
   // Apply filters
   let filtered = arrivals.filter(a=>{
+    if ((a.remaining_qty ?? a.run_qty ?? 0) <= 0) return false; // hide sold-out items
     if (nearbySellerSet && !nearbySellerSet.has(a.sold_by)) return false;
     if (filterItems.length   && !filterItems.includes(a.item_name)) return false;
     if (filterSellers.length && !filterSellers.includes(a.sold_by)) return false;
@@ -4699,7 +4700,7 @@ function BoardOfArrivals({ toast }) {
                 {/* Fulfillment */}
                 <div style={{marginBottom:14}}>
                   <label style={{fontSize:12,fontWeight:600,color:G.muted,display:"block",marginBottom:6}}>Fulfillment</label>
-                  {['pickup','delivery','stock'].map(f=>(
+                  {['pickup','delivery'].map(f=>(
                     <label key={f} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,cursor:"pointer",fontSize:13}}>
                       <input type="radio" name="fulfillment" value={f} checked={fulfillment===f}
                         onChange={()=>setFulfillment(f)} style={{accentColor:G.caramel}}/>
