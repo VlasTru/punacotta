@@ -2405,46 +2405,104 @@ async function route(method, segments, body, headers, event) {
     const oneHourAgo = new Date(now.getTime() - 3600000);
 
     // Find active/recently completed runs with associated items
-    const rows = await dbq(`
-      SELECT
-        r.rid, r.name AS item_name, r.price, r.currency,
-        u.name AS units,
-        owner.business_name AS sold_by,
-        owner.uid AS owner_uid,
-        owner.lat AS owner_lat,
-        owner.lng AS owner_lng,
-        owner.address_display AS owner_address,
-        pr.prid, pr.status AS run_status,
-        pr.started_at, pr.completed_at, pr.hold_secs,
-        pri.qty AS run_qty,
+    // Try with location columns first, fall back without them if not migrated yet
+    let rows
+    try {
+      rows = await dbq(`
+        SELECT
+          r.rid, r.name AS item_name, r.price, r.currency,
+          u.name AS units,
+          owner.business_name AS sold_by,
+          owner.uid AS owner_uid,
+          owner.lat AS owner_lat,
+          owner.lng AS owner_lng,
+          owner.address_display AS owner_address,
+          pr.prid, pr.status AS run_status,
+          pr.started_at, pr.completed_at, pr.hold_secs,
+          pri.qty AS run_qty,
         COALESCE((
-          SELECT SUM(
-            CASE ps.duration_unit
-              WHEN 'hours'   THEN ps.duration * 60
-              WHEN 'seconds' THEN ps.duration / 60
-              ELSE ps.duration
-            END
+          SELECT SUM(r2.qty) FROM boa_reservation r2
+          WHERE r2.prid=pr.prid AND r2.rid=r.rid
+            AND r2.status IN ('pending','confirmed')
+        ), 0) AS reserved_qty,
+          COALESCE((
+            SELECT SUM(
+              CASE ps.duration_unit
+                WHEN 'hours'   THEN ps.duration * 60
+                WHEN 'seconds' THEN ps.duration / 60
+                ELSE ps.duration
+              END
+            )
+            FROM process_skill ps WHERE ps.procid=pr.procid
+          ), 0) AS planned_mins,
+          COALESCE((
+            SELECT SUM(ps2.qty)
+            FROM product_stock ps2
+            JOIN recipe_product rp ON rp.pid=ps2.pid
+            WHERE rp.rid=r.rid
+          ), 0) AS stock_qty
+        FROM process_run pr
+        JOIN process_run_item pri ON pri.prid=pr.prid
+        JOIN recipe r ON r.rid=pri.rid
+        LEFT JOIN units u ON u.unid=r.unid
+        JOIN "user" owner ON owner.uid=pr.owner_uid
+        WHERE pr.status IN ('in_progress','on_hold','completed')
+          AND (
+            pr.status IN ('in_progress','on_hold')
+            OR pr.completed_at > $1
           )
-          FROM process_skill ps WHERE ps.procid=pr.procid
-        ), 0) AS planned_mins,
+        ORDER BY r.name, pr.started_at
+      `, [oneHourAgo.toISOString()])
+    } catch(e) {
+      if (e.message?.includes('lat') || e.message?.includes('lng') || e.message?.includes('address_display')) {
+        // Columns not yet migrated — run without location fields
+        rows = await dbq(`
+          SELECT
+            r.rid, r.name AS item_name, r.price, r.currency,
+            u.name AS units,
+            owner.business_name AS sold_by,
+            owner.uid AS owner_uid,
+            NULL AS owner_lat, NULL AS owner_lng, NULL AS owner_address,
+            pr.prid, pr.status AS run_status,
+            pr.started_at, pr.completed_at, pr.hold_secs,
+            pri.qty AS run_qty,
         COALESCE((
-          SELECT SUM(ps2.qty)
-          FROM product_stock ps2
-          JOIN recipe_product rp ON rp.pid=ps2.pid
-          WHERE rp.rid=r.rid
-        ), 0) AS stock_qty
-      FROM process_run pr
-      JOIN process_run_item pri ON pri.prid=pr.prid
-      JOIN recipe r ON r.rid=pri.rid
-      LEFT JOIN units u ON u.unid=r.unid
-      JOIN "user" owner ON owner.uid=pr.owner_uid
-      WHERE pr.status IN ('in_progress','on_hold','completed')
-        AND (
-          pr.status IN ('in_progress','on_hold')
-          OR pr.completed_at > $1
-        )
-      ORDER BY r.name, pr.started_at
-    `, [oneHourAgo.toISOString()])
+          SELECT SUM(r2.qty) FROM boa_reservation r2
+          WHERE r2.prid=pr.prid AND r2.rid=r.rid
+            AND r2.status IN ('pending','confirmed')
+        ), 0) AS reserved_qty,
+            COALESCE((
+              SELECT SUM(
+                CASE ps.duration_unit
+                  WHEN 'hours'   THEN ps.duration * 60
+                  WHEN 'seconds' THEN ps.duration / 60
+                  ELSE ps.duration
+                END
+              )
+              FROM process_skill ps WHERE ps.procid=pr.procid
+            ), 0) AS planned_mins,
+            COALESCE((
+              SELECT SUM(ps2.qty)
+              FROM product_stock ps2
+              JOIN recipe_product rp ON rp.pid=ps2.pid
+              WHERE rp.rid=r.rid
+            ), 0) AS stock_qty
+          FROM process_run pr
+          JOIN process_run_item pri ON pri.prid=pr.prid
+          JOIN recipe r ON r.rid=pri.rid
+          LEFT JOIN units u ON u.unid=r.unid
+          JOIN "user" owner ON owner.uid=pr.owner_uid
+          WHERE pr.status IN ('in_progress','on_hold','completed')
+            AND (
+              pr.status IN ('in_progress','on_hold')
+              OR pr.completed_at > $1
+            )
+          ORDER BY r.name, pr.started_at
+        `, [oneHourAgo.toISOString()])
+      } else {
+        throw e
+      }
+    }
 
     // Calculate ETA for each row
     const results = rows.map(row => {
@@ -2478,12 +2536,70 @@ async function route(method, segments, body, headers, event) {
         mins_left:   minsLeft,
         run_status:  row.run_status,
         freshness,
+        run_qty:     Number(row.run_qty)||0,
+        reserved_qty:Number(row.reserved_qty)||0,
+        remaining_qty:Math.max(0, (Number(row.run_qty)||0) - (Number(row.reserved_qty)||0)),
         stock_qty:   Number(row.stock_qty)||0,
         prid:        row.prid,
       };
     });
 
     return [200, results];
+  }
+
+  // ── BOARD OF ARRIVALS — PLACE ORDER ──────────────────────────────────────────
+  if (r0 === 'arrivals' && r1 === 'order' && method === 'POST') {
+    const { items, guest_name, guest_email, guest_phone, fulfillment, delivery_address } = body
+    // items: [{prid, rid, qty, owner_uid}]
+    if (!items?.length) return [400, { error: 'No items' }]
+    if (!guest_name?.trim() || !guest_email?.trim()) return [400, { error: 'Name and email required' }]
+
+    // Auto-create boa_reservation table if not yet migrated
+    await dbr(`CREATE TABLE IF NOT EXISTS boa_reservation (
+      resid SERIAL PRIMARY KEY, prid INTEGER NOT NULL, rid INTEGER NOT NULL,
+      owner_uid INTEGER NOT NULL, qty NUMERIC(10,3) NOT NULL,
+      guest_name VARCHAR(100), guest_email VARCHAR(200), guest_phone VARCHAR(50),
+      fulfillment VARCHAR(12) NOT NULL DEFAULT 'pickup', delivery_address VARCHAR(200),
+      status VARCHAR(12) NOT NULL DEFAULT 'pending', oid INTEGER, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`)
+
+    const results = []
+    for (const it of items) {
+      const { prid, rid, qty, owner_uid } = it
+      // Check remaining capacity
+      const [runItem] = await dbq('SELECT qty FROM process_run_item WHERE prid=$1 AND rid=$2', [prid, rid])
+      if (!runItem) { results.push({ prid, rid, status:'not_found' }); continue; }
+      const [resRow] = await dbq(
+        `SELECT COALESCE(SUM(qty),0) AS reserved FROM boa_reservation
+         WHERE prid=$1 AND rid=$2 AND status IN ('pending','confirmed')`, [prid, rid])
+      const remaining = Number(runItem.qty) - Number(resRow.reserved)
+      const canFulfill = Math.min(Number(qty), Math.max(0, remaining))
+      const waiting = Number(qty) - canFulfill
+
+      // Create reservation
+      const resRes = await dbr(
+        `INSERT INTO boa_reservation (prid,rid,owner_uid,qty,guest_name,guest_email,guest_phone,fulfillment,delivery_address,status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING resid`,
+        [prid, rid, owner_uid, qty, guest_name, guest_email, guest_phone||null,
+         fulfillment||'pickup', delivery_address||null, canFulfill>0?'confirmed':'pending'])
+      const resid = resRes.rows[0].resid
+
+      // Create order in existing orders table
+      const [recipe] = await dbq('SELECT price FROM recipe WHERE rid=$1', [rid])
+      const price = recipe?.price||0
+      const orderRes = await dbr(
+        `INSERT INTO "order" (owner_uid, status, fulfillment, guest_name, guest_email, guest_phone, delivery_address, prid)
+         VALUES ($1,'New',$2,$3,$4,$5,$6,$7) RETURNING oid`,
+        [owner_uid, fulfillment||'pickup', guest_name, guest_email, guest_phone||null, delivery_address||null, prid])
+      const oid = orderRes.rows[0].oid
+      await dbr(`INSERT INTO order_item (oid,rid,qty,price) VALUES ($1,$2,$3,$4)`,
+        [oid, rid, Math.ceil(canFulfill), Math.round(price*canFulfill)])
+      await dbr(`UPDATE boa_reservation SET oid=$1 WHERE resid=$2`, [oid, resid])
+
+      results.push({ prid, rid, qty_confirmed:canFulfill, qty_waiting:waiting,
+        resid, oid, needs_split: waiting > 0 })
+    }
+    return [201, { results }]
   }
 
   // ── EMBED SETTINGS (authenticated, manufacturer only) ─────────────────────

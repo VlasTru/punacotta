@@ -446,6 +446,31 @@ CREATE TABLE IF NOT EXISTS process_run_item (
 ALTER TABLE "user" ADD COLUMN IF NOT EXISTS lat NUMERIC(10,7);
 ALTER TABLE "user" ADD COLUMN IF NOT EXISTS lng NUMERIC(10,7);
 ALTER TABLE "user" ADD COLUMN IF NOT EXISTS address_display VARCHAR(300);
+
+-- Board of Arrivals reservations (FIFO cart)
+CREATE TABLE IF NOT EXISTS boa_reservation (
+  resid        SERIAL PRIMARY KEY,
+  prid         INTEGER NOT NULL REFERENCES process_run(prid) ON DELETE CASCADE,
+  rid          INTEGER NOT NULL REFERENCES recipe(rid),
+  owner_uid    INTEGER NOT NULL REFERENCES "user"(uid),
+  qty          NUMERIC(10,3) NOT NULL,
+  customer_uid INTEGER REFERENCES "user"(uid),
+  guest_name   VARCHAR(100),
+  guest_email  VARCHAR(200),
+  guest_phone  VARCHAR(50),
+  fulfillment  VARCHAR(12) NOT NULL DEFAULT 'pickup',
+  delivery_address VARCHAR(200),
+  status       VARCHAR(12) NOT NULL DEFAULT 'pending',
+  oid          INTEGER REFERENCES "order"(oid),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Extend order table with fulfillment type and guest info
+ALTER TABLE "order" ADD COLUMN IF NOT EXISTS fulfillment VARCHAR(12) DEFAULT 'pickup';
+ALTER TABLE "order" ADD COLUMN IF NOT EXISTS guest_name  VARCHAR(100);
+ALTER TABLE "order" ADD COLUMN IF NOT EXISTS guest_email VARCHAR(200);
+ALTER TABLE "order" ADD COLUMN IF NOT EXISTS guest_phone VARCHAR(50);
+ALTER TABLE "order" ADD COLUMN IF NOT EXISTS prid        INTEGER REFERENCES process_run(prid);
 `
 
 await client.connect()

@@ -4256,7 +4256,13 @@ function SuppliersPage({
 function BoardOfArrivals({ toast }) {
   const [arrivals, setArrivals] = useState([]);
   const [loading,  setLoading]  = useState(true);
-  const [cart,     setCart]     = useState({}); // rid → qty
+  const [cart,     setCart]     = useState({}); // rid+prid key → {rid,prid,qty,owner_uid,item}
+  const [checkout, setCheckout] = useState(false);
+  const [guest,    setGuest]    = useState({ name:'', email:'', phone:'+374 ' });
+  const [fulfillment, setFulfillment] = useState('pickup');
+  const [deliveryAddr, setDeliveryAddr] = useState('');
+  const [placing,  setPlacing]  = useState(false);
+  const [orderResult, setOrderResult] = useState(null); // null | {results}
   const [sortKey,  setSortKey]  = useState('item_name');
   const [sortDir,  setSortDir]  = useState('asc');
   const [page,     setPage]     = useState(1);
@@ -4368,10 +4374,18 @@ function BoardOfArrivals({ toast }) {
     setPage(1);
   };
 
-  const setQty = (rid, delta) => setCart(p=>{
-    const cur = p[rid]||0;
-    const next = Math.max(0, cur+delta);
-    return next===0 ? Object.fromEntries(Object.entries(p).filter(([k])=>k!==String(rid))) : {...p,[rid]:next};
+  const cartKey = (a) => `${a.prid}-${a.rid}`;
+
+  const setQty = (arrival, delta) => setCart(p=>{
+    const key = cartKey(arrival);
+    const cur = p[key]?.qty || 0;
+    const max = arrival.remaining_qty ?? arrival.run_qty ?? 999;
+    const next = Math.max(0, Math.min(max, cur + delta));
+    if (next === 0) {
+      const { [key]: _, ...rest } = p;
+      return rest;
+    }
+    return { ...p, [key]: { rid:arrival.rid, prid:arrival.prid, qty:next, owner_uid:arrival.owner_uid, item:arrival } };
   });
 
   // Freshness colour: white→amber→red over 60 minutes
@@ -4383,11 +4397,9 @@ function BoardOfArrivals({ toast }) {
     return `rgba(${r},${g},${b},${Math.min(0.35, f*0.5)})`;
   };
 
-  const cartTotal = Object.entries(cart).reduce((sum,[rid,qty])=>{
-    const item = arrivals.find(a=>String(a.rid)===rid);
-    return sum + (item?item.price*qty:0);
-  },0);
-  const cartCurrency = arrivals.find(a=>cart[a.rid])?.currency||'AMD';
+  const cartEntries = Object.values(cart);
+  const cartTotal = cartEntries.reduce((sum, entry) => sum + (entry.item?.price||0) * entry.qty, 0);
+  const cartCurrency = cartEntries[0]?.item?.currency || 'AMD';
 
   const SortTh = ({label, k, style={}}) => (
     <th onClick={()=>toggleSort(k)}
@@ -4550,9 +4562,12 @@ function BoardOfArrivals({ toast }) {
                     </thead>
                     <tbody>
                       {pageRows.map((a,i)=>{
-                        const qty     = cart[a.rid]||0;
+                        const key     = cartKey(a);
+                        const qty     = cart[key]?.qty || 0;
+                        const remaining = a.remaining_qty ?? a.run_qty ?? 0;
                         const isReady = a.run_status==='completed';
                         const rowBg   = freshnessColor(a.freshness);
+                        const atMax   = qty >= remaining;
                         return (
                           <tr key={`${a.rid}-${a.prid}`}
                             style={{borderBottom:i<pageRows.length-1?`1px solid ${G.border}`:"none",background:rowBg,transition:"background 0.5s"}}>
@@ -4566,11 +4581,14 @@ function BoardOfArrivals({ toast }) {
                             <td style={{padding:"10px 12px",fontFamily:G.mono,fontSize:13,color:G.muted}}>{a.eta_delivery}</td>
                             <td style={{padding:"10px 12px"}}>
                               <div style={{display:"flex",alignItems:"center",gap:6}}>
-                                <button onClick={()=>setQty(a.rid,-1)}
-                                  style={{width:24,height:24,borderRadius:6,border:`1px solid ${G.border}`,background:G.sand,cursor:"pointer",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
-                                <span style={{minWidth:28,textAlign:"center",fontSize:14,fontFamily:G.mono,fontWeight:600}}>{qty||0}</span>
-                                <button onClick={()=>setQty(a.rid,1)}
-                                  style={{width:24,height:24,borderRadius:6,border:`1px solid ${G.border}`,background:G.sand,cursor:"pointer",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                                <button onClick={()=>setQty(a,-1)} disabled={qty===0}
+                                  style={{width:24,height:24,borderRadius:6,border:`1px solid ${G.border}`,background:G.sand,cursor:qty===0?"not-allowed":"pointer",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",opacity:qty===0?0.4:1}}>−</button>
+                                <span style={{minWidth:28,textAlign:"center",fontSize:14,fontFamily:G.mono,fontWeight:600}}>{qty}</span>
+                                <button onClick={()=>setQty(a,1)} disabled={atMax}
+                                  style={{width:24,height:24,borderRadius:6,border:`1px solid ${G.border}`,background:G.sand,cursor:atMax?"not-allowed":"pointer",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",opacity:atMax?0.4:1}}>+</button>
+                                {remaining < (a.run_qty||0) && (
+                                  <span style={{fontSize:11,color:G.red,fontFamily:G.mono}}>{remaining} left</span>
+                                )}
                               </div>
                             </td>
                             <td style={{padding:"10px 12px",fontSize:13,color:G.muted}}>{a.units}</td>
@@ -4605,35 +4623,129 @@ function BoardOfArrivals({ toast }) {
         </div>
 
         {/* Cart sidebar */}
-        <div style={{width:280,flexShrink:0}}>
+        <div style={{width:300,flexShrink:0}}>
           <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:12,padding:16,position:"sticky",top:24}}>
-            <h3 style={{fontFamily:G.font,fontSize:16,marginBottom:14,color:G.dark}}>Your selection</h3>
-            {Object.keys(cart).length===0 ? (
-              <p style={{fontSize:13,color:G.muted,fontStyle:"italic"}}>Add items using the + buttons.</p>
-            ) : <>
-              {Object.entries(cart).map(([rid,qty])=>{
-                const item = arrivals.find(a=>String(a.rid)===rid);
-                if (!item) return null;
-                return (
-                  <div key={rid} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${G.border}`}}>
-                    <div>
-                      <p style={{fontSize:13,fontWeight:600,color:G.dark,marginBottom:2}}>{item.item_name}</p>
-                      <p style={{fontSize:12,color:G.muted}}>{qty} × {item.price} {item.currency}</p>
+            <h3 style={{fontFamily:G.font,fontSize:16,marginBottom:14,color:G.dark}}>{boaTl("Your selection")}</h3>
+
+            {cartEntries.length===0 ? (
+              <p style={{fontSize:13,color:G.muted,fontStyle:"italic"}}>{boaTl("Add items using the + buttons.")}</p>
+            ) : orderResult ? (
+              /* Order confirmation */
+              <div>
+                <p style={{fontSize:15,fontWeight:700,color:G.green,marginBottom:12}}>✓ Order placed!</p>
+                {orderResult.results.map((r,i)=>{
+                  const item = arrivals.find(a=>a.rid===r.rid&&a.prid===r.prid);
+                  return (
+                    <div key={i} style={{marginBottom:10,padding:10,background:G.sand,borderRadius:8}}>
+                      <p style={{fontSize:13,fontWeight:600,color:G.dark,marginBottom:4}}>{item?.item_name}</p>
+                      {r.qty_confirmed>0&&<p style={{fontSize:12,color:G.green}}>✓ {r.qty_confirmed} confirmed (#{r.oid})</p>}
+                      {r.qty_waiting>0&&<p style={{fontSize:12,color:G.red}}>⏳ {r.qty_waiting} on waitlist — next run</p>}
                     </div>
-                    <div style={{display:"flex",alignItems:"center",gap:4}}>
-                      <button onClick={()=>setQty(Number(rid),-1)} style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.sand,cursor:"pointer",fontSize:12}}>−</button>
-                      <span style={{fontSize:13,fontFamily:G.mono,fontWeight:600,minWidth:20,textAlign:"center"}}>{qty}</span>
-                      <button onClick={()=>setQty(Number(rid),1)} style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.sand,cursor:"pointer",fontSize:12}}>+</button>
-                    </div>
-                  </div>
-                );
-              })}
-              <div style={{display:"flex",justifyContent:"space-between",fontWeight:700,fontSize:14,paddingTop:8}}>
-                <span>Total</span>
-                <span style={{color:G.caramel}}>{cartTotal.toLocaleString()} {cartCurrency}</span>
+                  );
+                })}
+                <Btn style={{width:"100%",marginTop:12}} variant="secondary"
+                  onClick={()=>{ setCart({}); setOrderResult(null); setCheckout(false); }}>
+                  New order
+                </Btn>
               </div>
-              <Btn style={{width:"100%",marginTop:12}} onClick={()=>alert("Order flow coming soon!")}>Place order</Btn>
-            </>}
+            ) : !checkout ? (
+              /* Cart summary */
+              <>
+                {cartEntries.map(entry=>{
+                  const a = entry.item;
+                  return (
+                    <div key={`${entry.prid}-${entry.rid}`} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${G.border}`}}>
+                      <div>
+                        <p style={{fontSize:13,fontWeight:600,color:G.dark,marginBottom:2}}>{a.item_name}</p>
+                        <p style={{fontSize:12,color:G.muted}}>{entry.qty} × {a.price} {a.currency}</p>
+                        {entry.qty >= a.remaining_qty && <p style={{fontSize:11,color:G.red}}>Max available</p>}
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:4}}>
+                        <button onClick={()=>setQty(a,-1)} style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.sand,cursor:"pointer",fontSize:12}}>−</button>
+                        <span style={{fontSize:13,fontFamily:G.mono,fontWeight:600,minWidth:20,textAlign:"center"}}>{entry.qty}</span>
+                        <button onClick={()=>setQty(a,1)} disabled={entry.qty>=a.remaining_qty}
+                          style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.sand,cursor:entry.qty>=a.remaining_qty?"not-allowed":"pointer",fontSize:12,opacity:entry.qty>=a.remaining_qty?0.4:1}}>+</button>
+                      </div>
+                    </div>
+                  );
+                })}
+                <div style={{display:"flex",justifyContent:"space-between",fontWeight:700,fontSize:14,paddingTop:8,marginBottom:14}}>
+                  <span>{boaTl("Total")}</span>
+                  <span style={{color:G.caramel}}>{cartTotal.toLocaleString()} {cartCurrency}</span>
+                </div>
+                <Btn style={{width:"100%"}} onClick={()=>setCheckout(true)}>Checkout →</Btn>
+              </>
+            ) : (
+              /* Guest checkout form */
+              <>
+                <div style={{marginBottom:12}}>
+                  <label style={{fontSize:12,fontWeight:600,color:G.muted,display:"block",marginBottom:4}}>Name *</label>
+                  <input value={guest.name} onChange={e=>setGuest(g=>({...g,name:e.target.value}))}
+                    placeholder="Your name"
+                    style={{width:"100%",padding:"8px 10px",borderRadius:7,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",boxSizing:"border-box"}}/>
+                </div>
+                <div style={{marginBottom:12}}>
+                  <label style={{fontSize:12,fontWeight:600,color:G.muted,display:"block",marginBottom:4}}>Email *</label>
+                  <input value={guest.email} onChange={e=>setGuest(g=>({...g,email:e.target.value}))}
+                    type="email" placeholder="your@email.com"
+                    style={{width:"100%",padding:"8px 10px",borderRadius:7,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",boxSizing:"border-box"}}/>
+                </div>
+                <div style={{marginBottom:14}}>
+                  <label style={{fontSize:12,fontWeight:600,color:G.muted,display:"block",marginBottom:4}}>Phone</label>
+                  <input value={guest.phone} onChange={e=>setGuest(g=>({...g,phone:e.target.value}))}
+                    placeholder="+374 91 …"
+                    style={{width:"100%",padding:"8px 10px",borderRadius:7,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",boxSizing:"border-box"}}/>
+                </div>
+                {/* Fulfillment */}
+                <div style={{marginBottom:14}}>
+                  <label style={{fontSize:12,fontWeight:600,color:G.muted,display:"block",marginBottom:6}}>Fulfillment</label>
+                  {['pickup','delivery','stock'].map(f=>(
+                    <label key={f} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,cursor:"pointer",fontSize:13}}>
+                      <input type="radio" name="fulfillment" value={f} checked={fulfillment===f}
+                        onChange={()=>setFulfillment(f)} style={{accentColor:G.caramel}}/>
+                      {f.charAt(0).toUpperCase()+f.slice(1)}
+                    </label>
+                  ))}
+                  {fulfillment==='delivery'&&(
+                    <input value={deliveryAddr} onChange={e=>setDeliveryAddr(e.target.value)}
+                      placeholder="Delivery address…"
+                      style={{width:"100%",padding:"7px 10px",borderRadius:7,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none",marginTop:4,boxSizing:"border-box"}}/>
+                  )}
+                </div>
+
+                {/* FIFO warning — items where remaining < requested */}
+                {cartEntries.some(e=>e.qty > (e.item?.remaining_qty||999)) && (
+                  <div style={{background:"#fef3c7",border:"1px solid #fcd34d",borderRadius:8,padding:"10px 12px",marginBottom:12,fontSize:12,color:"#92400e"}}>
+                    <p style={{fontWeight:700,marginBottom:4}}>⚠️ Limited availability</p>
+                    <p>Some items have less stock than requested. Your order will be split: available qty confirmed now, the rest placed on a waitlist for the next run.</p>
+                  </div>
+                )}
+
+                <div style={{display:"flex",gap:8,marginBottom:8}}>
+                  <Btn style={{flex:1}} loading={placing} onClick={async()=>{
+                    if (!guest.name.trim()||!guest.email.trim()) { toast("Name and email required","error"); return; }
+                    setPlacing(true);
+                    try {
+                      const items = cartEntries.map(e=>({
+                        prid:e.prid, rid:e.rid, qty:e.qty, owner_uid:e.item.owner_uid
+                      }));
+                      const result = await api.placeArrivalOrder({
+                        items, guest_name:guest.name, guest_email:guest.email,
+                        guest_phone:guest.phone, fulfillment,
+                        delivery_address:fulfillment==='delivery'?deliveryAddr:null
+                      });
+                      setOrderResult(result);
+                      toast("Order placed!");
+                    } catch(e){ toast(e.message,"error"); }
+                    finally{ setPlacing(false); }
+                  }}>Place order</Btn>
+                  <Btn variant="ghost" onClick={()=>setCheckout(false)}>←</Btn>
+                </div>
+                <p style={{fontSize:11,color:G.muted,textAlign:"center"}}>
+                  Total: <strong>{cartTotal.toLocaleString()} {cartCurrency}</strong>
+                </p>
+              </>
+            )}
           </div>
         </div>
       </div>

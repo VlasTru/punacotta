@@ -60,6 +60,7 @@ export const api = {
 
   lookupUserByEmail: (email) => req('GET', `/staff/lookup?email=${encodeURIComponent(email)}`),
   getArrivals:        ()          => req('GET',  '/arrivals'),
+  placeArrivalOrder:  (data)      => req('POST', '/arrivals/order', data),
   // Invite
   getInvite:          (token)      => req('GET',  `/invite/${token}`),
   completeInvite:     (token,data) => req('POST', `/invite/${token}`, data),
