@@ -188,7 +188,7 @@ const RU = {
   "Set password":"Установить пароль",
   "Slots saved":"Рабочие интервалы сохранены",
   "Staff":"Сотрудники",
-  "Stock":"Склад",
+  "Stock":"На склад",
   "Supplier linked":"Поставщик привязан",
   "Supplier unlinked":"Связь с поставщиком разорвана",
   "Test connectivity":"Проверить связь",
@@ -2159,8 +2159,9 @@ function NewOrderModal({
     setSaving(true);
     try {
       const addr = addressOverride ?? deliveryAddress;
+      const fulfillmentType = pickup === null ? 'stock' : pickup ? 'pickup' : 'delivery';
       const payload = {
-        mid: Number(mid), pickup, items,
+        mid: Number(mid), pickup: pickup ?? true, fulfillment: fulfillmentType, items,
         delivery_address: addr || null,
         ...(customer?.uid ? { customer_uid: customer.uid } : { walkin_name: customerQ||"Walk-in" }),
         delivery_comments: deliveryComments || undefined,
@@ -2226,8 +2227,8 @@ function NewOrderModal({
           {/* 1. Fulfillment — at top */}
           <div>
             <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:8 }}>{tl("Fulfillment")}</label>
-            <div style={{ display:"flex", gap:20 }}>
-              {[{val:true,label:"Pickup (free)"},{val:false,label:`Delivery (+${selectedMenu?.delivery_fee||0} AMD)`}].map(opt=>(
+            <div style={{ display:"flex", gap:20, flexWrap:"wrap" }}>
+              {[{val:true,label:tl("Pickup (free)")},{val:false,label:`${tl("Delivery")} (+${selectedMenu?.delivery_fee||0} AMD)`},{val:null,label:tl("Stock")}].map(opt=>(
                 <label key={String(opt.val)} style={{ display:"flex", alignItems:"center", gap:7, cursor:"pointer", fontSize:14 }}>
                   <input type="radio" name="mo_pickup" checked={pickup===opt.val}
                     onChange={()=>{ setPickup(opt.val); setAddrMode("customer"); }}
@@ -2670,7 +2671,7 @@ function OrdersManufPage({
                       <div style={{ marginBottom:8 }}>{(o.items||[]).map((it,i)=><div key={i} style={{fontSize:12}}>{it.qty}× {it.name}</div>)}</div>
                       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", borderTop:`1px solid ${G.border}`, paddingTop:8 }}>
                         <span style={{ fontWeight:700, color:G.caramel }}>{(o.items||[]).reduce((s,it)=>s+it.qty*it.price,0)} AMD</span>
-                        <span style={{ fontSize:11, color:G.muted }}>{o.pickup?tl("Pickup (free)"):tl("Delivery")}</span>
+                        <span style={{ fontSize:11, color:G.muted }}>{o.fulfillment==='stock'?tl("Stock"):o.pickup?tl("Pickup (free)"):tl("Delivery")}</span>
                       </div>
                       {(cfg.next && !(o.status==="Done" && o.allNonDeliverable))&&(
                         <div style={{ display:"flex", gap:4, marginTop:8 }}>
