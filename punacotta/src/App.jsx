@@ -3183,19 +3183,24 @@ function GeneralPage({ user, setUser, toast }) {
   const uploadLogo = async e => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (!['image/jpeg','image/jpg','image/png','image/webp'].includes(file.type)) {
+      toast('Only JPG, PNG, WEBP allowed', 'error'); return;
+    }
+    if (file.size > 3*1024*1024) { toast('File exceeds 3MB', 'error'); return; }
     setUploading(true);
     try {
-      const sig = await api.getUploadSig();
-      const fd = new FormData();
-      fd.append('file', file);
-      fd.append('api_key', sig.api_key);
-      fd.append('timestamp', sig.timestamp);
-      fd.append('signature', sig.signature);
-      fd.append('folder', sig.folder || 'logos');
-      const res = await fetch(`https://api.cloudinary.com/v1_1/${sig.cloud_name}/image/upload`, {method:'POST', body:fd});
-      const data = await res.json();
-      set('logo_url', data.secure_url);
-      set('logo_cloudinary_id', data.public_id);
+      // Read as data URI and upload via backend (same pattern as recipe images)
+      const dataUri = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.onerror = () => rej(new Error('Read failed'));
+        r.readAsDataURL(file);
+      });
+      const result = await api.uploadLogo({ data_uri: dataUri });
+      set('logo_url', result.logo_url);
+      set('logo_cloudinary_id', result.logo_cloudinary_id);
+      setUser(u => ({ ...u, logo_url: result.logo_url }));
+      toast(tl('Saved'));
     } catch(e){ toast(e.message||'Upload failed','error'); }
     finally{ setUploading(false); }
   };
@@ -7802,12 +7807,15 @@ export default function App() {
           <div style={{position:"fixed",bottom:20,right:20,zIndex:500,
             background:G.white,border:`1px solid ${G.border}`,borderRadius:24,
             padding:"8px 14px",boxShadow:"0 4px 20px rgba(44,24,16,0.12)",
-            display:"flex",alignItems:"center",gap:6,fontSize:13,color:G.muted,
-            fontFamily:G.mono,pointerEvents:"none",userSelect:"none"}}>
-            Yours,&nbsp;
-            <img src="/tanelu-logo.png" alt="tanelu"
-              style={{height:18,
-                filter:"invert(58%) sepia(50%) saturate(600%) hue-rotate(5deg) brightness(95%) contrast(90%)"}}/>
+            display:"flex",alignItems:"center",gap:5,
+            pointerEvents:"none",userSelect:"none"}}>
+            <span style={{fontFamily:G.mono,fontSize:12,color:G.muted}}>Yours,</span>
+            <span style={{fontFamily:"Georgia, serif",fontSize:15,fontWeight:600,
+              color:G.caramel,letterSpacing:"-0.3px",lineHeight:1}}>tanelu</span>
+            <svg width="10" height="14" viewBox="0 0 12 16" fill="none" style={{display:"block",marginBottom:1}}>
+              <rect x="0.5" y="0.5" width="11" height="4" fill={G.caramel}/>
+              <circle cx="6" cy="11" r="4" fill={G.caramel}/>
+            </svg>
           </div>
           {page==="products"     &&<ProductsPage toast={toast}/>}
           {page==="items"        &&<RecipesPage  toast={toast}/>}

@@ -266,10 +266,24 @@ async function route(method, segments, body, headers, event) {
       return [200, row || {}]
     }
 
+    // POST /profile/logo — upload logo image via Cloudinary
+    if (r1 === 'logo' && method === 'POST') {
+      const { data_uri } = body
+      if (!data_uri) return [400, { error: 'data_uri required' }]
+      const [existing] = await dbq('SELECT logo_cloudinary_id FROM "user" WHERE uid=$1', [user.uid])
+      if (existing?.logo_cloudinary_id) await cloudinaryDelete(existing.logo_cloudinary_id).catch(()=>{})
+      const publicId = `logos/user_${user.uid}`
+      initCloudinary()
+      const result = await cloudinary.uploader.upload(data_uri, {
+        public_id: publicId, overwrite: true,
+        transformation: [{ width: 480, height: 192, crop: 'limit', fetch_format: 'webp', quality: 'auto' }],
+      })
+      await dbr('UPDATE "user" SET logo_url=$1, logo_cloudinary_id=$2 WHERE uid=$3',
+        [result.secure_url, publicId, user.uid])
+      return [200, { logo_url: result.secure_url, logo_cloudinary_id: publicId }]
+    }
+
     if (method === 'PATCH') {
-      const { first_name, last_name, phone, street_address, city, zip,
-              business_name, logo_url, logo_cloudinary_id,
-              lat, lng, address_display } = body
 
       // Delete old Cloudinary image if replacing
       if (logo_cloudinary_id && user.logo_cloudinary_id && logo_cloudinary_id !== user.logo_cloudinary_id) {

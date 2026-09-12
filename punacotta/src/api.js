@@ -164,6 +164,7 @@ export const api = {
   // Schedule
   getProfile:   ()     => req('GET',   '/profile'),
   updateProfile:(data) => req('PATCH', '/profile', data),
+  uploadLogo:   (data) => req('POST',  '/profile/logo', data),
   getSchedule:  ()     => req('GET',   '/schedule'),
   saveSchedule: (data) => req('PUT',   '/schedule', data),
 
