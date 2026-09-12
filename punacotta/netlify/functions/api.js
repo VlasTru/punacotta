@@ -252,6 +252,56 @@ async function route(method, segments, body, headers, event) {
   const user = await enrichUser(getUser(headers))
   const [r0, r1, r2] = segments
 
+  // ── PROFILE ──────────────────────────────────────────────────────────────────
+  if (r0 === 'profile') {
+    if (!user) return [401, { error: 'Unauthorized' }]
+
+    if (method === 'GET') {
+      const [row] = await dbq(
+        `SELECT uid, first_name, last_name, email, phone,
+                street_address, city, zip, business_name,
+                logo_url, logo_cloudinary_id,
+                lat, lng, address_display
+         FROM "user" WHERE uid=$1`, [user.uid])
+      return [200, row || {}]
+    }
+
+    if (method === 'PATCH') {
+      const { first_name, last_name, phone, street_address, city, zip,
+              business_name, logo_url, logo_cloudinary_id,
+              lat, lng, address_display } = body
+
+      // Delete old Cloudinary image if replacing
+      if (logo_cloudinary_id && user.logo_cloudinary_id && logo_cloudinary_id !== user.logo_cloudinary_id) {
+        try {
+          const timestamp = Math.floor(Date.now()/1000)
+          const sigStr = `public_id=${user.logo_cloudinary_id}&timestamp=${timestamp}${process.env.CLOUDINARY_API_SECRET}`
+          const { createHash } = await import('crypto')
+          const signature = createHash('sha1').update(sigStr).digest('hex')
+          await fetch(`https://api.cloudinary.com/v1_1/${process.env.CLOUDINARY_CLOUD_NAME}/image/destroy`, {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({ public_id:user.logo_cloudinary_id, signature, api_key:process.env.CLOUDINARY_API_KEY, timestamp })
+          })
+        } catch{}
+      }
+
+      await dbr(
+        `UPDATE "user" SET
+          first_name=$1, last_name=$2, phone=$3, street_address=$4, city=$5, zip=$6,
+          business_name=$7, logo_url=$8, logo_cloudinary_id=$9, lat=$10, lng=$11, address_display=$12
+         WHERE uid=$13`,
+        [first_name||null, last_name||null, phone||null, street_address||null, city||null, zip||null,
+         business_name||null, logo_url||null, logo_cloudinary_id||null,
+         lat||null, lng||null, address_display||null, user.uid]
+      )
+      const [updated] = await dbq(
+        `SELECT uid, first_name, last_name, email, phone, street_address, city, zip,
+                business_name, logo_url, logo_cloudinary_id, lat, lng, address_display
+         FROM "user" WHERE uid=$1`, [user.uid])
+      return [200, updated]
+    }
+  }
+
   // ── AUTH ──────────────────────────────────────────────────────────────────
   if (r0 === 'auth') {
     if (r1 === 'login' && method === 'POST') {

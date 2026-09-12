@@ -162,6 +162,8 @@ export const api = {
   removeMenuRecipes: (mid, ids)  => req('DELETE', `/menus/${mid}/recipes`, { recipe_ids: ids }),
 
   // Schedule
+  getProfile:   ()     => req('GET',   '/profile'),
+  updateProfile:(data) => req('PATCH', '/profile', data),
   getSchedule:  ()     => req('GET',   '/schedule'),
   saveSchedule: (data) => req('PUT',   '/schedule', data),
 

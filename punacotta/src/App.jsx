@@ -996,7 +996,18 @@ function Nav({ user, page, setPage, logout, lang, setLang }) {
   return (
     <>
     <nav style={{ background:G.white, borderBottom:`1px solid ${G.border}`, padding:"0 20px", display:"flex", alignItems:"center", height:60, position:"sticky", top:0, zIndex:300, boxShadow:"0 1px 12px rgba(44,24,16,0.06)" }}>
-      <button onClick={()=>navigate(isM?"orders-manuf":"restaurants")} style={{ fontFamily:G.font, fontSize:20, fontWeight:700, color:G.caramel, background:"none", border:"none", cursor:"pointer", marginRight:20, fontStyle:"italic", flexShrink:0 }}>Pun&Cotta</button>
+      {/* Brand logo / name */}
+      {user?.logo_url
+        ? <img src={user.logo_url} alt={user.business_name||'logo'}
+            onClick={()=>navigate(isM?"orders-manuf":"restaurants")}
+            style={{height:36,maxWidth:140,objectFit:"contain",cursor:"pointer",marginRight:20,flexShrink:0}}/>
+        : <button onClick={()=>navigate(isM?"orders-manuf":"restaurants")}
+            style={{fontFamily:G.font,fontSize:isM&&user?.business_name?15:20,fontWeight:700,
+              color:G.caramel,background:"none",border:"none",cursor:"pointer",marginRight:20,
+              fontStyle:"italic",flexShrink:0,maxWidth:160,overflow:"hidden",
+              textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+            {isM && user?.business_name ? user.business_name : 'Pun&Cotta'}
+          </button>}
       <div style={{ display:"flex", gap:2, flex:1, minWidth:0, overflow:"hidden" }}>
         {links.map(l=>(
           <button key={l.key} onClick={()=>navigate(l.key)} style={{ background:page===l.key?G.sand:"none", border:"none", padding:"6px 10px", borderRadius:8, fontFamily:G.mono, fontSize:13, fontWeight:page===l.key?600:400, color:page===l.key?G.caramel:G.muted, cursor:"pointer", transition:"all 0.15s", whiteSpace:"nowrap" }}>{l.label}</button>
@@ -1019,6 +1030,11 @@ function Nav({ user, page, setPage, logout, lang, setLang }) {
             <div onClick={()=>setDropOpen(false)} style={{ position:"fixed", inset:0, zIndex:298 }} />
             <div style={{ position:"absolute", right:0, top:"calc(100% + 6px)", background:G.white, border:`1px solid ${G.border}`, borderRadius:10, boxShadow:"0 8px 28px rgba(44,24,16,0.15)", minWidth:176, zIndex:299, overflow:"hidden", animation:"fadeIn 0.15s ease" }}>
               {isM&&(<>
+              {isM&&(<>
+                <button onClick={()=>navigate("general")} style={{ width:"100%", textAlign:"left", padding:"11px 16px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.dark, display:"block" }}
+                  onMouseEnter={e=>e.currentTarget.style.background=G.sand} onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                  ⚙️ General
+                </button>
                 <button onClick={()=>navigate("schedule")} style={{ width:"100%", textAlign:"left", padding:"11px 16px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.dark, display:"block" }}
                   onMouseEnter={e=>e.currentTarget.style.background=G.sand} onMouseLeave={e=>e.currentTarget.style.background="none"}>
                   {tl("🕐 Schedule")}
@@ -3136,6 +3152,185 @@ function maxLatestOrder(periods) {
   const last = periods[periods.length-1];
   return periodDiff(last.start, last.end);
 }
+
+// ─── GENERAL / PROFILE PAGE ───────────────────────────────────────────────────
+function GeneralPage({ user, setUser, toast }) {
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+
+  const [form, setForm]     = useState({
+    first_name:'', last_name:'', email:'', phone:'', business_name:'',
+    street_address:'', city:'', zip:'',
+    logo_url:null, logo_cloudinary_id:null,
+    lat:null, lng:null, address_display:'',
+  });
+  const [addrQuery,   setAddrQuery]   = useState('');
+  const [addrResults, setAddrResults] = useState([]);
+  const [addrLoading, setAddrLoading] = useState(false);
+  const addrTimer = useRef(null);
+  const [loading,  setLoading]  = useState(true);
+  const [saving,   setSaving]   = useState(false);
+  const [uploading,setUploading]= useState(false);
+
+  const set = (k,v) => setForm(p=>({...p,[k]:v}));
+
+  useEffect(()=>{
+    api.getProfile().then(p=>{
+      setForm(f=>({...f,...p}));
+      if (p.address_display) setAddrQuery(p.address_display);
+    }).catch(()=>{}).finally(()=>setLoading(false));
+  },[]);
+
+  const uploadLogo = async e => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const sig = await api.getUploadSig();
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('api_key', sig.api_key);
+      fd.append('timestamp', sig.timestamp);
+      fd.append('signature', sig.signature);
+      fd.append('folder', sig.folder || 'logos');
+      const res = await fetch(`https://api.cloudinary.com/v1_1/${sig.cloud_name}/image/upload`, {method:'POST', body:fd});
+      const data = await res.json();
+      set('logo_url', data.secure_url);
+      set('logo_cloudinary_id', data.public_id);
+    } catch(e){ toast(e.message||'Upload failed','error'); }
+    finally{ setUploading(false); }
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const updated = await api.updateProfile(form);
+      setUser(u=>({...u, ...updated}));
+      toast(tl('Saved'));
+    } catch(e){ toast(e.message,'error'); }
+    finally{ setSaving(false); }
+  };
+
+  if (loading) return <Page title="General"><Spinner/></Page>;
+
+  return (
+    <Page title="General" actions={<Btn onClick={save} loading={saving}>{tl('Saved')||'Save'}</Btn>}>
+
+      {/* Branding */}
+      <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,padding:24,marginBottom:16}}>
+        <h3 style={{fontFamily:G.font,fontSize:16,marginBottom:16,color:G.dark}}>Branding</h3>
+        <div style={{display:"flex",alignItems:"center",gap:20,marginBottom:16}}>
+          {/* Logo preview */}
+          <div style={{width:120,height:48,borderRadius:8,border:`1px solid ${G.border}`,
+            background:G.sand,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",flexShrink:0}}>
+            {form.logo_url
+              ? <img src={form.logo_url} alt="logo" style={{width:"100%",height:"100%",objectFit:"contain"}}/>
+              : <span style={{fontFamily:G.font,fontSize:18,fontWeight:700,color:G.caramel,fontStyle:"italic"}}>
+                  {form.business_name||'Logo'}
+                </span>
+            }
+          </div>
+          <div>
+            <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:6}}>Restaurant logo</label>
+            <p style={{fontSize:12,color:G.muted,marginBottom:8}}>Appears in the nav bar instead of the app name. Recommended: 240×96px, transparent background.</p>
+            <div style={{display:"flex",gap:8}}>
+              <label style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 14px",borderRadius:7,
+                border:`1px solid ${G.border}`,cursor:"pointer",fontSize:12,fontFamily:G.mono,color:G.dark,background:G.sand}}>
+                {uploading ? '…' : '↑ Upload'}
+                <input type="file" accept="image/*" onChange={uploadLogo} style={{display:"none"}}/>
+              </label>
+              {form.logo_url&&<button onClick={()=>{set('logo_url',null);set('logo_cloudinary_id',null);}}
+                style={{background:"none",border:`1px solid ${G.border}`,borderRadius:7,cursor:"pointer",
+                  fontSize:12,fontFamily:G.mono,color:G.red,padding:"6px 14px"}}>Remove</button>}
+            </div>
+          </div>
+        </div>
+        <Input label={tl("Business name")} value={form.business_name||''} onChange={v=>set('business_name',v)}
+          hint="Shown to customers in menus and Board of Arrivals."/>
+      </div>
+
+      {/* Contact info */}
+      <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,padding:24,marginBottom:16}}>
+        <h3 style={{fontFamily:G.font,fontSize:16,marginBottom:16,color:G.dark}}>Contact</h3>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <Input label={tl("First name")} value={form.first_name||''} onChange={v=>set('first_name',v)}/>
+          <Input label={tl("Last name")}  value={form.last_name||''}  onChange={v=>set('last_name',v)}/>
+        </div>
+        <Input label={tl("Email")} value={form.email||''} type="email" disabled
+          hint="Email cannot be changed here."/>
+        <div style={{marginTop:14}}>
+          <Input label={tl("Phone")} value={form.phone||''} onChange={v=>set('phone',v)} placeholder="+374 91 …"/>
+        </div>
+      </div>
+
+      {/* Address with Nominatim */}
+      <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,padding:24,marginBottom:16}}>
+        <h3 style={{fontFamily:G.font,fontSize:16,marginBottom:14,color:G.dark}}>Restaurant address</h3>
+        <p style={{fontSize:13,color:G.muted,marginBottom:12}}>
+          Used to show your restaurant's distance from customers on the Board of Arrivals.
+        </p>
+        <div style={{position:"relative",marginBottom:14}}>
+          <input value={addrQuery} onChange={e=>{
+            setAddrQuery(e.target.value);
+            set('address_display', e.target.value);
+            clearTimeout(addrTimer.current);
+            if (e.target.value.length < 3) { setAddrResults([]); return; }
+            addrTimer.current = setTimeout(async()=>{
+              setAddrLoading(true);
+              try {
+                const res = await fetch(
+                  `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(e.target.value)}&format=json&limit=6&addressdetails=1`,
+                  { headers:{ 'Accept-Language': lang==='ru'?'ru':'en' } }
+                );
+                setAddrResults(await res.json()||[]);
+              } catch{}
+              finally{ setAddrLoading(false); }
+            }, 400);
+          }}
+          placeholder="Start typing your address…"
+          style={{width:"100%",padding:"10px 14px",borderRadius:8,border:`1px solid ${G.border}`,
+            fontSize:14,fontFamily:G.mono,outline:"none",boxSizing:"border-box"}}/>
+          {addrLoading&&<span style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",color:G.muted,fontSize:12}}>…</span>}
+          {form.lat&&form.lng&&!addrResults.length&&(
+            <span style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",color:G.green,fontSize:12}}>
+              ✓ {Number(form.lat).toFixed(4)}, {Number(form.lng).toFixed(4)}
+            </span>
+          )}
+          {addrResults.length>0&&(
+            <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,background:G.white,
+              border:`1px solid ${G.border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(44,24,16,0.12)",
+              zIndex:200,maxHeight:260,overflowY:"auto"}}>
+              {addrResults.map((r,i)=>(
+                <button key={i} onMouseDown={()=>{
+                  setAddrQuery(r.display_name);
+                  set('address_display', r.display_name);
+                  set('lat', Number(r.lat));
+                  set('lng', Number(r.lon));
+                  setAddrResults([]);
+                }} style={{width:"100%",textAlign:"left",padding:"10px 14px",background:"none",
+                  border:"none",borderBottom:`1px solid ${G.border}`,cursor:"pointer",
+                  fontSize:13,fontFamily:G.mono,color:G.dark,display:"block"}}
+                onMouseEnter={e=>e.currentTarget.style.background=G.sand}
+                onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                  {r.display_name}
+                </button>
+              ))}
+              <p style={{fontSize:10,color:G.muted,padding:"4px 10px",textAlign:"right"}}>© OpenStreetMap contributors</p>
+            </div>
+          )}
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+          <Input label={tl("City")}           value={form.city||''}           onChange={v=>set('city',v)}/>
+          <Input label={tl("ZIP")}            value={form.zip||''}            onChange={v=>set('zip',v)}/>
+          <Input label={tl("Street address")} value={form.street_address||''} onChange={v=>set('street_address',v)} style={{gridColumn:"1/-1"}}/>
+        </div>
+      </div>
+
+      <Btn onClick={save} loading={saving} size="lg">Save changes</Btn>
+    </Page>
+  );
+}
+
 
 function SchedulePage({
  toast, storeSchedule, setStoreSchedule }) {
@@ -7547,7 +7742,15 @@ export default function App() {
   _currentLang = lang;
   const {toasts,toast,remove} = useToast();
   const logout=()=>{localStorage.removeItem("token");setUser(null);setPage("login");};
-  const onLogin=u=>{setUser(u);setHashPage(null);setPage(u.is_manufacturer?"orders-manuf":"restaurants");};
+  const onLogin = u => {
+    setUser(u);
+    setHashPage(null);
+    setPage(u.is_manufacturer?"orders-manuf":"restaurants");
+    // Load logo and business_name for Nav
+    if (u.is_manufacturer) {
+      api.getProfile().then(p=>setUser(prev=>({...prev,...p}))).catch(()=>{});
+    }
+  };
   // Clear #signup hash from URL after reading it
   useEffect(()=>{
     if (window.location.hash==="#signup") history.replaceState(null,"",window.location.pathname);
@@ -7596,6 +7799,17 @@ export default function App() {
       ):(
         <>
           <Nav user={user} page={page} setPage={setPage} logout={logout} lang={lang} setLang={setLang}/>
+          {/* Floating "Yours, tanelu" balloon */}
+          <div style={{position:"fixed",bottom:20,right:20,zIndex:500,
+            background:G.white,border:`1px solid ${G.border}`,borderRadius:24,
+            padding:"8px 14px",boxShadow:"0 4px 20px rgba(44,24,16,0.12)",
+            display:"flex",alignItems:"center",gap:6,fontSize:13,color:G.muted,
+            fontFamily:G.mono,pointerEvents:"none",userSelect:"none"}}>
+            Yours,&nbsp;
+            <img src="/tanelu-logo.png" alt="tanelu"
+              style={{height:18,
+                filter:"invert(58%) sepia(50%) saturate(600%) hue-rotate(5deg) brightness(95%) contrast(90%)"}}/>
+          </div>
           {page==="products"     &&<ProductsPage toast={toast}/>}
           {page==="items"        &&<RecipesPage  toast={toast}/>}
           {page==="recipes"      &&<RecipesPage  toast={toast}/>}
@@ -7614,6 +7828,7 @@ export default function App() {
           {page==="restaurants"  &&<RestaurantsPage setPage={setPage} setActiveMenu={setActiveMenu}/>}
           {page==="order"        &&<OrderPage menu={activeMenu} user={user} setPage={setPage} toast={toast}/>}
           {page==="orders-cust"  &&<OrdersCustPage toast={toast}/>}
+          {page==="general"      &&<GeneralPage    user={user} setUser={setUser} toast={toast}/>}
           {page==="schedule"     &&<SchedulePage toast={toast} storeSchedule={storeSchedule} setStoreSchedule={setStoreSchedule}/>}
         </>
       )}

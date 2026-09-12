@@ -471,6 +471,10 @@ ALTER TABLE "order" ADD COLUMN IF NOT EXISTS guest_name  VARCHAR(100);
 ALTER TABLE "order" ADD COLUMN IF NOT EXISTS guest_email VARCHAR(200);
 ALTER TABLE "order" ADD COLUMN IF NOT EXISTS guest_phone VARCHAR(50);
 ALTER TABLE "order" ADD COLUMN IF NOT EXISTS prid        INTEGER REFERENCES process_run(prid);
+
+-- Restaurant branding
+ALTER TABLE "user" ADD COLUMN IF NOT EXISTS logo_url            VARCHAR(500);
+ALTER TABLE "user" ADD COLUMN IF NOT EXISTS logo_cloudinary_id  VARCHAR(200);
 `
 
 await client.connect()
