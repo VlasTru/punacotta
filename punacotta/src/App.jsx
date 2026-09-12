@@ -1030,7 +1030,6 @@ function Nav({ user, page, setPage, logout, lang, setLang }) {
             <div onClick={()=>setDropOpen(false)} style={{ position:"fixed", inset:0, zIndex:298 }} />
             <div style={{ position:"absolute", right:0, top:"calc(100% + 6px)", background:G.white, border:`1px solid ${G.border}`, borderRadius:10, boxShadow:"0 8px 28px rgba(44,24,16,0.15)", minWidth:176, zIndex:299, overflow:"hidden", animation:"fadeIn 0.15s ease" }}>
               {isM&&(<>
-              {isM&&(<>
                 <button onClick={()=>navigate("general")} style={{ width:"100%", textAlign:"left", padding:"11px 16px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.dark, display:"block" }}
                   onMouseEnter={e=>e.currentTarget.style.background=G.sand} onMouseLeave={e=>e.currentTarget.style.background="none"}>
                   ⚙️ General
