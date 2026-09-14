@@ -147,7 +147,7 @@ function mailHtml(title, body, cta_url, cta_label) {
 const RECIPE_SEL = `
   SELECT r.rid, r.name, r.description, r.price, r.currency, r.available,
          r.deliverable, r.image_url, r.image_thumb_url, r.cloudinary_id,
-         r.allow_submultiples, r.moq, r.procid,
+         r.allow_submultiples, r.moq, r.procid, r.min_inventory,
          u.name AS units, u.unid, c.name AS category, c.caid
   FROM recipe r
   LEFT JOIN units u ON u.unid=r.unid
@@ -2255,6 +2255,50 @@ async function route(method, segments, body, headers, event) {
           }
         }
       }
+    }
+  }
+
+  // ── RECIPE STOCK ──────────────────────────────────────────────────────────
+  if (r0 === 'recipe-stock') {
+    if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+
+    if (method === 'GET') {
+      const rows = await dbq(
+        `SELECT rid, SUM(qty) AS qty FROM recipe_stock WHERE owner_uid=$1 GROUP BY rid`,
+        [user.uid])
+      return [200, rows]
+    }
+
+    // POST /recipe-stock/wastage
+    if (r1 === 'wastage' && method === 'POST') {
+      await dbr(`CREATE TABLE IF NOT EXISTS recipe_stock (
+        rsid SERIAL PRIMARY KEY, rid INTEGER NOT NULL, owner_uid INTEGER NOT NULL,
+        qty NUMERIC(10,3) NOT NULL, source VARCHAR(20) NOT NULL DEFAULT 'manual',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`)
+      const { changes } = body // [{rid, delta}]
+      if (!Array.isArray(changes) || !changes.length) return [400, { error: 'No changes' }]
+      for (const { rid, delta } of changes) {
+        if (delta >= 0) continue
+        await dbr(
+          `INSERT INTO recipe_stock (rid, owner_uid, qty, source, created_at)
+           VALUES ($1, $2, $3, 'wastage', NOW())`,
+          [rid, user.uid, delta]
+        )
+      }
+      const rows = await dbq(
+        `SELECT rid, SUM(qty) AS qty FROM recipe_stock WHERE owner_uid=$1 GROUP BY rid`,
+        [user.uid])
+      return [200, rows]
+    }
+
+    // PATCH /recipe-stock/min — set min_inventory per recipe
+    if (r1 === 'min' && method === 'PATCH') {
+      const { rid, min_inventory } = body
+      await dbr(`ALTER TABLE recipe ADD COLUMN IF NOT EXISTS min_inventory NUMERIC(10,3)`)
+      await dbr(`UPDATE recipe SET min_inventory=$1 WHERE rid=$2 AND owner_uid=$3`,
+        [min_inventory ?? null, rid, user.uid])
+      return [200, { rid, min_inventory }]
     }
   }
 

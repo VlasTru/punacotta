@@ -475,6 +475,18 @@ ALTER TABLE "order" ADD COLUMN IF NOT EXISTS prid        INTEGER REFERENCES proc
 -- Restaurant branding
 ALTER TABLE "user" ADD COLUMN IF NOT EXISTS logo_url            VARCHAR(500);
 ALTER TABLE "user" ADD COLUMN IF NOT EXISTS logo_cloudinary_id  VARCHAR(200);
+
+-- Item (recipe) stock tracking
+CREATE TABLE IF NOT EXISTS recipe_stock (
+  rsid        SERIAL PRIMARY KEY,
+  rid         INTEGER NOT NULL REFERENCES recipe(rid) ON DELETE CASCADE,
+  owner_uid   INTEGER NOT NULL REFERENCES "user"(uid),
+  qty         NUMERIC(10,3) NOT NULL,
+  source      VARCHAR(20) NOT NULL DEFAULT 'manual',
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE recipe ADD COLUMN IF NOT EXISTS min_inventory NUMERIC(10,3);
 `
 
 await client.connect()

@@ -236,7 +236,7 @@ const RU = {
   "Wastage":"Списание",
   "Confirm wastage":"Подтвердить списание",
   "Confirm":"Подтвердить",
-  "Min. inventory":"Мин. остаток",
+  "Min. inventory":"Мин. остаток на складе",
   "Add Employee":"Добавить сотрудника",
   "Delete Employee":"Удалить сотрудника",
   // Board of Arrivals translations
@@ -1630,10 +1630,20 @@ function RecipesPage({
   const [selected, setSelected] = useState([]); const [sortKey, setSortKey] = useState("name"); const [sortDir, setSortDir] = useState("asc");
   const [showNew, setShowNew] = useState(false); const [editRecipe, setEditRecipe] = useState(null);
   const [dialog, setDialog] = useState(null); const [saving, setSaving] = useState(false); const [lightbox, setLightbox] = useState(null);
+  // Wastage + stock
+  const [recipeStock,   setRecipeStock]   = useState({}); // rid → qty
+  const [wastageMode,   setWastageMode]   = useState(false);
+  const [wastageDeltas, setWastageDeltas] = useState({}); // rid → negative delta
+  const [wastageConfirm,setWastageConfirm]= useState(false);
+  const [applyingWastage,setApplyingWastage]= useState(false);
 
   const BLANK = { name:"", description:"", unid:"", caid:"", price:"", currency:"AMD", available:true, deliverable:true, image_url:null, image_thumb_url:null };
 
-  const load = useCallback(async()=>{ setLoading(true); try{ const[r,l,p]=await Promise.all([api.getRecipes(),api.getRecipeLookups(),api.getProcesses()]); setRecipes(r); setLookups({...l,processes:p||[]}); } catch(e){toast(e.message,"error");} finally{setLoading(false);} },[]);
+  const load = useCallback(async()=>{ setLoading(true); try{
+    const[r,l,p,s]=await Promise.all([api.getRecipes(),api.getRecipeLookups(),api.getProcesses(),api.getRecipeStock().catch(()=>[])]);
+    setRecipes(r); setLookups({...l,processes:p||[]});
+    const sm={}; (s||[]).forEach(x=>{ sm[x.rid]=Number(x.qty); }); setRecipeStock(sm);
+  } catch(e){toast(e.message,"error");} finally{setLoading(false);} },[]);
   useEffect(()=>{load();},[]);
 
   const sorted=[...recipes].sort((a,b)=>{ const v=String(a[sortKey]||"")<String(b[sortKey]||"")?-1:String(a[sortKey]||"")>String(b[sortKey]||"")?1:0; return sortDir==="asc"?v:-v; });
@@ -1693,6 +1703,63 @@ function RecipesPage({
       <button className="recipe-link" onClick={()=>setEditRecipe(r)} style={{ background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.dark, padding:0, textAlign:"left" }}>{r.name}</button>
     )},
     {key:"description",label:tl("Description"),sortable:true,render:r=>r.description||<span style={{color:G.muted}}>—</span>},
+    {key:"stock",label:tl("Stock"),sortable:false,render:r=>{
+      const qty   = recipeStock[r.rid] ?? 0;
+      const min   = r.min_inventory ?? null;
+      const delta = wastageDeltas[r.rid] ?? 0;
+      const shown = qty + delta;
+      const atMin = min !== null && shown <= min;
+      if (wastageMode) return (
+        <div style={{display:"flex",alignItems:"center",gap:5}}>
+          <button onClick={()=>setWastageDeltas(p=>{
+            const cur=p[r.rid]??0; const next=Math.min(0,cur+1);
+            return next===0?Object.fromEntries(Object.entries(p).filter(([k])=>k!==String(r.rid))):{...p,[r.rid]:next};
+          })} disabled={delta===0}
+          style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.sand,cursor:delta===0?"not-allowed":"pointer",fontSize:14,lineHeight:1,opacity:delta===0?0.4:1}}>+</button>
+          <span style={{minWidth:32,textAlign:"center",fontSize:13,fontFamily:G.mono,fontWeight:600,
+            color:shown<qty?G.red:atMin?G.red:G.dark}}>{shown}</span>
+          <button onClick={()=>setWastageDeltas(p=>{
+            const cur=p[r.rid]??0; const next=Math.max(-qty,cur-1);
+            return next===0?Object.fromEntries(Object.entries(p).filter(([k])=>k!==String(r.rid))):{...p,[r.rid]:next};
+          })} disabled={shown<=0}
+          style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.sand,cursor:shown<=0?"not-allowed":"pointer",fontSize:14,lineHeight:1,opacity:shown<=0?0.4:1}}>−</button>
+          {delta<0&&<span style={{fontSize:11,color:G.red,fontFamily:G.mono}}>{delta}</span>}
+        </div>
+      );
+      return (
+        <span style={{fontWeight:600,color:atMin?G.red:qty>0?G.dark:G.muted,fontFamily:G.mono}}>
+          {qty!=null?qty:"—"}
+        </span>
+      );
+    }},
+    {key:"min_inv",label:tl("Min. inventory"),sortable:false,render:r=>{
+      const min = r.min_inventory;
+      const [editing, setEditing] = useState(false);
+      const [val, setVal] = useState(min??'');
+      if (editing) return (
+        <div style={{display:"flex",alignItems:"center",gap:4}}>
+          <button onClick={()=>{ const n=Math.max(0,(Number(val)||0)-1); setVal(n); }}
+            style={{width:20,height:20,borderRadius:4,border:`1px solid ${G.border}`,background:G.sand,cursor:"pointer",fontSize:12,lineHeight:1}}>−</button>
+          <input type="number" value={val} onChange={e=>setVal(e.target.value)} min="0"
+            style={{width:48,padding:"2px 4px",border:`1px solid ${G.border}`,borderRadius:5,fontSize:12,fontFamily:G.mono,textAlign:"center",outline:"none"}}/>
+          <button onClick={()=>{ const n=Math.max(0,(Number(val)||0)+1); setVal(n); }}
+            style={{width:20,height:20,borderRadius:4,border:`1px solid ${G.border}`,background:G.sand,cursor:"pointer",fontSize:12,lineHeight:1}}>+</button>
+          <button onClick={async()=>{
+            await api.setMinInventory({rid:r.rid, min_inventory:Number(val)||null});
+            setRecipes(p=>p.map(x=>x.rid===r.rid?{...x,min_inventory:Number(val)||null}:x));
+            setEditing(false);
+          }} style={{fontSize:11,color:G.green,background:"none",border:"none",cursor:"pointer",fontWeight:700}}>✓</button>
+          <button onClick={()=>setEditing(false)} style={{fontSize:11,color:G.muted,background:"none",border:"none",cursor:"pointer"}}>✕</button>
+        </div>
+      );
+      return (
+        <button onClick={()=>{setVal(min??'');setEditing(true);}}
+          style={{background:"none",border:"none",cursor:"pointer",fontSize:13,fontFamily:G.mono,
+            color:min!=null?G.dark:G.muted,textDecoration:"underline dotted",textUnderlineOffset:3}}>
+          {min!=null?min:"Set"}
+        </button>
+      );
+    }},
     {key:"units",label:tl("Units"),sortable:false,render:r=>r.units||"—"},
     {key:"available",label:tl("Avail."),sortable:false,render:r=><span>{r.available?"✅":"❌"}</span>},
     {key:"deliverable",label:tl("Deliv."),sortable:false,render:r=><span>{r.deliverable!==false?"✅":"❌"}</span>},
@@ -1701,7 +1768,19 @@ function RecipesPage({
   ];
 
   return (
-    <Page title={tl("Items")} actions={<>{selected.length>0&&<Btn variant="danger" size="sm" onClick={()=>setDialog("del")}>{tl("Delete")} ({selected.length})</Btn>}<Btn size="sm" onClick={()=>setShowNew(s=>!s)}>{tl("+ New item")}</Btn></>}>
+    <Page title={tl("Items")} actions={
+      <div style={{display:"flex",gap:8}}>
+        {selected.length>0&&!wastageMode&&<Btn variant="danger" size="sm" onClick={()=>setDialog("del")}>{tl("Delete")} ({selected.length})</Btn>}
+        {wastageMode&&Object.keys(wastageDeltas).length>0&&(
+          <Btn size="sm" onClick={()=>setWastageConfirm(true)}>Confirm</Btn>
+        )}
+        {wastageMode
+          ? <Btn variant="secondary" size="sm" onClick={()=>{setWastageMode(false);setWastageDeltas({});}}>✕ Cancel wastage</Btn>
+          : <Btn variant="secondary" size="sm" onClick={()=>setWastageMode(true)}>Wastage</Btn>
+        }
+        {!wastageMode&&<Btn size="sm" onClick={()=>setShowNew(s=>!s)}>{tl("+ New item")}</Btn>}
+      </div>
+    }>
       {showNew&&(
         <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
           <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>New Item</h3>
@@ -1724,6 +1803,46 @@ function RecipesPage({
         Are you sure you wish to delete <b>{selected.map(id=>recipes.find(r=>r.rid===id)?.name).filter(Boolean).join(", ")}</b>?
       </Dialog>
       <Lightbox src={lightbox?.src} description={lightbox?.description} onClose={()=>setLightbox(null)} />
+
+      {wastageConfirm&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.45)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{background:G.white,borderRadius:16,padding:32,maxWidth:520,width:"90%",animation:"fadeIn 0.2s ease",boxShadow:"0 20px 60px rgba(44,24,16,0.2)"}}>
+            <h3 style={{fontFamily:G.font,fontSize:18,marginBottom:16}}>Confirm wastage</h3>
+            <p style={{fontSize:14,color:G.dark,lineHeight:1.6,marginBottom:16}}>
+              The following items will be wasted, and stock levels shall be changed accordingly. The action is irreversible. Are you sure you wish to proceed?
+            </p>
+            <div style={{background:G.sand,borderRadius:10,padding:"12px 16px",marginBottom:20}}>
+              {Object.entries(wastageDeltas).filter(([,d])=>d<0).map(([rid,delta])=>{
+                const item = recipes.find(r=>String(r.rid)===rid);
+                return (
+                  <div key={rid} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",fontSize:13,borderBottom:`1px solid ${G.border}`}}>
+                    <span style={{fontWeight:600,color:G.dark}}>{item?.name||rid}</span>
+                    <span style={{color:G.red,fontFamily:G.mono,fontWeight:600}}>{delta} {item?.units||''}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+              <Btn size="sm" loading={applyingWastage} onClick={async()=>{
+                setApplyingWastage(true);
+                try {
+                  const changes = Object.entries(wastageDeltas)
+                    .filter(([,d])=>d<0)
+                    .map(([rid,delta])=>({rid:Number(rid),delta}));
+                  const updated = await api.applyItemWastage({changes});
+                  const sm={}; (updated||[]).forEach(x=>{ sm[x.rid]=Number(x.qty); });
+                  setRecipeStock(sm);
+                  setWastageMode(false); setWastageDeltas({});
+                  setWastageConfirm(false);
+                  toast("Wastage applied");
+                } catch(e){ toast(e.message,"error"); }
+                finally{ setApplyingWastage(false); }
+              }}>OK</Btn>
+              <Btn variant="ghost" size="sm" onClick={()=>setWastageConfirm(false)}>Cancel</Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </Page>
   );
 }
