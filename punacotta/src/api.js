@@ -119,6 +119,7 @@ export const api = {
   rotateEmbedKey:      ()     => req('POST',  '/embed/settings/rotate-key'),
   testEmbedConnect:    ()     => req('POST',  '/embed/settings/test'),
   getStock:    () => req('GET',  '/stock'),
+  applyWastage:(data) => req('POST', '/stock/wastage', data),
   getForecast: () => req('GET',  '/forecast'),
   runForecast: () => req('POST', '/forecast'),
   getProcurement:         ()           => req('GET',   '/procurement'),

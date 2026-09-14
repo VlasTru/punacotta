@@ -2813,6 +2813,24 @@ async function route(method, segments, body, headers, event) {
         [user.uid])
       return [200, rows]
     }
+    // POST /stock/wastage — apply negative stock adjustments
+    if (r1 === 'wastage' && method === 'POST') {
+      const { changes } = body // [{pid, delta}] — delta is negative
+      if (!Array.isArray(changes) || !changes.length) return [400, { error: 'No changes' }]
+      for (const { pid, delta } of changes) {
+        if (delta >= 0) continue // only allow negative
+        await dbr(
+          `INSERT INTO product_stock (pid, owner_uid, qty, source, created_at)
+           VALUES ($1, $2, $3, 'wastage', NOW())`,
+          [pid, user.uid, delta]
+        )
+      }
+      // Return updated stock map
+      const rows = await dbq(
+        `SELECT pid, SUM(qty) AS qty FROM product_stock WHERE owner_uid=$1 GROUP BY pid`,
+        [user.uid])
+      return [200, rows]
+    }
   }
 
   // ── FORECAST ─────────────────────────────────────────────────────────────

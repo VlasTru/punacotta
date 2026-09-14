@@ -234,6 +234,7 @@ const RU = {
   "Disable":"Выключить",
   "Enable":"Включить",
   "Wastage":"Списание",
+  "Confirm wastage":"Подтвердить списание",
   "Confirm":"Подтвердить",
   "Min. inventory":"Мин. остаток",
   "Add Employee":"Добавить сотрудника",
@@ -242,6 +243,9 @@ const RU = {
   "Your selection":"Вы выбрали",
   "Add items using the + buttons.":"Добавляйте блюда кнопкой +",
   "Item name":"Наименование",
+  "Search items…":"Искомое блюдо (например, \"пельмени\")",
+  "All restaurants":"Любые организации",
+  "Refresh":"Обновить",
   "Sold by":"Поставляется",
   "Display only ready items":"Показывать только готовые блюда",
   "Unit price":"Цена",
@@ -1287,7 +1291,11 @@ function ProductsPage({ toast }) {
   const [editExpiry, setEditExpiry] = useState("");
   const [linkPid, setLinkPid] = useState(null);
   const [linkSid, setLinkSid] = useState(""); const [linkPrice, setLinkPrice] = useState(""); const [linkCurrency, setLinkCurrency] = useState("AMD");
-  const [stock, setStock]       = useState({}); // pid → qty
+  const [stock, setStock]           = useState({}); // pid → qty
+  const [wastageMode, setWastageMode] = useState(false);
+  const [wastageDeltas, setWastageDeltas] = useState({}); // pid → negative delta
+  const [wastageConfirm, setWastageConfirm] = useState(false);
+  const [applyingWastage, setApplyingWastage] = useState(false);
   const [forecast, setForecast] = useState({}); // pid → {tg, series, period_start, period_end}
   const [refreshingForecast, setRefreshingForecast] = useState(false);
 
@@ -1457,8 +1465,29 @@ function ProductsPage({ toast }) {
         </div>
       );
     }},
-    {key:"stock",    label:tl("Stock"),       sortable:false, render:r=>{
-      const qty = stock[r.pid];
+    {key:"stock", label:tl("Stock"), sortable:false, render:r=>{
+      const qty = stock[r.pid] ?? 0;
+      const delta = wastageDeltas[r.pid] ?? 0;
+      const displayed = qty + delta;
+      if (wastageMode) return (
+        <div style={{display:"flex",alignItems:"center",gap:5}}>
+          <button onClick={()=>setWastageDeltas(p=>{
+            const cur = p[r.pid]??0;
+            const next = Math.min(0, cur + 1); // can't go above 0
+            return next===0 ? Object.fromEntries(Object.entries(p).filter(([k])=>k!==String(r.pid))) : {...p,[r.pid]:next};
+          })} disabled={delta===0}
+          style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.sand,cursor:delta===0?"not-allowed":"pointer",fontSize:14,lineHeight:1,opacity:delta===0?0.4:1}}>+</button>
+          <span style={{minWidth:32,textAlign:"center",fontSize:13,fontFamily:G.mono,fontWeight:600,
+            color:displayed<qty?G.red:G.dark}}>{displayed}</span>
+          <button onClick={()=>setWastageDeltas(p=>{
+            const cur = p[r.pid]??0;
+            const next = Math.max(-qty, cur - 1); // can't go below 0 stock
+            return next===0 ? Object.fromEntries(Object.entries(p).filter(([k])=>k!==String(r.pid))) : {...p,[r.pid]:next};
+          })} disabled={displayed<=0}
+          style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.sand,cursor:displayed<=0?"not-allowed":"pointer",fontSize:14,lineHeight:1,opacity:displayed<=0?0.4:1}}>−</button>
+          {delta<0&&<span style={{fontSize:11,color:G.red,fontFamily:G.mono}}>{delta}</span>}
+        </div>
+      );
       return qty!=null ? <span style={{fontWeight:600,color:qty>0?G.dark:G.red}}>{qty}</span> : <span style={{color:G.muted}}>—</span>;
     }},
     {key:"forecast", label:(()=>{
@@ -1480,9 +1509,16 @@ function ProductsPage({ toast }) {
 
   return (
     <Page title={tl("Products")} actions={<div style={{display:"flex",gap:8}}>
-      {selected.length>0&&<Btn variant="danger" size="sm" onClick={openDeleteDialog}>{tl("Delete")} ({selected.length})</Btn>}
+      {selected.length>0&&!wastageMode&&<Btn variant="danger" size="sm" onClick={openDeleteDialog}>{tl("Delete")} ({selected.length})</Btn>}
+      {wastageMode && Object.keys(wastageDeltas).length>0 && (
+        <Btn size="sm" onClick={()=>setWastageConfirm(true)}>Confirm</Btn>
+      )}
+      {wastageMode
+        ? <Btn variant="secondary" size="sm" onClick={()=>{ setWastageMode(false); setWastageDeltas({}); }}>✕ Cancel wastage</Btn>
+        : <Btn variant="secondary" size="sm" onClick={()=>setWastageMode(true)}>Wastage</Btn>
+      }
       <Btn variant="secondary" size="sm" onClick={refreshForecast} loading={refreshingForecast}>↻ Forecast</Btn>
-      <Btn size="sm" onClick={()=>setShowForm(s=>!s)}>{tl("+ New product")}</Btn>
+      {!wastageMode&&<Btn size="sm" onClick={()=>setShowForm(s=>!s)}>{tl("+ New product")}</Btn>}
     </div>}>
       {showForm&&(
         <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
@@ -1513,6 +1549,47 @@ function ProductsPage({ toast }) {
             <div style={{ display:"flex", gap:10 }}>
               <Btn size="sm" onClick={saveEdit} loading={saving}>{tl("Save")}</Btn>
               <Btn variant="ghost" size="sm" onClick={()=>setEditProduct(null)}>{tl("Cancel")}</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+      {wastageConfirm&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.45)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{background:G.white,borderRadius:16,padding:32,maxWidth:520,width:"90%",animation:"fadeIn 0.2s ease",boxShadow:"0 20px 60px rgba(44,24,16,0.2)"}}>
+            <h3 style={{fontFamily:G.font,fontSize:18,marginBottom:16}}>Confirm wastage</h3>
+            <p style={{fontSize:14,color:G.dark,lineHeight:1.6,marginBottom:16}}>
+              The following products will be wasted, and stock levels shall be changed accordingly. The action is irreversible. Are you sure you wish to proceed?
+            </p>
+            <div style={{background:G.sand,borderRadius:10,padding:"12px 16px",marginBottom:20}}>
+              {Object.entries(wastageDeltas).filter(([,d])=>d<0).map(([pid,delta])=>{
+                const prod = products.find(p=>String(p.pid)===pid);
+                return (
+                  <div key={pid} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",fontSize:13,borderBottom:`1px solid ${G.border}`}}>
+                    <span style={{fontWeight:600,color:G.dark}}>{prod?.name||pid}</span>
+                    <span style={{color:G.red,fontFamily:G.mono,fontWeight:600}}>{delta} {prod?.units||''}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+              <Btn size="sm" loading={applyingWastage} onClick={async()=>{
+                setApplyingWastage(true);
+                try {
+                  const changes = Object.entries(wastageDeltas)
+                    .filter(([,d])=>d<0)
+                    .map(([pid,delta])=>({pid:Number(pid),delta}));
+                  const updated = await api.applyWastage({changes});
+                  const newStock = {};
+                  (updated||[]).forEach(s=>{ newStock[s.pid]=Number(s.qty); });
+                  setStock(newStock);
+                  setWastageMode(false);
+                  setWastageDeltas({});
+                  setWastageConfirm(false);
+                  toast("Wastage applied");
+                } catch(e){ toast(e.message,"error"); }
+                finally{ setApplyingWastage(false); }
+              }}>OK</Btn>
+              <Btn variant="ghost" size="sm" onClick={()=>setWastageConfirm(false)}>Cancel</Btn>
             </div>
           </div>
         </div>
@@ -4626,7 +4703,7 @@ function BoardOfArrivals({ toast }) {
           </svg>
         </span>
         <span style={{fontSize:14,color:G.muted}}>{boaTl("Board of Arrivals")}</span>
-        <button onClick={load} style={{marginLeft:"auto",background:"none",border:`1px solid ${G.border}`,borderRadius:7,cursor:"pointer",padding:"5px 12px",fontSize:12,color:G.muted}}>↻ {boaTl("Refresh")||"Refresh"}</button>
+        <button onClick={load} style={{marginLeft:"auto",background:"none",border:`1px solid ${G.border}`,borderRadius:7,cursor:"pointer",padding:"5px 12px",fontSize:12,color:G.muted}}>↻ {boaTl("Refresh")}</button>
         <button onClick={()=>{ const nl=boaLang==='en'?'ru':'en'; setBoaLang(nl); localStorage.setItem('lang',nl); }}
           style={{background:"none",border:`1px solid ${G.border}`,borderRadius:7,cursor:"pointer",padding:"5px 10px",fontSize:12,color:G.muted}}>
           🌐 {boaLang==='en'?'RU':'EN'}
@@ -4643,7 +4720,7 @@ function BoardOfArrivals({ toast }) {
               <label style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,display:"block",marginBottom:5}}>Item name</label>
               <div style={{position:"relative"}}>
                 <input value={itemSearch} onChange={e=>setItemSearch(e.target.value)}
-                  placeholder="Search items…"
+                  placeholder={boaTl("Search items…")}
                   style={{width:"100%",padding:"7px 10px",borderRadius:7,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}/>
                 {itemSearch&&(
                   <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,background:G.white,border:`1px solid ${G.border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(44,24,16,0.1)",zIndex:50,maxHeight:200,overflowY:"auto"}}>
@@ -4681,7 +4758,7 @@ function BoardOfArrivals({ toast }) {
                   fontFamily:G.mono,cursor:"pointer",background:G.white,minHeight:34,
                   display:"flex",flexWrap:"wrap",gap:4,alignItems:"center"}}>
                 {filterSellers.length===0
-                  ? <span style={{color:G.muted}}>All restaurants</span>
+                  ? <span style={{color:G.muted}}>{boaTl("All restaurants")}</span>
                   : filterSellers.map(s=>(
                     <span key={s} style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:`${G.caramel}18`,
                       color:G.caramel,display:"flex",alignItems:"center",gap:3}}>
