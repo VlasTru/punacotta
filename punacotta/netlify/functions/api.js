@@ -22,6 +22,43 @@ function getPool() {
 async function dbq(sql, params = []) { return (await getPool().query(sql, params)).rows }
 async function dbr(sql, params = []) { return getPool().query(sql, params) }
 
+// Auto-migrate new columns so they exist before any query runs
+let _migrated = false
+async function ensureMigrations() {
+  if (_migrated) return
+  _migrated = true
+  try {
+    await dbr(`ALTER TABLE recipe ADD COLUMN IF NOT EXISTS min_inventory NUMERIC(10,3)`)
+    await dbr(`ALTER TABLE recipe ADD COLUMN IF NOT EXISTS procid INTEGER`)
+    await dbr(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS lat NUMERIC(10,7)`)
+    await dbr(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS lng NUMERIC(10,7)`)
+    await dbr(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS address_display VARCHAR(300)`)
+    await dbr(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS logo_url VARCHAR(500)`)
+    await dbr(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS logo_cloudinary_id VARCHAR(200)`)
+    await dbr(`CREATE TABLE IF NOT EXISTS recipe_stock (
+      rsid SERIAL PRIMARY KEY, rid INTEGER NOT NULL, owner_uid INTEGER NOT NULL,
+      qty NUMERIC(10,3) NOT NULL, source VARCHAR(20) NOT NULL DEFAULT 'manual',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`)
+    await dbr(`CREATE TABLE IF NOT EXISTS process_run_item (
+      prid INTEGER NOT NULL, rid INTEGER NOT NULL, qty NUMERIC(10,3) NOT NULL DEFAULT 1,
+      PRIMARY KEY (prid, rid)
+    )`)
+    await dbr(`CREATE TABLE IF NOT EXISTS boa_reservation (
+      resid SERIAL PRIMARY KEY, prid INTEGER NOT NULL, rid INTEGER NOT NULL,
+      owner_uid INTEGER NOT NULL, qty NUMERIC(10,3) NOT NULL,
+      guest_name VARCHAR(100), guest_email VARCHAR(200), guest_phone VARCHAR(50),
+      fulfillment VARCHAR(12) NOT NULL DEFAULT 'pickup', delivery_address VARCHAR(200),
+      status VARCHAR(12) NOT NULL DEFAULT 'pending', oid INTEGER, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`)
+    await dbr(`ALTER TABLE "order" ADD COLUMN IF NOT EXISTS fulfillment VARCHAR(12) DEFAULT 'pickup'`)
+    await dbr(`ALTER TABLE "order" ADD COLUMN IF NOT EXISTS guest_name VARCHAR(100)`)
+    await dbr(`ALTER TABLE "order" ADD COLUMN IF NOT EXISTS guest_email VARCHAR(200)`)
+    await dbr(`ALTER TABLE "order" ADD COLUMN IF NOT EXISTS guest_phone VARCHAR(50)`)
+    await dbr(`ALTER TABLE "order" ADD COLUMN IF NOT EXISTS prid INTEGER`)
+  } catch(e) { console.error('Migration error:', e.message) }
+}
+
 // ─── CLOUDINARY ───────────────────────────────────────────────────────────────
 function initCloudinary() {
   cloudinary.config({
@@ -2007,6 +2044,40 @@ async function route(method, segments, body, headers, event) {
           await dbr('INSERT INTO process_run_item (prid,rid,qty) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING',
             [prid, it.rid, it.qty||1])
         }
+
+        // Create a Stock order automatically for this run
+        // Calculate ETA = sum of all step durations in this process
+        const totalMins = allSteps.reduce((sum, s) => {
+          const d = Number(s.duration)||0
+          if (s.duration_unit==='hours')   return sum + d*60
+          if (s.duration_unit==='seconds') return sum + d/60
+          return sum + d
+        }, 0)
+        const etaMs = new Date(runData.started_at).getTime() + totalMins*60000
+        const etaTime = new Date(etaMs).toTimeString().slice(0,5)
+
+        // Find the first menu owned by this restaurant to attach the order to
+        const [menu] = await dbq(
+          `SELECT mid FROM menu WHERE owner_uid=$1 AND available=true ORDER BY mid LIMIT 1`,
+          [ownerUid])
+
+        if (menu) {
+          // Create stock order
+          const orderRes = await dbr(
+            `INSERT INTO "order" (owner_uid, mid, pickup, fulfillment, status, prid, walkin_name)
+             VALUES ($1,$2,true,'stock','Preparing',$3,'Stock order') RETURNING oid`,
+            [ownerUid, menu.mid, prid])
+          const oid = orderRes.rows[0].oid
+
+          // Add order items
+          for (const it of run_items) {
+            const [recipe] = await dbq('SELECT price FROM recipe WHERE rid=$1', [it.rid])
+            await dbr(
+              `INSERT INTO order_item (oid, rid, qty, price) VALUES ($1,$2,$3,$4)
+               ON CONFLICT DO NOTHING`,
+              [oid, it.rid, it.qty||1, recipe?.price||0])
+          }
+        }
       }
 
       return [201, { ...runData, steps: allSteps, warnings }]
@@ -2157,14 +2228,27 @@ async function route(method, segments, body, headers, event) {
       return [200, run]
     }
 
+    // Helper: sync order status when process run status changes
+    const syncOrderStatus = async (prid, runStatus) => {
+      const orderStatus =
+        runStatus === 'in_progress' || runStatus === 'on_hold' ? 'Preparing' :
+        runStatus === 'completed' ? 'Done' :
+        runStatus === 'cancelled' ? 'Declined' : null
+      if (orderStatus) {
+        await dbr(
+          `UPDATE "order" SET status=$1 WHERE prid=$2`,
+          [orderStatus, prid])
+      }
+    }
+
     // POST /process-runs/:prid/pause
     if (r1 && r2 === 'pause' && method === 'POST') {
       const [run] = await dbq('SELECT * FROM process_run WHERE prid=$1 AND owner_uid=$2', [r1, ownerUid])
       if (!run) return [404, { error: 'Not found' }]
       if (run.status !== 'in_progress') return [400, { error: 'Can only pause an in-progress run' }]
       await dbr('UPDATE process_run SET status=$1, held_at=NOW() WHERE prid=$2', ['on_hold', r1])
-      // Also pause any in-progress steps
       await dbr(`UPDATE process_run_step SET status='on_hold' WHERE prid=$1 AND status='in_progress'`, [r1])
+      await syncOrderStatus(r1, 'on_hold')
       return [200, await fetchRun(r1)]
     }
 
@@ -2173,13 +2257,13 @@ async function route(method, segments, body, headers, event) {
       const [run] = await dbq('SELECT * FROM process_run WHERE prid=$1 AND owner_uid=$2', [r1, ownerUid])
       if (!run) return [404, { error: 'Not found' }]
       if (run.status !== 'on_hold') return [400, { error: 'Can only resume an on-hold run' }]
-      // Accumulate hold time
       const holdSecs = run.held_at
         ? Math.floor((Date.now() - new Date(run.held_at).getTime()) / 1000) : 0
       await dbr(
         'UPDATE process_run SET status=$1, held_at=NULL, hold_secs=hold_secs+$2 WHERE prid=$3',
         ['in_progress', holdSecs, r1])
       await dbr(`UPDATE process_run_step SET status='in_progress' WHERE prid=$1 AND status='on_hold'`, [r1])
+      await syncOrderStatus(r1, 'in_progress')
       return [200, await fetchRun(r1)]
     }
 
@@ -2190,6 +2274,7 @@ async function route(method, segments, body, headers, event) {
       if (['cancelled','completed'].includes(run.status)) return [400, { error: 'Already finished' }]
       await dbr('UPDATE process_run SET status=$1, completed_at=NOW() WHERE prid=$2', ['cancelled', r1])
       await dbr(`UPDATE process_run_step SET status='skipped' WHERE prid=$1 AND status IN ('pending','in_progress','on_hold')`, [r1])
+      await syncOrderStatus(r1, 'cancelled')
       return [200, await fetchRun(r1)]
     }
 
@@ -2221,6 +2306,7 @@ async function route(method, segments, body, headers, event) {
         `SELECT psrid FROM process_run_step WHERE prid=$1 AND status NOT IN ('completed','skipped')`, [r1])
       if (!remaining.length) {
         await dbr('UPDATE process_run SET status=$1, completed_at=NOW() WHERE prid=$2', ['completed', r1])
+        await syncOrderStatus(r1, 'completed')
       } else {
         // Activate dependent steps whose predecessor just completed
         await activateDependentSteps(r1, psrid)
@@ -3211,6 +3297,9 @@ export const handler = async (event) => {
       'Access-Control-Allow-Headers': 'Content-Type,Authorization',
     }, body: '' }
   }
+
+  // Ensure all new columns/tables exist (runs once per cold start)
+  await ensureMigrations()
 
   const raw = event.path.replace('/.netlify/functions/api', '').replace('/api', '')
   const segments = raw.split('/').filter(Boolean)

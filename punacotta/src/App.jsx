@@ -2360,7 +2360,8 @@ function NewOrderModal({
   const deliveryAddress = !pickup ? (addrMode==="customer" ? customerAddr : otherAddr) : null;
 
   const canPlaceMain = items.length > 0 && mid && (
-    pickup ||
+    pickup === null ||  // Stock — no customer/address needed
+    pickup === true  ||  // Pickup
     (!pickup && addrMode==="customer" && customerAddr) ||
     (!pickup && addrMode==="other")
   );
@@ -2450,7 +2451,8 @@ function NewOrderModal({
             </div>
           </div>
 
-          {/* 2. Customer */}
+          {/* 2. Customer — hidden for Stock orders */}
+          {pickup !== null && (
           <div>
             <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:6 }}>
               Customer {!pickup && addrMode==="customer" && <span style={{color:G.caramel}}>*</span>}
@@ -2487,9 +2489,10 @@ function NewOrderModal({
               </div>
             )}
           </div>
+          )}
 
-          {/* 3. Delivery address (only when delivery selected) */}
-          {!pickup && (
+          {/* 3. Delivery address — only when Delivery selected */}
+          {pickup === false && (
             <div>
               <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:8 }}>Delivery address <span style={{color:G.caramel}}>*</span></label>
               <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
@@ -2883,6 +2886,7 @@ function OrdersManufPage({
                       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", borderTop:`1px solid ${G.border}`, paddingTop:8 }}>
                         <span style={{ fontWeight:700, color:G.caramel }}>{(o.items||[]).reduce((s,it)=>s+it.qty*it.price,0)} AMD</span>
                         <span style={{ fontSize:11, color:G.muted }}>{o.fulfillment==='stock'?tl("Stock"):o.pickup?tl("Pickup (free)"):tl("Delivery")}</span>
+                        {o.prid&&<span style={{ fontSize:10, padding:"1px 6px", borderRadius:10, background:`${G.caramel}18`, color:G.caramel, fontFamily:G.mono }}>⚙️ Run #{o.prid}</span>}
                       </div>
                       {(cfg.next && !(o.status==="Done" && o.allNonDeliverable))&&(
                         <div style={{ display:"flex", gap:4, marginTop:8 }}>
