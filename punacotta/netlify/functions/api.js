@@ -284,6 +284,9 @@ async function route(method, segments, body, headers, event) {
     }
 
     if (method === 'PATCH') {
+      const { first_name, last_name, phone, street_address, city, zip,
+              business_name, logo_url, logo_cloudinary_id,
+              lat, lng, address_display } = body
 
       // Delete old Cloudinary image if replacing
       if (logo_cloudinary_id && user.logo_cloudinary_id && logo_cloudinary_id !== user.logo_cloudinary_id) {

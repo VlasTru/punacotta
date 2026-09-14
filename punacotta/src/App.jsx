@@ -3218,7 +3218,7 @@ function GeneralPage({ user, setUser, toast }) {
   if (loading) return <Page title="General"><Spinner/></Page>;
 
   return (
-    <Page title="General" actions={<Btn onClick={save} loading={saving}>{tl('Saved')||'Save'}</Btn>}>
+    <Page title="General" actions={<Btn onClick={save} loading={saving}>Save</Btn>}>
 
       {/* Branding */}
       <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,padding:24,marginBottom:16}}>
@@ -3330,7 +3330,6 @@ function GeneralPage({ user, setUser, toast }) {
         </div>
       </div>
 
-      <Btn onClick={save} loading={saving} size="lg">Save changes</Btn>
     </Page>
   );
 }
@@ -4617,8 +4616,16 @@ function BoardOfArrivals({ toast }) {
     <div style={{minHeight:"100vh",background:G.cream,fontFamily:G.mono}}>
       {/* Header */}
       <div style={{background:G.white,borderBottom:`1px solid ${G.border}`,padding:"0 24px",height:56,display:"flex",alignItems:"center",gap:16}}>
-        <span style={{fontFamily:G.font,fontSize:20,fontWeight:700,color:G.caramel,fontStyle:"italic"}}>Pun&Cotta</span>
-        <span style={{fontSize:14,color:G.muted}}>Board of Arrivals</span>
+        {/* tanelu logo — same as floating balloon */}
+        <span style={{display:"flex",alignItems:"center",gap:5}}>
+          <span style={{fontFamily:"Georgia, serif",fontSize:20,fontWeight:600,
+            color:G.caramel,letterSpacing:"-0.3px",lineHeight:1}}>tanelu</span>
+          <svg width="10" height="14" viewBox="0 0 12 16" fill="none" style={{display:"block",marginBottom:1}}>
+            <rect x="0.5" y="0.5" width="11" height="4" fill={G.caramel}/>
+            <circle cx="6" cy="11" r="4" fill={G.caramel}/>
+          </svg>
+        </span>
+        <span style={{fontSize:14,color:G.muted}}>{boaTl("Board of Arrivals")}</span>
         <button onClick={load} style={{marginLeft:"auto",background:"none",border:`1px solid ${G.border}`,borderRadius:7,cursor:"pointer",padding:"5px 12px",fontSize:12,color:G.muted}}>↻ {boaTl("Refresh")||"Refresh"}</button>
         <button onClick={()=>{ const nl=boaLang==='en'?'ru':'en'; setBoaLang(nl); localStorage.setItem('lang',nl); }}
           style={{background:"none",border:`1px solid ${G.border}`,borderRadius:7,cursor:"pointer",padding:"5px 10px",fontSize:12,color:G.muted}}>
