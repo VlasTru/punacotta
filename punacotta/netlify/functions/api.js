@@ -56,6 +56,13 @@ async function ensureMigrations() {
     await dbr(`ALTER TABLE "order" ADD COLUMN IF NOT EXISTS guest_email VARCHAR(200)`)
     await dbr(`ALTER TABLE "order" ADD COLUMN IF NOT EXISTS guest_phone VARCHAR(50)`)
     await dbr(`ALTER TABLE "order" ADD COLUMN IF NOT EXISTS prid INTEGER`)
+    // Phase 1: step-level progress management
+    await dbr(`ALTER TABLE process_run_step ADD COLUMN IF NOT EXISTS actual_started_at TIMESTAMPTZ`)
+    await dbr(`ALTER TABLE process_run_step ADD COLUMN IF NOT EXISTS actual_completed_at TIMESTAMPTZ`)
+    await dbr(`ALTER TABLE process_run_step ADD COLUMN IF NOT EXISTS paused_at TIMESTAMPTZ`)
+    await dbr(`ALTER TABLE process_run_step ADD COLUMN IF NOT EXISTS elapsed_secs INTEGER NOT NULL DEFAULT 0`)
+    await dbr(`ALTER TABLE process_run_step ADD COLUMN IF NOT EXISTS delay_reason TEXT`)
+    await dbr(`ALTER TABLE process_run_step ADD COLUMN IF NOT EXISTS is_delayed BOOLEAN NOT NULL DEFAULT false`)
   } catch(e) { console.error('Migration error:', e.message) }
 }
 
@@ -2201,7 +2208,7 @@ async function route(method, segments, body, headers, event) {
       if (!run) return null
       const steps = await dbq(
         `SELECT prs.*, ps.seq, ps.duration, ps.duration_unit, ps.dep_type, ps.dep_psid,
-                s.name AS skill_name, s.color, s.dep_skid,
+                s.name AS skill_name, s.color, s.skid,
                 u.first_name, u.last_name
          FROM process_run_step prs
          JOIN process_skill ps ON ps.psid=prs.psid
@@ -2294,32 +2301,94 @@ async function route(method, segments, body, headers, event) {
       const [step] = await dbq('SELECT * FROM process_run_step WHERE psrid=$1 AND prid=$2', [psrid, r1])
       if (!step) return [404, { error: 'Step not found' }]
       if (step.status !== 'pending') return [400, { error: 'Step is not pending' }]
-      await dbr('UPDATE process_run_step SET status=$1, started_at=NOW(), uid=$2 WHERE psrid=$3',
-        ['in_progress', user.uid, psrid])
-      // Check if this completes all steps → auto-complete run
-      const pending = await dbq(
-        `SELECT psrid FROM process_run_step WHERE prid=$1 AND status IN ('pending')`, [r1])
-      if (!pending.length) {
-        // Notify next step employee if dep type allows
-        // (simplified: just check if any pending steps remain after this one)
-      }
+      await dbr(
+        `UPDATE process_run_step
+         SET status='in_progress', started_at=NOW(), actual_started_at=NOW(), uid=$1
+         WHERE psrid=$2`,
+        [user.uid, psrid])
+      return [200, await fetchRun(r1)]
+    }
+
+    // POST /process-runs/:prid/steps/:psrid/pause
+    if (r1 && r2 === 'steps' && segments[3] && segments[4] === 'pause' && method === 'POST') {
+      const psrid = segments[3]
+      const [step] = await dbq('SELECT * FROM process_run_step WHERE psrid=$1 AND prid=$2', [psrid, r1])
+      if (!step) return [404, { error: 'Step not found' }]
+      if (step.status !== 'in_progress') return [400, { error: 'Step is not in progress' }]
+      // Accumulate elapsed seconds since last start
+      const addSecs = step.actual_started_at
+        ? Math.floor((Date.now() - new Date(step.actual_started_at).getTime()) / 1000)
+        : 0
+      await dbr(
+        `UPDATE process_run_step
+         SET status='on_hold', paused_at=NOW(), elapsed_secs=elapsed_secs+$1
+         WHERE psrid=$2`,
+        [addSecs, psrid])
+      return [200, await fetchRun(r1)]
+    }
+
+    // POST /process-runs/:prid/steps/:psrid/resume
+    if (r1 && r2 === 'steps' && segments[3] && segments[4] === 'resume' && method === 'POST') {
+      const psrid = segments[3]
+      const [step] = await dbq('SELECT * FROM process_run_step WHERE psrid=$1 AND prid=$2', [psrid, r1])
+      if (!step) return [404, { error: 'Step not found' }]
+      if (step.status !== 'on_hold') return [400, { error: 'Step is not on hold' }]
+      await dbr(
+        `UPDATE process_run_step
+         SET status='in_progress', actual_started_at=NOW(), paused_at=NULL
+         WHERE psrid=$2`,
+        [psrid])
       return [200, await fetchRun(r1)]
     }
 
     // POST /process-runs/:prid/steps/:psrid/complete
     if (r1 && r2 === 'steps' && segments[3] && segments[4] === 'complete' && method === 'POST') {
       const psrid = segments[3]
-      await dbr('UPDATE process_run_step SET status=$1, completed_at=NOW() WHERE psrid=$2 AND prid=$3',
-        ['completed', psrid, r1])
-      // Check if all steps completed → complete the run
+      const [step] = await dbq('SELECT * FROM process_run_step WHERE psrid=$1 AND prid=$2', [psrid, r1])
+      if (!step) return [404, { error: 'Step not found' }]
+      // Add elapsed from last start if currently running
+      const addSecs = (step.status === 'in_progress' && step.actual_started_at)
+        ? Math.floor((Date.now() - new Date(step.actual_started_at).getTime()) / 1000)
+        : 0
+      await dbr(
+        `UPDATE process_run_step
+         SET status='completed', actual_completed_at=NOW(), completed_at=NOW(),
+             elapsed_secs=elapsed_secs+$1
+         WHERE psrid=$2 AND prid=$3`,
+        [addSecs, psrid, r1])
+      // Check if all steps done → complete the run
       const remaining = await dbq(
         `SELECT psrid FROM process_run_step WHERE prid=$1 AND status NOT IN ('completed','skipped')`, [r1])
       if (!remaining.length) {
         await dbr('UPDATE process_run SET status=$1, completed_at=NOW() WHERE prid=$2', ['completed', r1])
         await syncOrderStatus(r1, 'completed')
       } else {
-        // Activate dependent steps whose predecessor just completed
         await activateDependentSteps(r1, psrid)
+      }
+      return [200, await fetchRun(r1)]
+    }
+
+    // POST /process-runs/:prid/steps/:psrid/skip
+    if (r1 && r2 === 'steps' && segments[3] && segments[4] === 'skip' && method === 'POST') {
+      const psrid = segments[3]
+      const { delay_reason } = body || {}
+      const [step] = await dbq('SELECT * FROM process_run_step WHERE psrid=$1 AND prid=$2', [psrid, r1])
+      if (!step) return [404, { error: 'Step not found' }]
+      if (['completed','skipped'].includes(step.status)) return [400, { error: 'Step already finished' }]
+      await dbr(
+        `UPDATE process_run_step
+         SET status='skipped', actual_completed_at=NOW(),
+             delay_reason=$1, is_delayed=true
+         WHERE psrid=$2 AND prid=$3`,
+        [delay_reason || null, psrid, r1])
+      // Activate next steps that were waiting on this one
+      await activateDependentSteps(r1, psrid)
+      // Check if all steps done now
+      const remaining = await dbq(
+        `SELECT psrid FROM process_run_step WHERE prid=$1 AND status NOT IN ('completed','skipped')`, [r1])
+      if (!remaining.length) {
+        await dbr('UPDATE process_run SET status=$1, completed_at=NOW() WHERE prid=$2', ['completed', r1])
+        await syncOrderStatus(r1, 'completed')
       }
       return [200, await fetchRun(r1)]
     }

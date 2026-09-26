@@ -6138,8 +6138,194 @@ function RolesPage({ roles, skills, setRoles, setSkills, createSkill, toast, onB
   );
 }
 
+// ─── RUN DETAIL SIDEBAR ───────────────────────────────────────────────────────
+function RunDetailSidebar({ run, user, onClose, onRunUpdated, toast }) {
+  const [stepAction, setStepAction] = useState(null); // {psrid, action}
+  const [skipReason, setSkipReason] = useState("");
+  const [showSkipFor, setShowSkipFor] = useState(null); // psrid
+
+  if (!run) return null;
+
+  const steps = run.steps || [];
+  const STATUS_COLOR = {
+    pending:"#94a3b8", in_progress:G.caramel, on_hold:"#eab308",
+    completed:G.green, skipped:G.muted,
+  };
+  const STATUS_LABEL = {
+    pending:"Pending", in_progress:"In progress", on_hold:"On hold",
+    completed:"Done", skipped:"Skipped",
+  };
+
+  const fmtElapsed = secs => {
+    if (!secs) return "—";
+    const h = Math.floor(secs/3600), m = Math.floor((secs%3600)/60), s = secs%60;
+    if (h>0) return `${h}h ${m}m`;
+    if (m>0) return `${m}m ${s}s`;
+    return `${s}s`;
+  };
+
+  // Determine which actions a user can take on a step
+  const canAct = step => {
+    if (run.status === "cancelled" || run.status === "completed") return false;
+    if (user?.is_manufacturer) return true; // Restaurant can manage any step
+    // Employee: only steps assigned to them
+    return step.uid === user?.uid;
+  };
+
+  const doStepAction = async (psrid, action, extra) => {
+    setStepAction({psrid, action});
+    try {
+      let updated;
+      if (action === "start")    updated = await api.startStep(run.prid, psrid);
+      if (action === "pause")    updated = await api.pauseStep(run.prid, psrid);
+      if (action === "resume")   updated = await api.resumeStep(run.prid, psrid);
+      if (action === "complete") updated = await api.completeStep(run.prid, psrid);
+      if (action === "skip")     updated = await api.skipStep(run.prid, psrid, extra);
+      onRunUpdated(updated);
+    } catch(e){ toast(e.message, "error"); } finally { setStepAction(null); }
+  };
+
+  const handleSkip = psrid => {
+    doStepAction(psrid, "skip", { delay_reason: skipReason||undefined });
+    setShowSkipFor(null); setSkipReason("");
+  };
+
+  const runStatusColor = { in_progress:G.caramel, on_hold:"#eab308", completed:G.green, cancelled:G.red };
+  const col = runStatusColor[run.status] || G.muted;
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.35)",zIndex:1400}}/>
+      {/* Panel */}
+      <div style={{
+        position:"fixed",top:0,right:0,bottom:0,width:420,maxWidth:"100vw",
+        background:G.cream,boxShadow:"-4px 0 32px rgba(44,24,16,0.18)",
+        zIndex:1401,display:"flex",flexDirection:"column",overflowY:"hidden",
+      }}>
+        {/* Header */}
+        <div style={{padding:"20px 24px 16px",borderBottom:`1px solid ${G.border}`,flexShrink:0}}>
+          <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8}}>
+            <div>
+              <h2 style={{fontFamily:G.font,fontSize:20,color:G.dark,margin:"0 0 6px"}}>{run.process_name}</h2>
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                <span style={{fontSize:12,padding:"3px 10px",borderRadius:20,background:`${col}20`,color:col,fontWeight:700}}>
+                  {run.status.replace("_"," ")}
+                </span>
+                {run.started_at&&(
+                  <span style={{fontSize:12,color:G.muted}}>
+                    Started {new Date(run.started_at).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}
+                  </span>
+                )}
+              </div>
+            </div>
+            <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:22,lineHeight:1,padding:4,flexShrink:0}}>×</button>
+          </div>
+        </div>
+
+        {/* Steps list */}
+        <div style={{flex:1,overflowY:"auto",padding:"16px 24px"}}>
+          <p style={{fontSize:12,color:G.muted,marginBottom:12,textTransform:"uppercase",letterSpacing:0.8,fontWeight:600}}>
+            Steps — {steps.filter(s=>s.status==="completed").length}/{steps.length} done
+          </p>
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {steps.map((step,i)=>{
+              const sc = STATUS_COLOR[step.status]||G.muted;
+              const busy = stepAction?.psrid===step.psrid;
+              const actable = canAct(step);
+              const isSkipOpen = showSkipFor===step.psrid;
+
+              return (
+                <div key={step.psrid} style={{
+                  background:G.white,borderRadius:12,border:`1px solid ${G.border}`,
+                  padding:"12px 14px",opacity:step.status==="skipped"?0.55:1,
+                }}>
+                  {/* Row 1: seq + skill name + status badge */}
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                    <span style={{
+                      width:24,height:24,borderRadius:"50%",background:`${sc}22`,
+                      color:sc,fontSize:11,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,
+                    }}>{i+1}</span>
+                    <span style={{flex:1,fontSize:14,fontWeight:600,color:G.dark}}>{step.skill_name}</span>
+                    <span style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:`${sc}18`,color:sc,fontWeight:600,whiteSpace:"nowrap"}}>
+                      {STATUS_LABEL[step.status]||step.status}
+                    </span>
+                  </div>
+
+                  {/* Row 2: assignee + duration + elapsed */}
+                  <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:actable&&step.status!=="completed"&&step.status!=="skipped"?10:0}}>
+                    {(step.first_name||step.last_name) && (
+                      <span style={{fontSize:12,color:G.muted}}>
+                        👤 {[step.first_name,step.last_name].filter(Boolean).join(" ")}
+                      </span>
+                    )}
+                    {step.duration && (
+                      <span style={{fontSize:12,color:G.muted}}>
+                        ⏱ {step.duration} {step.duration_unit||"min"}
+                      </span>
+                    )}
+                    {step.elapsed_secs>0 && (
+                      <span style={{fontSize:12,color:G.caramel,fontWeight:600}}>
+                        Active: {fmtElapsed(step.elapsed_secs)}
+                      </span>
+                    )}
+                    {step.is_delayed && (
+                      <span style={{fontSize:11,color:G.red,fontWeight:600}}>⚠ Delayed</span>
+                    )}
+                    {step.delay_reason && (
+                      <span style={{fontSize:11,color:G.muted,fontStyle:"italic"}}>"{step.delay_reason}"</span>
+                    )}
+                  </div>
+
+                  {/* Action buttons */}
+                  {actable && !["completed","skipped"].includes(step.status) && !isSkipOpen && (
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                      {step.status==="pending" && (
+                        <Btn size="sm" onClick={()=>doStepAction(step.psrid,"start")} loading={busy}>▶ Start</Btn>
+                      )}
+                      {step.status==="in_progress" && (<>
+                        <Btn size="sm" variant="secondary" onClick={()=>doStepAction(step.psrid,"pause")} loading={busy}>⏸ Pause</Btn>
+                        <Btn size="sm" onClick={()=>doStepAction(step.psrid,"complete")} loading={busy}>✓ Complete</Btn>
+                      </>)}
+                      {step.status==="on_hold" && (<>
+                        <Btn size="sm" onClick={()=>doStepAction(step.psrid,"resume")} loading={busy}>▶ Resume</Btn>
+                        <Btn size="sm" onClick={()=>doStepAction(step.psrid,"complete")} loading={busy}>✓ Complete</Btn>
+                      </>)}
+                      <button onClick={()=>setShowSkipFor(step.psrid)}
+                        style={{padding:"4px 12px",borderRadius:6,border:`1px solid ${G.border}`,background:"none",
+                          fontSize:12,fontFamily:G.mono,color:G.muted,cursor:"pointer"}}>
+                        Skip
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Skip reason form */}
+                  {isSkipOpen && (
+                    <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:6}}>
+                      <input value={skipReason} onChange={e=>setSkipReason(e.target.value)}
+                        placeholder="Reason for skipping (optional)"
+                        style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none",width:"100%",boxSizing:"border-box"}}/>
+                      <div style={{display:"flex",gap:6}}>
+                        <Btn size="sm" variant="danger" onClick={()=>handleSkip(step.psrid)} loading={busy}>⚠ Skip step</Btn>
+                        <button onClick={()=>{setShowSkipFor(null);setSkipReason("");}}
+                          style={{padding:"4px 12px",borderRadius:6,border:`1px solid ${G.border}`,background:"none",fontSize:12,fontFamily:G.mono,color:G.muted,cursor:"pointer"}}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ─── EXECUTIONS CALENDAR ──────────────────────────────────────────────────────
-function ExecutionsCalendar({ runs, onAction }) {
+function ExecutionsCalendar({ runs, onAction, onOpenDetail }) {
   if (!runs || !runs.length) return null;
 
   const RUN_COLS = { in_progress:G.caramel, on_hold:"#eab308", completed:G.green, cancelled:G.red };
@@ -6226,7 +6412,10 @@ function ExecutionsCalendar({ runs, onAction }) {
             <div key={run.prid} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
               padding:"10px 14px",background:G.sand,borderRadius:8}}>
               <div style={{display:"flex",alignItems:"center",gap:10}}>
-                <span style={{fontWeight:700,fontSize:14,color:G.dark}}>{run.process_name}</span>
+                <button onClick={()=>onOpenDetail&&onOpenDetail(run)}
+                  style={{fontWeight:700,fontSize:14,color:G.caramel,background:"none",border:"none",cursor:"pointer",padding:0,fontFamily:G.mono,textDecoration:"underline",textDecorationColor:`${G.caramel}50`}}>
+                  {run.process_name}
+                </button>
                 <span style={{fontSize:12,padding:"2px 10px",borderRadius:20,background:`${col}20`,color:col,fontWeight:600}}>
                   {run.status.replace("_"," ")}
                 </span>
@@ -6317,6 +6506,7 @@ function ProcessesPage({ user, setPage, toast }) {
   const [startSaving, setStartSaving] = useState(false);
   const [execPeriod, setExecPeriod] = useState("week"); // "day" | "week"
   const [execDate,   setExecDate]   = useState(() => new Date().toISOString().slice(0,10));
+  const [selectedRun, setSelectedRun] = useState(null); // run with steps for sidebar
 
   const load = useCallback(async()=>{
     setLoading(true);
@@ -6371,7 +6561,21 @@ function ProcessesPage({ user, setPage, toast }) {
       const fns = { pause:api.pauseRun, resume:api.resumeRun, stop:api.stopRun };
       const updated = await fns[action](prid);
       setRuns(p=>p.map(r=>r.prid===updated.prid?updated:r));
+      // Keep sidebar in sync
+      if (selectedRun?.prid===updated.prid) setSelectedRun(updated);
     } catch(e){ toast(e.message,"error"); }
+  };
+
+  const openRunDetail = async run => {
+    try {
+      const full = await api.getProcessRun(run.prid);
+      setSelectedRun(full);
+    } catch(e){ toast(e.message,"error"); }
+  };
+
+  const handleStepUpdated = updated => {
+    setRuns(p=>p.map(r=>r.prid===updated.prid?{...r, ...updated}:r));
+    setSelectedRun(updated);
   };
 
 
@@ -6843,10 +7047,20 @@ function ProcessesPage({ user, setPage, toast }) {
                 : "No processes in this period."}
             </p>
           );
-          return <ExecutionsCalendar runs={filtered} onAction={handleRunAction}/>;
+          return <ExecutionsCalendar runs={filtered} onAction={handleRunAction} onOpenDetail={openRunDetail}/>;
         })()}
       </div>
 
+      {/* ── Run detail sidebar */}
+      {selectedRun&&(
+        <RunDetailSidebar
+          run={selectedRun}
+          user={user}
+          onClose={()=>setSelectedRun(null)}
+          onRunUpdated={handleStepUpdated}
+          toast={toast}
+        />
+      )}
 
       {/* ── Start validation dialog ───────────────────────────────────────────── */}
       {startDialog&&(
