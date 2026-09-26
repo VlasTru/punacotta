@@ -1714,6 +1714,7 @@ async function route(method, segments, body, headers, event) {
     if (method === 'POST') {
       const { name, duration, duration_unit, dep_type, dep_skid } = body
       if (!name?.trim()) return [400, { error: 'Skill name required' }]
+      if (duration != null && Number(duration) < 0) return [400, { error: 'Duration may not be negative' }]
       const res = await dbr(
         `INSERT INTO skill (owner_uid,name,duration,duration_unit,dep_type,dep_skid)
          VALUES ($1,$2,$3,$4,$5,$6)
@@ -1723,6 +1724,7 @@ async function route(method, segments, body, headers, event) {
     }
     if (r1 && method === 'PATCH') {
       const { name, duration, duration_unit, dep_type, dep_skid } = body
+      if (duration != null && Number(duration) < 0) return [400, { error: 'Duration may not be negative' }]
       const sets = [], vals = [r1]
       if (name          !== undefined) { sets.push(`name=$${vals.length+1}`);          vals.push(name.trim()) }
       if (duration      !== undefined) { sets.push(`duration=$${vals.length+1}`);      vals.push(duration||null) }
@@ -1803,6 +1805,11 @@ async function route(method, segments, body, headers, event) {
       if (!proc) return [404, { error: 'Not found' }]
       if (name !== undefined) await dbr('UPDATE process SET name=$1 WHERE procid=$2', [name.trim(), r1])
       if (Array.isArray(skills)) {
+        // Validate durations before touching the DB
+        for (const s of skills) {
+          if (s.duration != null && Number(s.duration) < 0)
+            return [400, { error: `Duration for step "${s.name||s.skid}" may not be negative` }]
+        }
         await dbr('DELETE FROM process_skill WHERE procid=$1', [r1])
         // First pass: insert all rows to get psids
         const inserted = []

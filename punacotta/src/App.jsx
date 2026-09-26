@@ -5534,7 +5534,7 @@ function SkillEditDialog({ skill, allSkills, onSave, onClose }) {
         <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
           <Input label="Name" value={form.name} onChange={v=>set("name",v)} required />
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-            <Input label="Duration" type="number" value={String(form.duration)} onChange={v=>set("duration",v)} placeholder="e.g. 30" />
+            <Input label="Duration" type="number" min="0" value={String(form.duration)} onChange={v=>set("duration", Math.max(0, parseFloat(v)||0))} placeholder="e.g. 30" />
             <div>
               <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Unit</label>
               <select value={form.duration_unit} onChange={e=>set("duration_unit",e.target.value)}
@@ -6728,8 +6728,8 @@ function ProcessesPage({ user, setPage, toast }) {
                       </td>
                       <td style={{padding:"8px 12px"}}>
                         <div style={{display:"flex",gap:5,alignItems:"center"}}>
-                          <input type="number" value={sk.duration||""} onChange={e=>updateRow(i,"duration",e.target.value)} placeholder="0"
-                            style={{width:52,padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}/>
+                          <input type="number" min="0" value={sk.duration||""} onChange={e=>updateRow(i,"duration", Math.max(0, parseFloat(e.target.value)||0))} placeholder="0"
+                            style={{width:52,padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",borderColor:Number(sk.duration)<0?G.red:G.border}}/>
                           <select value={sk.duration_unit||"minutes"} onChange={e=>updateRow(i,"duration_unit",e.target.value)}
                             style={{padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
                             {DUR_UNITS.map(u=><option key={u.value} value={u.value}>{u.label}</option>)}
