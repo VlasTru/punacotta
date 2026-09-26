@@ -270,6 +270,8 @@ const LangContext = createContext('en');
 function useLangContext() { return useContext(LangContext); }
 
 const CURRENCIES = ["AMD","RUR","USD","EUR"];
+const CUTOFF_HOURS = Array.from({length:48},(_,i)=>`${String(Math.floor(i/2)).padStart(2,"0")}:${i%2===0?"00":"30"}`);
+const DELIVERY_DAYS = [0,1,2,3,4,5,6,7,10,14,21,30];
 
 // Unit submultiple config — read-only, not editable by Restaurant
 const UNIT_META = {
@@ -413,7 +415,26 @@ function Badge({ children, color, bg }) {
 }
 
 function Spinner() {
-  return <div style={{ width:32, height:32, border:`3px solid ${G.border}`, borderTopColor:G.caramel, borderRadius:"50%", animation:"spin 0.8s linear infinite", margin:"40px auto" }} />;
+  return (
+    <div style={{ display:"flex", justifyContent:"center", alignItems:"center", padding:"40px 0" }}>
+      <svg width="44" height="44" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <style>{`
+          @keyframes wink {
+            0%,100% { transform: scaleX(1); }
+            40%      { transform: scaleX(0.08); }
+            55%      { transform: scaleX(1.15); }
+            70%      { transform: scaleX(1); }
+          }
+        `}</style>
+        {/* Static rect — tanelu logo rectangle */}
+        <rect x="2" y="2" width="40" height="40" rx="10" fill={G.caramel} />
+        {/* Winking circle (eye) */}
+        <g style={{ transformOrigin:"22px 22px", animation:"wink 1.6s ease-in-out infinite" }}>
+          <circle cx="22" cy="22" r="10" fill={G.cream} />
+        </g>
+      </svg>
+    </div>
+  );
 }
 
 // ─── IMAGE UPLOADER + CROP ────────────────────────────────────────────────────
@@ -1291,6 +1312,9 @@ function ProductsPage({ toast }) {
   const [editExpiry, setEditExpiry] = useState("");
   const [linkPid, setLinkPid] = useState(null);
   const [linkSid, setLinkSid] = useState(""); const [linkPrice, setLinkPrice] = useState(""); const [linkCurrency, setLinkCurrency] = useState("AMD");
+  const [showNewSupplierInline, setShowNewSupplierInline] = useState(false);
+  const [newSupplierForm, setNewSupplierForm] = useState({name:"",email:"",phone:"",street_address:"",city:"",zip:""});
+  const [savingNewSupplier, setSavingNewSupplier] = useState(false);
   const [stock, setStock]           = useState({}); // pid → qty
   const [wastageMode, setWastageMode] = useState(false);
   const [wastageDeltas, setWastageDeltas] = useState({}); // pid → negative delta
@@ -1357,6 +1381,19 @@ function ProductsPage({ toast }) {
   const unlinkSupplier = async (sid, psid) => {
     try { await api.unlinkSupplierProduct(sid, psid); await load(); toast("Supplier unlinked"); }
     catch(e){ toast(e.message,"error"); }
+  };
+
+  const saveNewSupplierInline = async () => {
+    if (!newSupplierForm.name.trim()) { toast("Name required","error"); return; }
+    setSavingNewSupplier(true);
+    try {
+      const s = await api.createSupplier(newSupplierForm);
+      setSuppliers(p=>[...p,s]);
+      setLinkSid(String(s.sid));
+      setShowNewSupplierInline(false);
+      setNewSupplierForm({name:"",email:"",phone:"",street_address:"",city:"",zip:""});
+      toast(`"${s.name}" created`);
+    } catch(e){ toast(e.message,"error"); } finally{ setSavingNewSupplier(false); }
   };
 
   const openDeleteDialog = async () => {
@@ -1444,17 +1481,37 @@ function ProductsPage({ toast }) {
             </div>
           ))}
           {linkPid===r.pid ? (
-            <div style={{ display:"flex", gap:4, alignItems:"center", flexWrap:"wrap", marginTop:2 }}>
-              <select value={linkSid} onChange={e=>setLinkSid(e.target.value)} style={{padding:"3px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
-                <option value="">Supplier…</option>
-                {suppliers.map(s=><option key={s.sid} value={s.sid}>{s.name}</option>)}
-              </select>
-              <input type="number" value={linkPrice} onChange={e=>setLinkPrice(e.target.value)} placeholder="Price" style={{width:60,padding:"3px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}} />
-              <select value={linkCurrency} onChange={e=>setLinkCurrency(e.target.value)} style={{padding:"3px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
-                {["AMD","USD","EUR","RUR"].map(c=><option key={c}>{c}</option>)}
-              </select>
-              <Btn size="sm" onClick={linkSupplier}>Link</Btn>
-              <button onClick={()=>setLinkPid(null)} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:14}}>×</button>
+            <div style={{ marginTop:4 }}>
+              <div style={{ display:"flex", gap:4, alignItems:"center", flexWrap:"wrap" }}>
+                <select value={linkSid} onChange={e=>{ if(e.target.value==="__new__"){ setShowNewSupplierInline(true); } else { setLinkSid(e.target.value); setShowNewSupplierInline(false); } }}
+                  style={{padding:"3px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
+                  <option value="">Supplier…</option>
+                  {suppliers.map(s=><option key={s.sid} value={s.sid}>{s.name}</option>)}
+                  <option value="__new__">+ New supplier…</option>
+                </select>
+                <input type="number" value={linkPrice} onChange={e=>setLinkPrice(e.target.value)} placeholder="Price" style={{width:60,padding:"3px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}} />
+                <select value={linkCurrency} onChange={e=>setLinkCurrency(e.target.value)} style={{padding:"3px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
+                  {["AMD","USD","EUR","RUR"].map(c=><option key={c}>{c}</option>)}
+                </select>
+                <Btn size="sm" onClick={linkSupplier}>Link</Btn>
+                <button onClick={()=>{setLinkPid(null);setShowNewSupplierInline(false);}} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:14}}>×</button>
+              </div>
+              {showNewSupplierInline&&(
+                <div style={{marginTop:8,padding:12,background:G.sand,borderRadius:8,display:"flex",flexDirection:"column",gap:8}}>
+                  <p style={{fontSize:12,fontWeight:700,color:G.dark,margin:0}}>New Supplier</p>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                    <input placeholder="Name *" value={newSupplierForm.name} onChange={e=>setNewSupplierForm(p=>({...p,name:e.target.value}))} style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none",gridColumn:"1/-1"}}/>
+                    <input placeholder="Email" value={newSupplierForm.email} onChange={e=>setNewSupplierForm(p=>({...p,email:e.target.value}))} style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}/>
+                    <input placeholder="Phone" value={newSupplierForm.phone} onChange={e=>setNewSupplierForm(p=>({...p,phone:e.target.value}))} style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}/>
+                    <input placeholder="Street address" value={newSupplierForm.street_address} onChange={e=>setNewSupplierForm(p=>({...p,street_address:e.target.value}))} style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}/>
+                    <input placeholder="City" value={newSupplierForm.city} onChange={e=>setNewSupplierForm(p=>({...p,city:e.target.value}))} style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}/>
+                  </div>
+                  <div style={{display:"flex",gap:6}}>
+                    <Btn size="sm" onClick={saveNewSupplierInline} loading={savingNewSupplier}>Save supplier</Btn>
+                    <Btn size="sm" variant="ghost" onClick={()=>setShowNewSupplierInline(false)}>Cancel</Btn>
+                  </div>
+                </div>
+              )}
             </div>
           ):(
             <button onClick={()=>{setLinkPid(r.pid);setLinkSid("");setLinkPrice("");}}
@@ -6258,6 +6315,8 @@ function ProcessesPage({ user, setPage, toast }) {
   const [startDialog, setStartDialog] = useState(null);
   // startDialog shape: {proc, step:'items'|'warnings', suggestedItems, selectedItems, warnings}
   const [startSaving, setStartSaving] = useState(false);
+  const [execPeriod, setExecPeriod] = useState("week"); // "day" | "week"
+  const [execDate,   setExecDate]   = useState(() => new Date().toISOString().slice(0,10));
 
   const load = useCallback(async()=>{
     setLoading(true);
@@ -6750,10 +6809,42 @@ function ProcessesPage({ user, setPage, toast }) {
 
       {/* ── Executions calendar ──────────────────────────────────────────────── */}
       <div style={{marginTop:32}}>
-        <h3 style={{fontFamily:G.font,fontSize:18,marginBottom:14,color:G.dark}}>{tl("Executions")}</h3>
-        {runs.length===0 ? (
-          <p style={{fontSize:13,color:G.muted,fontStyle:"italic"}}>No processes have been started yet. Click ▶ Run on any process above to begin.</p>
-        ) : <ExecutionsCalendar runs={runs} onAction={handleRunAction}/>}
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14,flexWrap:"wrap"}}>
+          <h3 style={{fontFamily:G.font,fontSize:18,color:G.dark,margin:0}}>{tl("Executions")}</h3>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginLeft:"auto"}}>
+            <input type="date" value={execDate} onChange={e=>setExecDate(e.target.value)}
+              style={{padding:"5px 10px",borderRadius:7,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",background:G.white,color:G.dark}}/>
+            {["day","week"].map(p=>(
+              <button key={p} onClick={()=>setExecPeriod(p)}
+                style={{padding:"5px 14px",borderRadius:7,border:`1px solid ${execPeriod===p?G.caramel:G.border}`,
+                  background:execPeriod===p?G.caramel:G.white,color:execPeriod===p?G.white:G.dark,
+                  fontSize:13,fontFamily:G.mono,fontWeight:600,cursor:"pointer",transition:"all 0.15s"}}>
+                {p==="day"?"Day":"Week"}
+              </button>
+            ))}
+          </div>
+        </div>
+        {(()=>{
+          const anchor = new Date(execDate+"T00:00:00");
+          const periodStart = anchor.getTime();
+          const periodEnd   = execPeriod==="week"
+            ? periodStart + 7*24*60*60*1000
+            : periodStart + 24*60*60*1000;
+          const filtered = runs.filter(r=>{
+            if (!r.started_at) return false;
+            const s = new Date(r.started_at).getTime();
+            const e = r.completed_at ? new Date(r.completed_at).getTime() : Date.now();
+            return s < periodEnd && e > periodStart;
+          });
+          if (filtered.length===0) return (
+            <p style={{fontSize:13,color:G.muted,fontStyle:"italic"}}>
+              {runs.length===0
+                ? "No processes have been started yet. Click ▶ Run on any process above to begin."
+                : "No processes in this period."}
+            </p>
+          );
+          return <ExecutionsCalendar runs={filtered} onAction={handleRunAction}/>;
+        })()}
       </div>
 
 

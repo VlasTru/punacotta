@@ -1850,6 +1850,9 @@ async function route(method, segments, body, headers, event) {
 
     if (r1 && method === 'DELETE') {
       // process_run_step → process_run → process_skill → process_item → process
+      // Null out order.prid first to avoid FK violation
+      await dbr(`UPDATE "order" SET prid=NULL WHERE prid IN (
+        SELECT prid FROM process_run WHERE procid=$1)`, [r1])
       await dbr(`DELETE FROM process_run_step WHERE prid IN (
         SELECT prid FROM process_run WHERE procid=$1)`, [r1])
       await dbr('DELETE FROM process_run   WHERE procid=$1', [r1])
