@@ -6565,7 +6565,7 @@ function ExecutionsCalendar({ runs, onAction, onOpenDetail }) {
   if (!runs || !runs.length) return null;
 
   const RUN_COLS = { in_progress:G.caramel, on_hold:"#eab308", completed:G.green, cancelled:G.red };
-  const dayMins = 600, labelW = 180, W = 920, chartW = W - labelW - 16;
+  const labelW = 180, W = 920, chartW = W - labelW - 16;
   const barH = 36, gap = 14, rowH = barH + gap;
   const svgH = runs.length * rowH + 40;
 
@@ -6582,7 +6582,19 @@ function ExecutionsCalendar({ runs, onAction, onOpenDetail }) {
     if (!iso) return 0;
     return Math.max(0, (new Date(iso).getTime() - anchorHour) / 60000);
   };
-  const minToX = m => Math.min(chartW, Math.max(0, (m / dayMins) * chartW));
+
+  // Auto-size window: find the latest end time across all runs, pad by 30 min, min 60 min
+  const latestMins = validRuns.reduce((max, r) => {
+    const endMs = r.completed_at ? new Date(r.completed_at).getTime()
+      : r.status === "in_progress" ? Date.now()
+      : new Date(r.started_at).getTime() + 30 * 60000;
+    const m = (endMs - anchorHour) / 60000;
+    return m > max ? m : max;
+  }, 60);
+  const windowMins = Math.ceil((latestMins + 30) / 60) * 60; // round up to whole hour + 30 min buffer
+  const tickInterval = windowMins <= 240 ? 30 : windowMins <= 720 ? 60 : 120;
+
+  const minToX = m => Math.max(0, (m / windowMins) * chartW);
 
   const anchorLabel = new Date(anchorHour).toLocaleTimeString("en-GB", {hour:"2-digit", minute:"2-digit"});
 
@@ -6590,15 +6602,13 @@ function ExecutionsCalendar({ runs, onAction, onOpenDetail }) {
     <div style={{overflowX:"auto", background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:16, marginBottom:12}}>
       <p style={{fontSize:11, color:G.muted, marginBottom:8}}>Timeline from {anchorLabel}</p>
       <svg width={W} height={svgH}>
-        {Array.from({length:21}, (_,i)=>i*30).map(m=>(
+        {Array.from({length: Math.ceil(windowMins / tickInterval) + 1}, (_,i) => i * tickInterval).map(m=>(
           <g key={m}>
             <line x1={labelW+minToX(m)} y1={0} x2={labelW+minToX(m)} y2={svgH}
               stroke={G.border} strokeWidth={m%60===0?1:0.5}/>
-            {m%60===0&&(
-              <text x={labelW+minToX(m)+3} y={12} fontSize={9} fill={G.muted}>
-                {new Date(anchorHour + m*60000).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}
-              </text>
-            )}
+            <text x={labelW+minToX(m)+3} y={12} fontSize={9} fill={G.muted}>
+              {new Date(anchorHour + m*60000).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}
+            </text>
           </g>
         ))}
         {runs.map((run,i)=>{
@@ -7293,6 +7303,17 @@ function ProcessesPage({ user, setPage, toast }) {
         <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14,flexWrap:"wrap"}}>
           <h3 style={{fontFamily:G.font,fontSize:18,color:G.dark,margin:0}}>{tl("Executions")}</h3>
           <div style={{display:"flex",alignItems:"center",gap:8,marginLeft:"auto"}}>
+            {/* ← → navigation */}
+            {[{dir:-1,label:"←"},{dir:1,label:"→"}].map(({dir,label})=>(
+              <button key={dir} onClick={()=>{
+                const d = new Date(execDate+"T00:00:00");
+                d.setDate(d.getDate() + dir * (execPeriod==="week" ? 7 : 1));
+                setExecDate(d.toISOString().slice(0,10));
+              }} style={{padding:"5px 10px",borderRadius:7,border:`1px solid ${G.border}`,background:G.white,
+                color:G.dark,fontSize:14,fontFamily:G.mono,cursor:"pointer",lineHeight:1}}>
+                {label}
+              </button>
+            ))}
             <input type="date" value={execDate} onChange={e=>setExecDate(e.target.value)}
               style={{padding:"5px 10px",borderRadius:7,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",background:G.white,color:G.dark}}/>
             {["day","week"].map(p=>(
