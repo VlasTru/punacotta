@@ -117,7 +117,7 @@ async function enrichUser(user) {
 function safe(u) { const { password_hash, ...r } = u; return r }
 
 // ─── MAIL ─────────────────────────────────────────────────────────────────────
-const BASE_URL = process.env.URL || 'https://punacotta.netlify.app'
+const BASE_URL = process.env.APP_URL || process.env.URL || 'https://tanelu.com'
 
 async function sendMail(to, subject, text, html) {
   // Skip sending to obviously fake/test domains — log instead
