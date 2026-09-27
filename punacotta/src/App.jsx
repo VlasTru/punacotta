@@ -6889,7 +6889,7 @@ function ProcessesPage({ user, setPage, toast }) {
   return (
     <Page title={tl("Processes")} actions={
       <div style={{display:"flex",gap:10}}>
-        {user?.employer_uid && (
+        {user?.employer_uid && !user?.is_manufacturer && (
           <Btn variant="secondary" size="sm" onClick={()=>setPage("processes-emp")}>Executions →</Btn>
         )}
         <Btn size="sm" onClick={openNew}>+ Process</Btn>
@@ -7742,7 +7742,11 @@ function EmployeeProcessesPage({ user, toast, setPage }) {
 
   if (!ownerUid) return (
     <Page title={tl("Processes")}>
-      <p style={{color:G.muted,textAlign:"center",padding:40}}>Not associated with a restaurant.</p>
+      <p style={{color:G.muted,textAlign:"center",padding:40}}>
+        {user?.is_manufacturer
+          ? "Manage and run your processes from the Processes page."
+          : "Not associated with a restaurant."}
+      </p>
     </Page>
   );
 
