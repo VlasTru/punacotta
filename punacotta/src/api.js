@@ -100,6 +100,7 @@ export const api = {
   // Process runs
   startProcess:       (procid,data) => req('POST', `/processes/${procid}/run`, data),
   getProcessRuns:     ()            => req('GET',  '/process-runs'),
+  getProcessRunsWithSteps: ()       => req('GET',  '/process-runs?steps=1'),
   getProcessRun:      (prid)        => req('GET',  `/process-runs/${prid}`),
   pauseRun:           (prid)        => req('POST', `/process-runs/${prid}/pause`),
   resumeRun:          (prid)        => req('POST', `/process-runs/${prid}/resume`),

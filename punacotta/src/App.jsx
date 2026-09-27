@@ -1000,7 +1000,235 @@ function NavSearchBar({ onClick }) {
 }
 
 
-function Nav({ user, page, setPage, logout, lang, setLang }) {
+// ─── NOTIFICATION BELL ────────────────────────────────────────────────────────
+function stepDurationMinutes(step) {
+  const d = step.duration || 0;
+  const u = step.duration_unit || 'minutes';
+  if (u === 'hours') return d * 60;
+  if (u === 'seconds') return d / 60;
+  return d; // minutes default
+}
+
+function useNotifications(user) {
+  // notifs: Map<psrid, { psrid, prid, process_name, step_name, dueAt, type, seenAt }>
+  // type: 'now' | 'overdue' | 'upcoming'
+  const [notifs, setNotifs] = useState(new Map());
+  const stoppedPrids = useRef(new Set());
+
+  const compute = useCallback(async () => {
+    if (!user) return;
+    let runs;
+    try { runs = await api.getProcessRunsWithSteps(); } catch { return; }
+
+    const now = Date.now();
+    setNotifs(prev => {
+      const next = new Map(prev);
+
+      // Wipe notifications for stopped/completed runs
+      for (const run of runs) {
+        if (run.status === 'stopped' || run.status === 'completed') {
+          for (const [psrid, n] of next) {
+            if (n.prid === run.prid) next.delete(psrid);
+          }
+        }
+      }
+
+      const activeRuns = runs.filter(r => r.status === 'running' || r.status === 'paused');
+      for (const run of activeRuns) {
+        if (!run.steps || !Array.isArray(run.steps)) continue;
+        const steps = [...run.steps].sort((a, b) => a.seq - b.seq);
+        const runStart = run.started_at ? new Date(run.started_at).getTime() : now;
+
+        for (let i = 0; i < steps.length; i++) {
+          const step = steps[i];
+          const prevStep = i > 0 ? steps[i - 1] : null;
+
+          if (step.status !== 'pending') continue;
+
+          // Due time = run start + sum of all preceding step durations
+          let dueSumMs = 0;
+          for (let j = 0; j < i; j++) {
+            dueSumMs += stepDurationMinutes(steps[j]) * 60000;
+          }
+          const dueAt = runStart + dueSumMs;
+          const diffMs = dueAt - now;
+
+          // Early warning timing
+          const precedingDurMin = prevStep ? stepDurationMinutes(prevStep) : 999;
+          let earlyWarnMs;
+          if (precedingDurMin <= 1) earlyWarnMs = 0;
+          else if (precedingDurMin <= 5) earlyWarnMs = 60000;
+          else earlyWarnMs = 5 * 60000;
+
+          const psrid = step.psrid;
+          const existing = next.get(psrid);
+
+          let type;
+          if (diffMs < 0) {
+            type = 'overdue'; // was due in the past
+          } else if (diffMs === 0 || diffMs < 30000) {
+            type = 'now';
+          } else if (diffMs <= earlyWarnMs) {
+            type = 'upcoming';
+          } else {
+            // Not yet time to notify — but don't delete if already notified
+            continue;
+          }
+
+          next.set(psrid, {
+            psrid,
+            prid: run.prid,
+            process_name: run.process_name,
+            step_name: step.step_name || step.name || `Step ${step.seq}`,
+            dueAt,
+            type,
+            seenAt: existing?.seenAt || null,
+            addedAt: existing?.addedAt || now,
+          });
+        }
+      }
+      return next;
+    });
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    compute();
+    const interval = setInterval(compute, 30000);
+    return () => clearInterval(interval);
+  }, [user, compute]);
+
+  const dismiss = useCallback(psrid => {
+    setNotifs(prev => { const next = new Map(prev); next.delete(psrid); return next; });
+  }, []);
+
+  const markSeen = useCallback(() => {
+    setNotifs(prev => {
+      const next = new Map(prev);
+      const now2 = Date.now();
+      for (const [k, v] of next) next.set(k, { ...v, seenAt: v.seenAt || now2 });
+      return next;
+    });
+  }, []);
+
+  const unseenCount = useMemo(() => {
+    let n = 0;
+    for (const v of notifs.values()) if (!v.seenAt) n++;
+    return n;
+  }, [notifs]);
+
+  return { notifs, dismiss, markSeen, unseenCount, refresh: compute };
+}
+
+function fmtNotifTime(dueAt, type) {
+  const now = Date.now();
+  if (type === 'now') return null; // text says "now"
+  if (type === 'upcoming') {
+    const diffMs = dueAt - now;
+    const diffMin = Math.ceil(diffMs / 60000);
+    if (diffMin < 60) return `${diffMin}m`;
+    const h = Math.floor(diffMin / 60), m = diffMin % 60;
+    return m ? `${h}h ${m}m` : `${h}h`;
+  }
+  if (type === 'overdue') {
+    const diffMs = now - dueAt;
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 60) return `${diffMin}m`;
+    const h = Math.floor(diffMin / 60), m = diffMin % 60;
+    return m ? `${h}h ${m}m` : `${h}h`;
+  }
+  return null;
+}
+
+function fmtNotifTs(addedAt) {
+  if (!addedAt) return '';
+  const d = new Date(addedAt);
+  const now = new Date();
+  const hm = d.toTimeString().slice(0,5);
+  const today = now.toDateString();
+  const yest = new Date(now - 86400000).toDateString();
+  if (d.toDateString() === today) return `${hm} Today`;
+  if (d.toDateString() === yest) return `${hm} Yesterday`;
+  return `${hm} ${d.toLocaleDateString('en-US',{month:'short',day:'numeric'})}`;
+}
+
+function NotificationBell({ notifs, unseenCount, markSeen, dismiss, refresh }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const toggle = () => {
+    if (!open) markSeen();
+    setOpen(p => !p);
+  };
+
+  const items = [...notifs.values()].sort((a, b) => b.addedAt - a.addedAt);
+  const badge = unseenCount > 9 ? '9+' : unseenCount > 0 ? String(unseenCount) : null;
+
+  const handlePlay = async (n) => {
+    try {
+      await api.startStep(n.prid, n.psrid);
+      dismiss(n.psrid);
+      refresh();
+    } catch(e) {
+      // silent — step might already be started
+    }
+  };
+
+  return (
+    <div ref={ref} style={{ position:'relative', flexShrink:0, marginRight:8 }}>
+      <button onClick={toggle} style={{ position:'relative', background:'none', border:`1px solid ${G.border}`, borderRadius:8, cursor:'pointer', padding:'6px 10px', display:'flex', alignItems:'center', fontSize:18, color:G.muted, lineHeight:1 }}
+        onMouseEnter={e=>e.currentTarget.style.borderColor=G.caramel}
+        onMouseLeave={e=>e.currentTarget.style.borderColor=G.border}>
+        🔔
+        {badge&&(
+          <span style={{ position:'absolute', top:-5, right:-5, background:G.red, color:'#fff', borderRadius:99, fontSize:10, fontFamily:G.mono, fontWeight:700, minWidth:16, height:16, display:'flex', alignItems:'center', justifyContent:'center', padding:'0 3px', lineHeight:1, border:`2px solid ${G.white}` }}>
+            {badge}
+          </span>
+        )}
+      </button>
+      {open&&(
+        <div style={{ position:'fixed', top:66, right:16, width:340, maxHeight:480, overflowY:'auto', background:G.white, border:`1px solid ${G.border}`, borderRadius:12, boxShadow:'0 8px 32px rgba(44,24,16,0.18)', zIndex:500, animation:'fadeIn 0.15s ease' }}>
+          <div style={{ padding:'12px 16px', borderBottom:`1px solid ${G.border}`, fontFamily:G.mono, fontSize:13, fontWeight:600, color:G.dark, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+            <span>Notifications</span>
+            {items.length>0&&<button onClick={()=>{ items.forEach(n=>dismiss(n.psrid)); }} style={{ background:'none', border:'none', cursor:'pointer', fontFamily:G.mono, fontSize:11, color:G.muted }}>Clear all</button>}
+          </div>
+          {items.length===0
+            ? <div style={{ padding:'28px 16px', fontFamily:G.mono, fontSize:13, color:G.muted, textAlign:'center' }}>No notifications</div>
+            : items.map(n => {
+                const timeStr = fmtNotifTime(n.dueAt, n.type);
+                let text;
+                if (n.type==='now') text = `${n.process_name} | ${n.step_name} is due to start now`;
+                else if (n.type==='overdue') text = `${n.process_name} | ${n.step_name} was due to start ${timeStr} ago`;
+                else text = `${n.process_name} | ${n.step_name} due to start in ${timeStr}`;
+                return (
+                  <div key={n.psrid} style={{ display:'flex', alignItems:'flex-start', gap:10, padding:'11px 14px', borderBottom:`1px solid ${G.sand}`, background:n.seenAt?'transparent':G.sand }}>
+                    {(n.type==='now'||n.type==='overdue')
+                      ? <button onClick={()=>handlePlay(n)} title="Start step" style={{ background:G.caramel, border:'none', borderRadius:6, cursor:'pointer', color:'#fff', fontSize:11, padding:'3px 7px', flexShrink:0, marginTop:1, fontWeight:700 }}>▶</button>
+                      : <span style={{ width:28, flexShrink:0 }}/>
+                    }
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontFamily:G.mono, fontSize:12, color:G.dark, lineHeight:1.4 }}>{text}</div>
+                      <div style={{ fontFamily:G.mono, fontSize:10, color:G.muted, marginTop:3 }}>{fmtNotifTs(n.addedAt)}</div>
+                    </div>
+                    <button onClick={()=>dismiss(n.psrid)} style={{ background:'none', border:'none', cursor:'pointer', color:G.muted, fontSize:14, lineHeight:1, flexShrink:0, padding:'2px 4px' }}>×</button>
+                  </div>
+                );
+              })
+          }
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Nav({ user, page, setPage, logout, lang, setLang, notifProps }) {
   const isM = user?.is_manufacturer;
   const [dropOpen,   setDropOpen]   = useState(false);
   const [cpOpen,     setCpOpen]     = useState(false);
@@ -1038,6 +1266,8 @@ function Nav({ user, page, setPage, logout, lang, setLang }) {
           <button key={l.key} onClick={()=>navigate(l.key)} style={{ background:page===l.key?G.sand:"none", border:"none", padding:"6px 10px", borderRadius:8, fontFamily:G.mono, fontSize:13, fontWeight:page===l.key?600:400, color:page===l.key?G.caramel:G.muted, cursor:"pointer", transition:"all 0.15s", whiteSpace:"nowrap" }}>{l.label}</button>
         ))}
       </div>
+      {/* Notification bell */}
+      {notifProps&&<NotificationBell {...notifProps}/>}
       {/* Search bar */}
       <NavSearchBar onClick={()=>setCpOpen(true)}/>
       {/* Language toggle */}
@@ -8262,6 +8492,7 @@ export default function App() {
   _currentLang = lang;
   const {toasts,toast,remove} = useToast();
   const logout=()=>{localStorage.removeItem("token");setUser(null);setPage("login");};
+  const { notifs, dismiss, markSeen, unseenCount, refresh: refreshNotifs } = useNotifications(user);
   const onLogin = u => {
     setUser(u);
     setHashPage(null);
@@ -8318,7 +8549,7 @@ export default function App() {
         </>
       ):(
         <>
-          <Nav user={user} page={page} setPage={setPage} logout={logout} lang={lang} setLang={setLang}/>
+          <Nav user={user} page={page} setPage={setPage} logout={logout} lang={lang} setLang={setLang} notifProps={{ notifs, dismiss, markSeen, unseenCount, refresh: refreshNotifs }}/>
           {/* Floating "Yours, tanelu" balloon */}
           <div style={{position:"fixed",bottom:20,right:20,zIndex:500,
             background:G.white,border:`1px solid ${G.border}`,borderRadius:24,

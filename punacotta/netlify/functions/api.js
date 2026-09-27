@@ -2225,12 +2225,33 @@ async function route(method, segments, body, headers, event) {
       return { ...run, steps }
     }
 
-    // GET /process-runs — list all runs for this restaurant
+    // GET /process-runs — list all runs for this restaurant (with steps when ?steps=1)
     if (!r1 && method === 'GET') {
       const runs = await dbq(
         `SELECT pr.*, p.name AS process_name
          FROM process_run pr JOIN process p ON p.procid=pr.procid
          WHERE pr.owner_uid=$1 ORDER BY pr.started_at DESC`, [ownerUid])
+      if (event?.queryStringParameters?.steps === '1') {
+        // Attach steps to each run (for notification polling)
+        const prids = runs.map(r => r.prid)
+        if (prids.length > 0) {
+          const allSteps = await dbq(
+            `SELECT prs.*, ps.seq, ps.duration, ps.duration_unit, ps.dep_type, ps.dep_psid,
+                    s.name AS step_name, s.color, s.skid,
+                    u.first_name, u.last_name
+             FROM process_run_step prs
+             JOIN process_skill ps ON ps.psid=prs.psid
+             JOIN skill s ON s.skid=ps.skid
+             LEFT JOIN "user" u ON u.uid=prs.uid
+             WHERE prs.prid=ANY($1) ORDER BY ps.seq`, [prids])
+          const stepsByPrid = {}
+          for (const s of allSteps) {
+            if (!stepsByPrid[s.prid]) stepsByPrid[s.prid] = []
+            stepsByPrid[s.prid].push(s)
+          }
+          for (const r of runs) r.steps = stepsByPrid[r.prid] || []
+        }
+      }
       return [200, runs]
     }
 
