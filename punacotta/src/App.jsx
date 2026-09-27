@@ -429,7 +429,7 @@ function Spinner() {
         {/* Rectangle — top part of tanelu logo */}
         <rect x="2" y="2" width="44" height="26" rx="6" fill={G.caramel} />
         {/* Circle — bottom part, winks */}
-        <g style={{ transformOrigin:"24px 56px", animation:"tanelu-wink 1.8s ease-in-out infinite" }}>
+        <g style={{ transformOrigin:"24px 56px", animation:"tanelu-wink 0.5s ease-in-out infinite" }}>
           <circle cx="24" cy="56" r="14" fill={G.caramel} />
         </g>
       </svg>
