@@ -1814,6 +1814,10 @@ async function route(method, segments, body, headers, event) {
       if (!proc) return [404, { error: 'Not found' }]
       if (name !== undefined) await dbr('UPDATE process SET name=$1 WHERE procid=$2', [name.trim(), r1])
       if (Array.isArray(skills)) {
+        // Block step changes if an active run exists — changes apply to future runs only
+        const [activeRun] = await dbq(
+          `SELECT prid FROM process_run WHERE procid=$1 AND status IN ('running','paused') LIMIT 1`, [r1])
+        if (activeRun) return [409, { error: 'This process has an active run. Stop it before editing its steps.' }]
         // Validate durations before touching the DB
         for (const s of skills) {
           if (s.duration != null && Number(s.duration) < 0)
