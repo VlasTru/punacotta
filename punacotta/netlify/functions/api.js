@@ -118,6 +118,8 @@ function safe(u) { const { password_hash, ...r } = u; return r }
 
 // ─── MAIL ─────────────────────────────────────────────────────────────────────
 const BASE_URL = process.env.APP_URL || process.env.URL || 'https://tanelu.com'
+// App URL for hash-routed pages (avoids landing page redirect at root)
+const APP_URL = (process.env.APP_URL || process.env.URL || 'https://tanelu.com') + '/app'
 
 async function sendMail(to, subject, text, html) {
   // Skip sending to obviously fake/test domains — log instead
@@ -413,11 +415,11 @@ async function route(method, segments, body, headers, event) {
       await sendMail(
         u.email,
         'Welcome to Pun&Cotta – confirm your email',
-        `Hi ${u.first_name},\n\nPlease confirm your email:\n${BASE_URL}/#verify/${token}\n\nThis link expires in 1 hour.\n\nPun&Cotta`,
+        `Hi ${u.first_name},\n\nPlease confirm your email:\n${APP_URL}#verify/${token}\n\nThis link expires in 1 hour.\n\nPun&Cotta`,
         mailHtml(
           'Welcome to Pun&Cotta 🎉',
           `Hi ${u.first_name}, thanks for signing up! Please confirm your email address to get started.`,
-          `${BASE_URL}/#verify/${token}`,
+          `${APP_URL}#verify/${token}`,
           'Confirm my email'
         )
       )
@@ -432,11 +434,11 @@ async function route(method, segments, body, headers, event) {
         await sendMail(
           u.email,
           'Pun&Cotta – reset your password',
-          `Hi ${u.first_name},\n\nReset your password:\n${BASE_URL}/#reset/${token}\n\nThis link expires in 1 hour.\n\nPun&Cotta`,
+          `Hi ${u.first_name},\n\nReset your password:\n${APP_URL}#reset/${token}\n\nThis link expires in 1 hour.\n\nPun&Cotta`,
           mailHtml(
             'Reset your password',
             `Hi ${u.first_name}, we received a request to reset your Pun&amp;Cotta password. Click the button below — the link is valid for 1 hour.`,
-            `${BASE_URL}/#reset/${token}`,
+            `${APP_URL}#reset/${token}`,
             'Reset my password'
           )
         )
@@ -1574,11 +1576,11 @@ async function route(method, segments, body, headers, event) {
         await sendMail(
           newEmp.email,
           `You've been invited to join ${restaurantName} on Tanelu`,
-          `Hi,\n\nYou've been added as a team member at ${restaurantName}.\n\nClick the link below to set up your account:\n${BASE_URL}/#invite/${inviteToken}\n\nThis link expires in 7 days.\n\nTanelu`,
+          `Hi,\n\nYou've been added as a team member at ${restaurantName}.\n\nClick the link below to set up your account:\n${APP_URL}#invite/${inviteToken}\n\nThis link expires in 7 days.\n\nTanelu`,
           mailHtml(
             `You're invited to join ${restaurantName}`,
             `You've been added as a team member at <strong>${restaurantName}</strong> on Tanelu. Click below to set up your account and access your roster and schedule.`,
-            `${BASE_URL}/#invite/${inviteToken}`,
+            `${APP_URL}#invite/${inviteToken}`,
             'Set up my account'
           )
         )
@@ -1600,10 +1602,10 @@ async function route(method, segments, body, headers, event) {
       const restaurantName = owner?.business_name || owner?.first_name || 'your restaurant'
       await sendMail(emp.email,
         `Invitation to join ${restaurantName} on Tanelu`,
-        `Hi,\n\nHere is your updated invite link:\n${BASE_URL}/#invite/${inviteToken}\n\nThis link expires in 7 days.\n\nTanelu`,
+        `Hi,\n\nHere is your updated invite link:\n${APP_URL}#invite/${inviteToken}\n\nThis link expires in 7 days.\n\nTanelu`,
         mailHtml(`Join ${restaurantName} on Tanelu`,
           `You've been added as a team member at <strong>${restaurantName}</strong>. Click below to set up your account.`,
-          `${BASE_URL}/#invite/${inviteToken}`, 'Set up my account'))
+          `${APP_URL}#invite/${inviteToken}`, 'Set up my account'))
       return [200, { sent: true }]
     }
 
@@ -2421,7 +2423,7 @@ async function route(method, segments, body, headers, event) {
               `Your step "${dep.skill_name}" is ready to start`,
               `Hi ${emp.first_name},\n\nThe preceding step has finished. You can now start "${dep.skill_name}".\n\nTanelu`,
               mailHtml('Step ready', `The preceding step has finished. You can now start <strong>${dep.skill_name}</strong>.`,
-                `${BASE_URL}/#roster`, 'Open Tanelu'))
+                `${APP_URL}#roster`, 'Open Tanelu'))
           }
         }
       }
@@ -2536,7 +2538,7 @@ async function route(method, segments, body, headers, event) {
       for (const e of emps) {
         await sendMail(e.email, `Roster published — week of ${wk}`,
           `Hi ${e.first_name}, the roster for week of ${wk} is now open. Please post your availability.`,
-          mailHtml('Roster published', `The roster for the week of ${wk} is now open for editing. Please log in and post your available time slots.`, `${BASE_URL}/#roster`, 'Open roster'))
+          mailHtml('Roster published', `The roster for the week of ${wk} is now open for editing. Please log in and post your available time slots.`, `${APP_URL}#roster`, 'Open roster'))
       }
       return [200, await fetchRoster(r1)]
     }
@@ -2563,7 +2565,7 @@ async function route(method, segments, body, headers, event) {
       for (const e of emps) {
         await sendMail(e.email, `Roster approved — week of ${wk}`,
           `Hi ${e.first_name}, the roster for week of ${wk} has been approved. Your schedule is now final.`,
-          mailHtml('Roster approved', `The roster for the week of ${wk} is approved and mandatory.`, `${BASE_URL}/#roster`, 'View roster'))
+          mailHtml('Roster approved', `The roster for the week of ${wk} is approved and mandatory.`, `${APP_URL}#roster`, 'View roster'))
       }
       return [200, await fetchRoster(r1)]
     }
