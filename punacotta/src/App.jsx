@@ -6823,10 +6823,12 @@ function ProcessesPage({ user, setPage, toast }) {
   const openNew = () => { setEditProc(null); setFormName(""); setFormSkills([]); setNameError(""); setShowForm(true); };
   const openEdit = proc => {
     setEditProc(proc); setFormName(proc.name);
-    setFormSkills((proc.skills||[]).map(sk=>({
+    setFormSkills((proc.skills||[]).map((sk, _i, arr)=>({
       skid:sk.skid, name:sk.name, color:sk.color,
       duration:sk.duration, duration_unit:sk.duration_unit||"minutes",
-      dep_type:sk.dep_type||"", dep_seq:"",
+      dep_type:sk.dep_type||"",
+      // Resolve dep_psid → dep_seq (1-based position in the list)
+      dep_seq: sk.dep_psid ? String(arr.findIndex(s=>s.psid===sk.dep_psid)+1||"") : "",
       recur_every:sk.recur_every||"", recur_unit:sk.recur_unit||"hours", recur_times:sk.recur_times||"",
       _procRef: sk._procRef||null,
     })));
@@ -6874,6 +6876,7 @@ function ProcessesPage({ user, setPage, toast }) {
         dep_type:s.dep_type||null, dep_seq:s.dep_seq||null,
         recur_every: s.recur_every ? Number(s.recur_every) : null,
         recur_unit: s.recur_unit||"hours",
+        recur_times: s.recur_times ? Number(s.recur_times) : null,
       }));
       if (editProc) {
         const updated = await api.updateProcess(editProc.procid, { name, skills: skillPayload });
