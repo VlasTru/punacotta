@@ -2364,7 +2364,7 @@ async function route(method, segments, body, headers, event) {
       await dbr(
         `UPDATE process_run_step
          SET status='in_progress', actual_started_at=NOW(), paused_at=NULL
-         WHERE psrid=$2`,
+         WHERE psrid=$1`,
         [psrid])
       return [200, await fetchRun(r1)]
     }
