@@ -347,10 +347,10 @@ function Dialog({ open, title, children, onConfirm, onCancel, confirmLabel="Yes"
   if (!open) return null;
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center" }}>
-      <div style={{ background:G.white, borderRadius:16, padding:32, maxWidth:440, width:"90%", animation:"fadeIn 0.2s ease", boxShadow:"0 20px 60px rgba(44,24,16,0.2)" }}>
-        <h3 style={{ fontFamily:G.font, fontSize:20, marginBottom:16 }}>{title}</h3>
-        <div style={{ color:G.muted, lineHeight:1.6, marginBottom:24, fontSize:15 }}>{children}</div>
-        <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+      <div style={{ background:G.white, borderRadius:16, padding:32, maxWidth:440, width:"90%", animation:"fadeIn 0.2s ease", boxShadow:"0 20px 60px rgba(44,24,16,0.2)", maxHeight:"90vh", display:"flex", flexDirection:"column" }}>
+        <h3 style={{ fontFamily:G.font, fontSize:20, marginBottom:16, flexShrink:0 }}>{title}</h3>
+        <div style={{ color:G.muted, lineHeight:1.6, marginBottom:24, fontSize:15, overflowY:"auto", flex:1 }}>{children}</div>
+        <div style={{ display:"flex", gap:10, justifyContent:"flex-end", flexShrink:0 }}>
           <Btn variant="ghost" onClick={onCancel}>{tl("Cancel")}</Btn>
           <Btn variant={danger?"danger":"primary"} onClick={onConfirm}>{confirmLabel}</Btn>
         </div>
