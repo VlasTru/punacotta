@@ -1830,6 +1830,10 @@ async function route(method, segments, body, headers, event) {
           if (s.duration != null && Number(s.duration) < 0)
             return [400, { error: `Duration for step "${s.name||s.skid}" may not be negative` }]
         }
+        // Remove step history for non-active runs so the FK won't block the skill delete
+        // (active runs are already blocked above; stopped/completed runs are safe to clean up)
+        await dbr(`DELETE FROM process_run_step WHERE psid IN (
+          SELECT psid FROM process_skill WHERE procid=$1)`, [r1])
         await dbr('DELETE FROM process_skill WHERE procid=$1', [r1])
         // First pass: insert all rows to get psids
         const inserted = []
