@@ -6938,262 +6938,162 @@ function ProcessesPage({ user, setPage, toast }) {
     return parts.join(' ');
   };
 
-  // ── Gantt Chart ────────────────────────────────────────────────────────────
-  // Layout rules (each step gets its own row):
-  //   No dep / FS  → x1 = predecessor x2 (or 0 for first); row below predecessor
-  //   SS           → x1 = predecessor x1 (same start); row below predecessor
-  //   FF           → x1 = predecessor x2 - own_width (same end); row below predecessor
-  //   SF           → x1 = predecessor x1 - own_width (ends when pred starts); row below predecessor
+  // ── MiniGantt — per-process Gantt chart embedded in each process card ────────
+  const MiniGantt = ({ proc, forcedView }) => {
+    const skills = proc.skills || [];
+    if (!skills.length) return null;
 
-  const PertChart = () => {
-    const barH=34, rowGap=8, procGap=24;
-    const labelW=185, W=940, chartW=W-labelW-16;
-
-    // Auto-scale: find max end time across all processes
-    let maxMins = 60;
-    processes.forEach(proc => {
-      const skills = proc.skills || [];
-      let cursor = 0;
-      const placed = {};
-      skills.forEach(sk => {
-        const w = toMins(sk.duration, sk.duration_unit) || 30;
-        const pred = sk.dep_psid ? placed[sk.dep_psid] : null;
-        let x1 = pred ? (
-          sk.dep_type==="SS" ? pred.x1 :
-          sk.dep_type==="FF" ? pred.x2 - w :
-          sk.dep_type==="SF" ? pred.x1 - w :
-          pred.x2 // FS or default
-        ) : cursor;
-        x1 = Math.max(0, x1);
-        placed[sk.psid] = { x1, x2: x1+w };
-        cursor = x1+w;
-        if (x1+w > maxMins) maxMins = x1+w;
-      });
+    // Compute max end time in minutes (layout in minutes, then scale to pixels)
+    const placed = {}; // psid → { x1Mins, x2Mins }
+    let cursor = 0;
+    skills.forEach(sk => {
+      const durMins = Math.max(1, toMins(sk.duration, sk.duration_unit) || 30);
+      const pred = sk.dep_psid ? placed[sk.dep_psid] : null;
+      let x1;
+      if (!pred) {
+        x1 = cursor;
+      } else if (sk.dep_type === "SS") { x1 = pred.x1; }
+      else if (sk.dep_type === "FF")   { x1 = pred.x2 - durMins; }
+      else if (sk.dep_type === "SF")   { x1 = pred.x1 - durMins; }
+      else                              { x1 = pred.x2; } // FS / default
+      x1 = Math.max(0, x1);
+      placed[sk.psid] = { x1, x2: x1 + durMins, durMins };
+      if (!pred) cursor = x1 + durMins;
     });
-    const windowMins = Math.ceil((maxMins * 1.08) / 60) * 60; // 8% padding, round to hour
-    const minToX = m => Math.max(0,(m/windowMins)*chartW);
+    const maxMins = Object.values(placed).reduce((m, b) => Math.max(m, b.x2), 0);
 
-    if (!processes.length) return (
-      <div style={{padding:60,textAlign:"center",color:G.muted,fontFamily:G.mono,fontSize:14}}>
-        No processes yet. Click "+ Process" to create one.
-      </div>
-    );
+    // Auto-choose view: week if > 10h (600min), day otherwise. Allow manual toggle.
+    const autoView = maxMins > 600 ? "week" : "day";
+    const [view, setView] = useState(forcedView || autoView);
+    // Window: day = nearest hour above maxMins; week = nearest day above maxMins
+    const windowMins = view === "week"
+      ? Math.max(1440, Math.ceil(maxMins / 1440) * 1440)
+      : Math.max(60, Math.ceil(maxMins / 60) * 60);
 
-    // ── Layout engine ─────────────────────────────────────────────────────────
-    // Each step gets its own row (track = index in skills array).
-    // x position is derived from dependency type relative to predecessor.
-    const processLayouts = processes.map(proc => {
-      const skills = proc.skills || [];
-      const placed = {}; // psid → { track, x1, x2, w }
-      let cursor = 0; // x cursor for steps with no predecessor
+    const barH = 26, rowGap = 6, trackH = barH + rowGap;
+    const labelW = 130, W = 700, chartW = W - labelW - 8;
+    const minToX = m => Math.max(0, (m / windowMins) * chartW);
+    const svgH = skills.length * trackH + 28;
 
-      skills.forEach((sk, idx) => {
-        const wMins = Math.max(1, toMins(sk.duration, sk.duration_unit) || 30);
-        const w = Math.max(14, minToX(wMins));
-        const pred = sk.dep_psid ? placed[sk.dep_psid] : null;
-        let x1;
-        if (!pred) {
-          x1 = cursor; // no dep: place sequentially
-        } else if (sk.dep_type === "SS") {
-          x1 = pred.x1;             // start with predecessor
-        } else if (sk.dep_type === "FF") {
-          x1 = pred.x2 - w;         // end with predecessor
-        } else if (sk.dep_type === "SF") {
-          x1 = pred.x1 - w;         // end when predecessor starts
-        } else {
-          x1 = pred.x2;             // FS: start after predecessor ends
-        }
-        x1 = Math.max(0, x1);
-        placed[sk.psid] = { track: idx, x1, x2: x1+w, w };
-        if (!pred) cursor = x1+w;
-      });
-
-      return { proc, skills, placed, maxTrack: skills.length - 1 };
+    // Build pixel-placed blocks
+    const blocks = {};
+    skills.forEach((sk, idx) => {
+      const b = placed[sk.psid];
+      if (!b) return;
+      blocks[sk.psid] = {
+        px1: labelW + minToX(b.x1),
+        px2: labelW + minToX(b.x2),
+        pw:  Math.max(8, minToX(b.x2) - minToX(b.x1)),
+        y:   20 + idx * trackH,
+      };
     });
 
-    // ── Assign y positions ────────────────────────────────────────────────────
-    // Each process occupies one row per step
-    let curY = 30;
-    const processY = {}; // procid → base y
-    const trackH = barH + rowGap;
-    processLayouts.forEach(({ proc, skills }) => {
-      processY[proc.procid] = curY;
-      curY += Math.max(1, skills.length) * trackH + procGap;
-    });
-    const svgH = curY + 40;
-
-    // ── Build blockMap for arrow drawing ─────────────────────────────────────
-    const blockMap = {};
-    processLayouts.forEach(({ proc, placed }) => {
-      const baseY = processY[proc.procid];
-      Object.entries(placed).forEach(([psid, b]) => {
-        blockMap[psid] = {
-          // pixel coords already include labelW offset from minToX? No —
-          // x1/x2 are in pixel-space relative to chart area; add labelW for SVG coords
-          px1: labelW + b.x1, px2: labelW + b.x2,
-          y: baseY + b.track * trackH,
-        };
-      });
-    });
-
-    // ── Build arrows ──────────────────────────────────────────────────────────
-    // Arrow always goes FROM the dependency anchor ON THE SOURCE
-    //   to the matching anchor ON THE TARGET, left-to-right where possible.
-    // FS : right-edge of pred  → left-edge  of succ  (horizontal or elbow)
-    // SS : left-edge  of pred  → left-edge  of succ
-    // FF : right-edge of pred  → right-edge of succ
-    // SF : left-edge  of pred  → right-edge of succ
+    // Arrows
     const arrows = [];
-    processes.forEach(proc => {
-      (proc.skills||[]).forEach(sk => {
-        if (!sk.dep_type || !sk.dep_psid) return;
-        const src = blockMap[sk.dep_psid];
-        const tgt = blockMap[sk.psid];
-        if (!src || !tgt) return;
-        const dep = sk.dep_type;
-
-        let ax, ay, bx, by;
-        if (dep === "FS") {
-          ax = src.px2; ay = src.y + barH/2;
-          bx = tgt.px1; by = tgt.y  + barH/2;
-        } else if (dep === "SS") {
-          ax = src.px1; ay = src.y + barH;
-          bx = tgt.px1; by = tgt.y;
-        } else if (dep === "FF") {
-          ax = src.px2; ay = src.y + barH;
-          bx = tgt.px2; by = tgt.y;
-        } else if (dep === "SF") {
-          ax = src.px1; ay = src.y + barH;
-          bx = tgt.px2; by = tgt.y;
-        } else {
-          ax = src.px2; ay = src.y + barH/2;
-          bx = tgt.px1; by = tgt.y  + barH/2;
-        }
-
-        // Elbow path: horizontal then vertical then horizontal
-        const midY = (ay + by) / 2;
-        let d;
-        if (Math.abs(ay - by) < 4) {
-          // same row — straight horizontal
-          d = `M${ax},${ay} L${bx},${by}`;
-        } else if (dep === "FS") {
-          // right-angle elbow: go right from source end, drop down, arrive at target start
-          const elbowX = ax + 8;
-          d = `M${ax},${ay} L${elbowX},${ay} L${elbowX},${by} L${bx},${by}`;
-        } else {
-          d = `M${ax},${ay} C${ax},${midY} ${bx},${midY} ${bx},${by}`;
-        }
-        arrows.push({ d, dep, lx:(ax+bx)/2, ly:(ay+by)/2 });
-      });
+    skills.forEach(sk => {
+      if (!sk.dep_type || !sk.dep_psid) return;
+      const src = blocks[sk.dep_psid], tgt = blocks[sk.psid];
+      if (!src || !tgt) return;
+      const dep = sk.dep_type;
+      let ax, ay, bx, by;
+      if      (dep==="FS"){ ax=src.px2; ay=src.y+barH/2; bx=tgt.px1; by=tgt.y+barH/2; }
+      else if (dep==="SS"){ ax=src.px1; ay=src.y+barH;   bx=tgt.px1; by=tgt.y; }
+      else if (dep==="FF"){ ax=src.px2; ay=src.y+barH;   bx=tgt.px2; by=tgt.y; }
+      else if (dep==="SF"){ ax=src.px1; ay=src.y+barH;   bx=tgt.px2; by=tgt.y; }
+      else                { ax=src.px2; ay=src.y+barH/2; bx=tgt.px1; by=tgt.y+barH/2; }
+      let d;
+      if (Math.abs(ay-by) < 3) {
+        d = `M${ax},${ay} L${bx},${by}`;
+      } else if (dep==="FS") {
+        const ex = ax + 6;
+        d = `M${ax},${ay} L${ex},${ay} L${ex},${by} L${bx},${by}`;
+      } else {
+        const midY = (ay+by)/2;
+        d = `M${ax},${ay} C${ax},${midY} ${bx},${midY} ${bx},${by}`;
+      }
+      arrows.push({ d, dep });
     });
 
-    const tickMins = windowMins <= 240 ? 30 : windowMins <= 720 ? 60 : windowMins <= 2880 ? 120 : 1440;
-    const ticks = Array.from({length: Math.ceil(windowMins/tickMins)+1}, (_,i)=>i*tickMins);
-    const fmtTick = m => {
-      const d = Math.floor(m/1440), h = Math.floor((m%1440)/60), mn = m%60;
-      if (windowMins > 1440) return d > 0 ? `Day ${d+1}` : `${h}h`;
-      return `${String(h).padStart(2,"0")}:${String(mn).padStart(2,"0")}`;
-    };
+    // Ticks: day view = hours, week view = days
+    const tickUnit = view === "week" ? 1440 : 60;
+    const ticks = Array.from({ length: Math.ceil(windowMins / tickUnit) + 1 }, (_, i) => i * tickUnit);
+    const fmtTick = m => view === "week"
+      ? (m === 0 ? "Start" : `Day ${m/1440 + 1}`)
+      : `${String(Math.floor(m/60)).padStart(2,"0")}:00`;
+    const majorTick = view === "week" ? 1440 : 120;
 
     return (
-      <div style={{ overflowX:"auto", marginBottom:24, background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:16 }}>
-        <svg width={W} height={svgH} style={{display:"block"}}>
-          <defs>
-            <marker id="arr-tip" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
-              <polygon points="0 0, 7 3.5, 0 7" fill="#666"/>
-            </marker>
-          </defs>
-
-          {/* Time grid */}
-          {ticks.map(m=>(
-            <g key={m}>
-              <line x1={labelW+minToX(m)} y1={18} x2={labelW+minToX(m)} y2={svgH-40}
-                stroke={G.border} strokeWidth={m%(tickMins*2)===0?1:0.5}/>
-              <text x={labelW+minToX(m)+3} y={13} fontSize={9} fill={G.muted}>{fmtTick(m)}</text>
-            </g>
+      <div style={{ marginTop:12, marginBottom:8 }}>
+        {/* Toggle */}
+        <div style={{ display:"flex", gap:6, marginBottom:6, alignItems:"center" }}>
+          <span style={{ fontSize:11, color:G.muted }}>View:</span>
+          {["day","week"].map(v => (
+            <button key={v} onClick={() => setView(v)}
+              style={{ padding:"2px 10px", borderRadius:5, border:`1px solid ${view===v?G.caramel:G.border}`,
+                background: view===v?G.caramel:G.white, color: view===v?G.white:G.dark,
+                fontSize:11, fontFamily:G.mono, fontWeight:600, cursor:"pointer" }}>
+              {v==="day"?"Day":"Week"}
+            </button>
           ))}
-
-          {/* Process bars */}
-          {processLayouts.map(({ proc, placed }) => {
-            const baseY = processY[proc.procid];
-            return (
-              <g key={proc.procid}>
-                {/* Process label — vertically centred across all its tracks */}
-                {/* Process label: vertically centred across all its step rows */}
-                {(()=>{ const totalH=(proc.skills.length||1)*trackH-rowGap; return (
-                  <text x={labelW-8} y={baseY + totalH/2}
-                    fontSize={12} fontWeight="700" fill={G.dark} textAnchor="end" dominantBaseline="middle"
-                    style={{cursor:"pointer"}} onClick={()=>openEdit(proc)}>
-                    {proc.name.slice(0,22)}
-                  </text>
-                );})()}
-                {/* Step rows: label on left + bar */}
-                {(proc.skills||[]).map((sk, idx) => {
-                  const b = placed[sk.psid];
-                  if (!b) return null;
-                  const bx = labelW + b.x1, by = baseY + b.track*trackH;
-                  const color = sk.color || G.muted;
-                  return (
-                    <g key={sk.psid}>
-                      {/* Row label — step name, right-aligned before chart area */}
-                      <text x={labelW-8} y={by + barH/2} fontSize={10} fill={G.muted}
-                        textAnchor="end" dominantBaseline="middle">
-                        {sk.name.slice(0,20)}
-                      </text>
-                      {/* Light row stripe for readability */}
-                      <rect x={labelW} y={by} width={chartW} height={barH}
-                        fill={idx%2===0?"transparent":`${G.sand}60`} rx={0}/>
-                      {/* Step bar */}
-                      <rect x={bx} y={by} width={b.w} height={barH}
-                        fill={`${color}28`} stroke={color} strokeWidth={1.5} rx={5}/>
-                      {b.w>40&&<text x={bx+6} y={by+barH/2+1} fontSize={9} fill={color}
-                        fontWeight="600" dominantBaseline="middle">
-                        {sk.duration}{durAbbr(sk.duration_unit)}
-                      </text>}
-                    </g>
-                  );
-                })}
+        </div>
+        <div style={{ overflowX:"auto" }}>
+          <svg width={W} height={svgH} style={{ display:"block", fontFamily:G.mono }}>
+            <defs>
+              <marker id={`arr-${proc.procid}`} markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                <polygon points="0 0, 6 3, 0 6" fill="#888"/>
+              </marker>
+            </defs>
+            {/* Grid lines */}
+            {ticks.map(m => (
+              <g key={m}>
+                <line x1={labelW+minToX(m)} y1={14} x2={labelW+minToX(m)} y2={svgH}
+                  stroke={G.border} strokeWidth={m%majorTick===0 ? 1 : 0.4}/>
+                {m%majorTick===0 && (
+                  <text x={labelW+minToX(m)+3} y={10} fontSize={8} fill={G.muted}>{fmtTick(m)}</text>
+                )}
               </g>
-            );
-          })}
-
-          {/* Dependency arrows */}
-          {arrows.map((a,i)=>(
-            <g key={i}>
-              <path d={a.d} fill="none" stroke="#666" strokeWidth="1.5"
-                strokeDasharray={a.dep==="FS"?"none":"none"}
-                markerEnd="url(#arr-tip)" strokeLinejoin="round"/>
-              <text x={a.lx} y={a.ly+4} fontSize={8} fill="#666" textAnchor="start" fontWeight="700"
-                style={{paintOrder:"stroke",stroke:G.white,strokeWidth:3}}>
-                {a.dep}
-              </text>
-            </g>
-          ))}
-        </svg>
-
-        {/* Legend — bottom */}
-        <div style={{display:"flex",gap:20,flexWrap:"wrap",paddingTop:12,borderTop:`1px solid ${G.border}`,marginTop:4,fontSize:11,color:G.muted}}>
-          {DEP_TYPES.map(dt=>(
-            <span key={dt.value} style={{display:"flex",alignItems:"center",gap:6}}>
-              <svg width="50" height="26">
-                {/* predecessor */}
-                <rect x="0" y="2" width="20" height="12" fill={`${G.caramel}25`} stroke={G.caramel} strokeWidth="1.5" rx="2"/>
-                {/* successor */}
-                {dt.value==="FS" && <rect x="24" y="2" width="20" height="12" fill={`${G.dark}15`} stroke={G.dark} strokeWidth="1.5" rx="2"/>}
-                {dt.value==="SS" && <rect x="0"  y="14" width="20" height="12" fill={`${G.dark}15`} stroke={G.dark} strokeWidth="1.5" rx="2" strokeDasharray="4,2"/>}
-                {dt.value==="FF" && <rect x="4"  y="14" width="20" height="12" fill={`${G.dark}15`} stroke={G.dark} strokeWidth="1.5" rx="2" strokeDasharray="4,2"/>}
-                {dt.value==="SF" && <rect x="-4" y="14" width="16" height="12" fill={`${G.dark}15`} stroke={G.dark} strokeWidth="1.5" rx="2" strokeDasharray="4,2"/>}
-                {/* Arrow */}
-                {dt.value==="FS" && <line x1="20" y1="8" x2="24" y2="8" stroke="#666" strokeWidth="1.2" markerEnd="url(#arr-tip)"/>}
-                {dt.value!=="FS" && <path d="M10,14 L10,18 L10,22" stroke="#666" strokeWidth="1.2" fill="none" markerEnd="url(#arr-tip)"/>}
-              </svg>
-              <span><b>{dt.value}</b> {dt.label.replace(/ \(.*\)/,"")}</span>
-            </span>
-          ))}
-          <span style={{display:"flex",alignItems:"center",gap:6}}>
-            <svg width="30" height="14"><rect x="1" y="1" width="28" height="12" fill="transparent" stroke={G.muted} strokeWidth="1.5" strokeDasharray="4,2" rx="2"/></svg>
-            Dashed = parallel successor
-          </span>
+            ))}
+            {/* Day/week shading: alternate columns for week view */}
+            {view==="week" && ticks.filter(m=>m>0).map(m => (
+              (m/1440)%2===0 && (
+                <rect key={m} x={labelW+minToX(m-1440)} y={14} width={minToX(1440)} height={svgH-14}
+                  fill={`${G.sand}50`}/>
+              )
+            ))}
+            {/* Step rows */}
+            {skills.map((sk, idx) => {
+              const b = blocks[sk.psid];
+              if (!b) return null;
+              const color = sk.color || G.muted;
+              return (
+                <g key={sk.psid}>
+                  {/* Stripe */}
+                  <rect x={labelW} y={b.y} width={chartW} height={barH}
+                    fill={idx%2===0 ? "transparent" : `${G.sand}40`}/>
+                  {/* Step name label */}
+                  <text x={labelW-5} y={b.y+barH/2+1} fontSize={9} fill={G.muted}
+                    textAnchor="end" dominantBaseline="middle">
+                    {sk.name.slice(0,17)}
+                  </text>
+                  {/* Bar */}
+                  <rect x={b.px1} y={b.y+2} width={b.pw} height={barH-4}
+                    fill={`${color}30`} stroke={color} strokeWidth={1.5} rx={4}/>
+                  {/* Duration label inside bar */}
+                  {b.pw > 32 && (
+                    <text x={b.px1+5} y={b.y+barH/2+1} fontSize={8} fill={color}
+                      fontWeight="600" dominantBaseline="middle">
+                      {sk.duration}{durAbbr(sk.duration_unit)}
+                    </text>
+                  )}
+                </g>
+              );
+            })}
+            {/* Dependency arrows */}
+            {arrows.map((a,i) => (
+              <path key={i} d={a.d} fill="none" stroke="#999" strokeWidth="1.2"
+                markerEnd={`url(#arr-${proc.procid})`} strokeLinejoin="round"/>
+            ))}
+          </svg>
         </div>
       </div>
     );
@@ -7216,8 +7116,6 @@ function ProcessesPage({ user, setPage, toast }) {
         <Btn size="sm" onClick={openNew}>+ Process</Btn>
       </div>
     }>
-      <PertChart/>
-
       {showForm&&(
         <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
           <div style={{marginBottom:18}}>
@@ -7334,7 +7232,8 @@ function ProcessesPage({ user, setPage, toast }) {
                 style={{background:"none",border:"none",cursor:"pointer",fontWeight:700,fontSize:15,color:G.caramel,padding:0,textDecoration:"underline dotted",textUnderlineOffset:3,marginBottom:6,display:"block",textAlign:"left"}}>
                 {proc.name}
               </button>
-              <div style={{ display:"flex", flexWrap:"wrap", gap:4 }}>
+              <MiniGantt proc={proc}/>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginTop:8 }}>
                 {(proc.skills||[]).map(sk=>(
                   <span key={sk.psid} style={{ fontSize:12, padding:"2px 10px", borderRadius:20, background:`${sk.color||G.muted}18`, color:sk.color||G.muted, border:`1px solid ${sk.color||G.muted}40`, display:"flex", alignItems:"center", gap:4 }}>
                     {sk.name}{sk.duration?` · ${sk.duration}${durAbbr(sk.duration_unit)}`:""}
