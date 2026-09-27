@@ -6938,18 +6938,40 @@ function ProcessesPage({ user, setPage, toast }) {
     return parts.join(' ');
   };
 
-  // ── PERT Chart with multi-track layout ─────────────────────────────────────
-  // Layout rules:
-  //   FS → successor on SAME track, placed after predecessor (sequential)
-  //   SS → successor on NEW sub-track, x-aligned with predecessor's LEFT edge
-  //   FF → successor on NEW sub-track, x-aligned so its RIGHT edge matches predecessor's RIGHT edge
-  //   SF → successor on NEW sub-track, x-aligned so its RIGHT edge matches predecessor's LEFT edge
+  // ── Gantt Chart ────────────────────────────────────────────────────────────
+  // Layout rules (each step gets its own row):
+  //   No dep / FS  → x1 = predecessor x2 (or 0 for first); row below predecessor
+  //   SS           → x1 = predecessor x1 (same start); row below predecessor
+  //   FF           → x1 = predecessor x2 - own_width (same end); row below predecessor
+  //   SF           → x1 = predecessor x1 - own_width (ends when pred starts); row below predecessor
 
   const PertChart = () => {
-    const barH=38, subGap=6, procGap=22;
+    const barH=34, rowGap=8, procGap=24;
     const labelW=185, W=940, chartW=W-labelW-16;
-    const dayMins=600;
-    const minToX = m => Math.max(0,(m/dayMins)*chartW);
+
+    // Auto-scale: find max end time across all processes
+    let maxMins = 60;
+    processes.forEach(proc => {
+      const skills = proc.skills || [];
+      let cursor = 0;
+      const placed = {};
+      skills.forEach(sk => {
+        const w = toMins(sk.duration, sk.duration_unit) || 30;
+        const pred = sk.dep_psid ? placed[sk.dep_psid] : null;
+        let x1 = pred ? (
+          sk.dep_type==="SS" ? pred.x1 :
+          sk.dep_type==="FF" ? pred.x2 - w :
+          sk.dep_type==="SF" ? pred.x1 - w :
+          pred.x2 // FS or default
+        ) : cursor;
+        x1 = Math.max(0, x1);
+        placed[sk.psid] = { x1, x2: x1+w };
+        cursor = x1+w;
+        if (x1+w > maxMins) maxMins = x1+w;
+      });
+    });
+    const windowMins = Math.ceil((maxMins * 1.08) / 60) * 60; // 8% padding, round to hour
+    const minToX = m => Math.max(0,(m/windowMins)*chartW);
 
     if (!processes.length) return (
       <div style={{padding:60,textAlign:"center",color:G.muted,fontFamily:G.mono,fontSize:14}}>
@@ -6958,54 +6980,45 @@ function ProcessesPage({ user, setPage, toast }) {
     );
 
     // ── Layout engine ─────────────────────────────────────────────────────────
-    // For each process, assign each skill to a (track, x1, x2).
-    // Track 0 = main row. SS/FF/SF successors get a new track.
+    // Each step gets its own row (track = index in skills array).
+    // x position is derived from dependency type relative to predecessor.
     const processLayouts = processes.map(proc => {
       const skills = proc.skills || [];
-      // psid → { track, x1, x2, w }
-      const placed = {};
-      // track → current right edge (for FS chaining)
-      const trackCursor = { 0: labelW };
-      let maxTrack = 0;
+      const placed = {}; // psid → { track, x1, x2, w }
+      let cursor = 0; // x cursor for steps with no predecessor
 
-      skills.forEach(sk => {
-        const w = Math.max(12, minToX(toMins(sk.duration, sk.duration_unit)));
-        const dep = sk.dep_type;
-        const predPsid = sk.dep_psid;
-
-        if (!dep || dep === "FS" || !predPsid || !placed[predPsid]) {
-          // FS or no dep: place on track 0, after current cursor
-          const x1 = trackCursor[0] || labelW;
-          placed[sk.psid] = { track:0, x1, x2:x1+w, w };
-          trackCursor[0] = x1+w;
+      skills.forEach((sk, idx) => {
+        const wMins = Math.max(1, toMins(sk.duration, sk.duration_unit) || 30);
+        const w = Math.max(14, minToX(wMins));
+        const pred = sk.dep_psid ? placed[sk.dep_psid] : null;
+        let x1;
+        if (!pred) {
+          x1 = cursor; // no dep: place sequentially
+        } else if (sk.dep_type === "SS") {
+          x1 = pred.x1;             // start with predecessor
+        } else if (sk.dep_type === "FF") {
+          x1 = pred.x2 - w;         // end with predecessor
+        } else if (sk.dep_type === "SF") {
+          x1 = pred.x1 - w;         // end when predecessor starts
         } else {
-          const pred = placed[predPsid];
-          // Assign a new track
-          const track = maxTrack + 1;
-          maxTrack = track;
-          trackCursor[track] = trackCursor[track] || labelW;
-          let x1;
-          if (dep === "SS") x1 = pred.x1;           // align left edges
-          if (dep === "FF") x1 = pred.x2 - w;       // align right edges
-          if (dep === "SF") x1 = pred.x1 - w;       // successor ends where pred starts
-          // Ensure x1 doesn't go left of labelW
-          x1 = Math.max(labelW, x1);
-          placed[sk.psid] = { track, x1, x2:x1+w, w };
-          trackCursor[track] = Math.max(trackCursor[track]||0, x1+w);
+          x1 = pred.x2;             // FS: start after predecessor ends
         }
+        x1 = Math.max(0, x1);
+        placed[sk.psid] = { track: idx, x1, x2: x1+w, w };
+        if (!pred) cursor = x1+w;
       });
 
-      return { proc, skills, placed, maxTrack };
+      return { proc, skills, placed, maxTrack: skills.length - 1 };
     });
 
     // ── Assign y positions ────────────────────────────────────────────────────
-    // Each process occupies (maxTrack+1) sub-rows
+    // Each process occupies one row per step
     let curY = 30;
     const processY = {}; // procid → base y
-    const trackH = barH + subGap;
-    processLayouts.forEach(({ proc, maxTrack }) => {
+    const trackH = barH + rowGap;
+    processLayouts.forEach(({ proc, skills }) => {
       processY[proc.procid] = curY;
-      curY += (maxTrack + 1) * trackH + procGap;
+      curY += Math.max(1, skills.length) * trackH + procGap;
     });
     const svgH = curY + 40;
 
@@ -7015,14 +7028,21 @@ function ProcessesPage({ user, setPage, toast }) {
       const baseY = processY[proc.procid];
       Object.entries(placed).forEach(([psid, b]) => {
         blockMap[psid] = {
-          x1: b.x1, x2: b.x2, w: b.w,
+          // pixel coords already include labelW offset from minToX? No —
+          // x1/x2 are in pixel-space relative to chart area; add labelW for SVG coords
+          px1: labelW + b.x1, px2: labelW + b.x2,
           y: baseY + b.track * trackH,
-          barH,
         };
       });
     });
 
     // ── Build arrows ──────────────────────────────────────────────────────────
+    // Arrow always goes FROM the dependency anchor ON THE SOURCE
+    //   to the matching anchor ON THE TARGET, left-to-right where possible.
+    // FS : right-edge of pred  → left-edge  of succ  (horizontal or elbow)
+    // SS : left-edge  of pred  → left-edge  of succ
+    // FF : right-edge of pred  → right-edge of succ
+    // SF : left-edge  of pred  → right-edge of succ
     const arrows = [];
     processes.forEach(proc => {
       (proc.skills||[]).forEach(sk => {
@@ -7032,28 +7052,48 @@ function ProcessesPage({ user, setPage, toast }) {
         if (!src || !tgt) return;
         const dep = sk.dep_type;
 
-        // Anchor points based on dep type
-        let x1,y1,x2,y2;
-        if (dep==="FS"){ x1=src.x2; y1=src.y+barH/2; x2=tgt.x1; y2=tgt.y+barH/2; }
-        else if (dep==="SS"){ x1=src.x1; y1=src.y+barH; x2=tgt.x1; y2=tgt.y; }
-        else if (dep==="FF"){ x1=src.x2; y1=src.y+barH; x2=tgt.x2; y2=tgt.y; }
-        else if (dep==="SF"){ x1=src.x1; y1=src.y+barH; x2=tgt.x2; y2=tgt.y; }
-        else { x1=src.x2; y1=src.y+barH/2; x2=tgt.x1; y2=tgt.y+barH/2; }
-
-        // For FS same row: horizontal. For others: vertical drop
-        let d;
-        if (dep==="FS") {
-          d = `M${x1},${y1} L${x2},${y2}`;
+        let ax, ay, bx, by;
+        if (dep === "FS") {
+          ax = src.px2; ay = src.y + barH/2;
+          bx = tgt.px1; by = tgt.y  + barH/2;
+        } else if (dep === "SS") {
+          ax = src.px1; ay = src.y + barH;
+          bx = tgt.px1; by = tgt.y;
+        } else if (dep === "FF") {
+          ax = src.px2; ay = src.y + barH;
+          bx = tgt.px2; by = tgt.y;
+        } else if (dep === "SF") {
+          ax = src.px1; ay = src.y + barH;
+          bx = tgt.px2; by = tgt.y;
         } else {
-          // Short vertical line from bottom of pred to top of succ, with small bends
-          const midY = (y1+y2)/2;
-          d = `M${x1},${y1} C${x1},${midY} ${x2},${midY} ${x2},${y2}`;
+          ax = src.px2; ay = src.y + barH/2;
+          bx = tgt.px1; by = tgt.y  + barH/2;
         }
-        arrows.push({ d, dep, lx:(x1+x2)/2+8, ly:(y1+y2)/2 });
+
+        // Elbow path: horizontal then vertical then horizontal
+        const midY = (ay + by) / 2;
+        let d;
+        if (Math.abs(ay - by) < 4) {
+          // same row — straight horizontal
+          d = `M${ax},${ay} L${bx},${by}`;
+        } else if (dep === "FS") {
+          // right-angle elbow: go right from source end, drop down, arrive at target start
+          const elbowX = ax + 8;
+          d = `M${ax},${ay} L${elbowX},${ay} L${elbowX},${by} L${bx},${by}`;
+        } else {
+          d = `M${ax},${ay} C${ax},${midY} ${bx},${midY} ${bx},${by}`;
+        }
+        arrows.push({ d, dep, lx:(ax+bx)/2, ly:(ay+by)/2 });
       });
     });
 
-    const hours = Array.from({length:11},(_,i)=>i*60);
+    const tickMins = windowMins <= 240 ? 30 : windowMins <= 720 ? 60 : windowMins <= 2880 ? 120 : 1440;
+    const ticks = Array.from({length: Math.ceil(windowMins/tickMins)+1}, (_,i)=>i*tickMins);
+    const fmtTick = m => {
+      const d = Math.floor(m/1440), h = Math.floor((m%1440)/60), mn = m%60;
+      if (windowMins > 1440) return d > 0 ? `Day ${d+1}` : `${h}h`;
+      return `${String(h).padStart(2,"0")}:${String(mn).padStart(2,"0")}`;
+    };
 
     return (
       <div style={{ overflowX:"auto", marginBottom:24, background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:16 }}>
@@ -7064,11 +7104,12 @@ function ProcessesPage({ user, setPage, toast }) {
             </marker>
           </defs>
 
-          {/* Hour grid */}
-          {hours.map(m=>(
+          {/* Time grid */}
+          {ticks.map(m=>(
             <g key={m}>
-              <line x1={labelW+minToX(m)} y1={18} x2={labelW+minToX(m)} y2={svgH-40} stroke={G.border} strokeWidth={0.8}/>
-              <text x={labelW+minToX(m)+3} y={13} fontSize={9} fill={G.muted}>{`${8+m/60}:00`}</text>
+              <line x1={labelW+minToX(m)} y1={18} x2={labelW+minToX(m)} y2={svgH-40}
+                stroke={G.border} strokeWidth={m%(tickMins*2)===0?1:0.5}/>
+              <text x={labelW+minToX(m)+3} y={13} fontSize={9} fill={G.muted}>{fmtTick(m)}</text>
             </g>
           ))}
 
@@ -7078,25 +7119,37 @@ function ProcessesPage({ user, setPage, toast }) {
             return (
               <g key={proc.procid}>
                 {/* Process label — vertically centred across all its tracks */}
-                <text x={labelW-8} y={baseY + barH/2 + 4}
-                  fontSize={12} fontWeight="700" fill={G.dark} textAnchor="end" dominantBaseline="middle"
-                  style={{cursor:"pointer"}} onClick={()=>openEdit(proc)}>
-                  {proc.name.slice(0,22)}
-                </text>
-                {/* Skill blocks */}
-                {(proc.skills||[]).map(sk => {
+                {/* Process label: vertically centred across all its step rows */}
+                {(()=>{ const totalH=(proc.skills.length||1)*trackH-rowGap; return (
+                  <text x={labelW-8} y={baseY + totalH/2}
+                    fontSize={12} fontWeight="700" fill={G.dark} textAnchor="end" dominantBaseline="middle"
+                    style={{cursor:"pointer"}} onClick={()=>openEdit(proc)}>
+                    {proc.name.slice(0,22)}
+                  </text>
+                );})()}
+                {/* Step rows: label on left + bar */}
+                {(proc.skills||[]).map((sk, idx) => {
                   const b = placed[sk.psid];
                   if (!b) return null;
-                  const bx = b.x1, by = baseY + b.track*trackH;
+                  const bx = labelW + b.x1, by = baseY + b.track*trackH;
                   const color = sk.color || G.muted;
-                  const dashed = sk.dep_type && sk.dep_type !== "FS";
                   return (
                     <g key={sk.psid}>
+                      {/* Row label — step name, right-aligned before chart area */}
+                      <text x={labelW-8} y={by + barH/2} fontSize={10} fill={G.muted}
+                        textAnchor="end" dominantBaseline="middle">
+                        {sk.name.slice(0,20)}
+                      </text>
+                      {/* Light row stripe for readability */}
+                      <rect x={labelW} y={by} width={chartW} height={barH}
+                        fill={idx%2===0?"transparent":`${G.sand}60`} rx={0}/>
+                      {/* Step bar */}
                       <rect x={bx} y={by} width={b.w} height={barH}
-                        fill={`${color}22`} stroke={color} strokeWidth={1.5}
-                        strokeDasharray={dashed?"6,3":"none"} rx={5}/>
-                      {b.w>24&&<text x={bx+5} y={by+15} fontSize={10} fill={color} fontWeight="600">{sk.name.slice(0,Math.floor(b.w/6.5))}</text>}
-                      {b.w>36&&sk.duration&&<text x={bx+5} y={by+30} fontSize={8.5} fill={G.muted}>{sk.duration}{durAbbr(sk.duration_unit)}</text>}
+                        fill={`${color}28`} stroke={color} strokeWidth={1.5} rx={5}/>
+                      {b.w>40&&<text x={bx+6} y={by+barH/2+1} fontSize={9} fill={color}
+                        fontWeight="600" dominantBaseline="middle">
+                        {sk.duration}{durAbbr(sk.duration_unit)}
+                      </text>}
                     </g>
                   );
                 })}
