@@ -6827,7 +6827,7 @@ function ProcessesPage({ user, setPage, toast }) {
       skid:sk.skid, name:sk.name, color:sk.color,
       duration:sk.duration, duration_unit:sk.duration_unit||"minutes",
       dep_type:sk.dep_type||"", dep_seq:"",
-      recur_every:sk.recur_every||"", recur_unit:sk.recur_unit||"hours",
+      recur_every:sk.recur_every||"", recur_unit:sk.recur_unit||"hours", recur_times:sk.recur_times||"",
       _procRef: sk._procRef||null,
     })));
     setNameError(""); setShowForm(true);
@@ -6837,7 +6837,7 @@ function ProcessesPage({ user, setPage, toast }) {
   const addToForm = item => {
     if (item._isRole) {
       const fullRole = roles.find(r=>r.rid===item.rid);
-      const roleSkills = (fullRole?.skills||[]).map(s=>({...s,duration:s.duration||null,duration_unit:s.duration_unit||"minutes",dep_type:"",dep_seq:"",recur_every:"",recur_unit:"hours"}));
+      const roleSkills = (fullRole?.skills||[]).map(s=>({...s,duration:s.duration||null,duration_unit:s.duration_unit||"minutes",dep_type:"",dep_seq:"",recur_every:"",recur_unit:"hours",recur_times:""}));
       setFormSkills(p=>{ const ex=new Set(p.map(x=>x.skid)); return [...p,...roleSkills.filter(s=>!ex.has(s.skid))]; });
     } else if (item._isProcess) {
       // Expand a process into its skills, grouped together
@@ -6846,7 +6846,7 @@ function ProcessesPage({ user, setPage, toast }) {
         skid:s.skid, name:s.name, color:s.color,
         duration:s.duration, duration_unit:s.duration_unit||"minutes",
         dep_type:s.dep_type||"", dep_seq:"",
-        recur_every:s.recur_every||"", recur_unit:s.recur_unit||"hours",
+        recur_every:s.recur_every||"", recur_unit:s.recur_unit||"hours", recur_times:s.recur_times||"",
         _procRef:fullProc.name,
       }));
       setFormSkills(p=>{
@@ -6854,7 +6854,7 @@ function ProcessesPage({ user, setPage, toast }) {
         return [...p, ...procSkills.filter(s=>!ex.has(s.skid))];
       });
     } else {
-      setFormSkills(p=>p.find(x=>x.skid===item.skid)?p:[...p,{...item,duration:item.duration||null,duration_unit:item.duration_unit||"minutes",dep_type:"",dep_seq:"",recur_every:"",recur_unit:"hours"}]);
+      setFormSkills(p=>p.find(x=>x.skid===item.skid)?p:[...p,{...item,duration:item.duration||null,duration_unit:item.duration_unit||"minutes",dep_type:"",dep_seq:"",recur_every:"",recur_unit:"hours",recur_times:""}]);
     }
   };
 
@@ -6908,7 +6908,22 @@ function ProcessesPage({ user, setPage, toast }) {
     if (unit==="hours")   return Number(dur)*60;
     return Number(dur);
   };
-  const totalMins = formSkills.reduce((s,sk)=>s+toMins(sk.duration,sk.duration_unit),0);
+  const totalMins = formSkills.reduce((s,sk)=>{
+    const base = toMins(sk.duration, sk.duration_unit);
+    const mult = sk.recur_times ? Number(sk.recur_times) : 1;
+    return s + base * mult;
+  }, 0);
+  const fmtTotalMins = m => {
+    const total = Math.round(m);
+    const d = Math.floor(total / 1440);
+    const h = Math.floor((total % 1440) / 60);
+    const min = total % 60;
+    const parts = [];
+    if (d) parts.push(`${d}d`);
+    if (h) parts.push(`${h}hr`);
+    if (min || !parts.length) parts.push(`${min}min`);
+    return parts.join(' ');
+  };
 
   // ── PERT Chart with multi-track layout ─────────────────────────────────────
   // Layout rules:
@@ -7157,7 +7172,7 @@ function ProcessesPage({ user, setPage, toast }) {
               <table style={{ width:"100%", borderCollapse:"collapse" }}>
                 <thead>
                   <tr style={{ background:G.sand }}>
-                    {["#","Skill / Step","Duration","Repeat","Dep. type","Depends on",""].map(h=>(
+                    {["#","Skill / Step","Duration","Repeat","Times","Dep. type","Depends on",""].map(h=>(
                       <th key={h} style={{padding:"8px 12px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,whiteSpace:"nowrap"}}>{h}</th>
                     ))}
                   </tr>
@@ -7194,6 +7209,12 @@ function ProcessesPage({ user, setPage, toast }) {
                         </div>
                       </td>
                       <td style={{padding:"8px 12px"}}>
+                        <input type="number" min="1" step="1" value={sk.recur_times||""} onChange={e=>updateRow(i,"recur_times",e.target.value?Math.max(1,Math.round(Number(e.target.value))||1):"")} placeholder="—"
+                          disabled={!sk.recur_every}
+                          title="How many times this step recurs (multiplies duration)"
+                          style={{width:52,padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",background:!sk.recur_every?G.sand:G.white}}/>
+                      </td>
+                      <td style={{padding:"8px 12px"}}>
                         <select value={sk.dep_type||""} onChange={e=>updateRow(i,"dep_type",e.target.value)}
                           style={{padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
                           <option value="">—</option>
@@ -7223,8 +7244,8 @@ function ProcessesPage({ user, setPage, toast }) {
                   ))}
                   <tr style={{ borderTop:`2px solid ${G.border}`, background:G.sand }}>
                     <td colSpan={2} style={{padding:"8px 12px",fontSize:13,fontWeight:700}}>Total</td>
-                    <td style={{padding:"8px 12px",fontSize:13,fontWeight:700,color:G.caramel}}>{totalMins.toFixed(1)} min</td>
-                    <td colSpan={4}/>
+                    <td style={{padding:"8px 12px",fontSize:13,fontWeight:700,color:G.caramel}}>{fmtTotalMins(totalMins)}</td>
+                    <td colSpan={5}/>
                   </tr>
                 </tbody>
               </table>
