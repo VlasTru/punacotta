@@ -1906,7 +1906,12 @@ async function route(method, segments, body, headers, event) {
       const { scheduled_at, ignore_hours } = body
 
       const [proc] = await dbq('SELECT * FROM process WHERE procid=$1 AND owner_uid=$2', [r1, ownerUid])
-      if (!proc) return [404, { error: 'Process not found' }]
+      if (!proc) {
+        // Debug: check if process exists at all
+        const [any] = await dbq('SELECT procid, owner_uid FROM process WHERE procid=$1', [r1])
+        console.error(`Process not found: procid=${r1} ownerUid=${ownerUid} user.uid=${user.uid} user.is_manufacturer=${user.is_manufacturer} user.employer_uid=${user.employer_uid} foundAny=${JSON.stringify(any)}`)
+        return [404, { error: `Process not found (procid=${r1}, ownerUid=${ownerUid})` }]
+      }
 
       // Get all steps with their skill requirements
       const steps = await dbq(
