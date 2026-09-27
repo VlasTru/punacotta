@@ -6499,6 +6499,12 @@ function RunDetailSidebar({ run, user, onClose, onRunUpdated, toast }) {
                         Active: {fmtElapsed(step.elapsed_secs)}
                       </span>
                     )}
+                    {step.recur_every && (
+                      <span style={{fontSize:11,color:G.caramel,fontWeight:600}}>
+                        🔁 every {step.recur_every} {step.recur_unit||"hours"}
+                        {step.recur_index > 0 ? ` · #${step.recur_index + 1}` : ""}
+                      </span>
+                    )}
                     {step.is_delayed && (
                       <span style={{fontSize:11,color:G.red,fontWeight:600}}>⚠ Delayed</span>
                     )}
@@ -6821,7 +6827,8 @@ function ProcessesPage({ user, setPage, toast }) {
       skid:sk.skid, name:sk.name, color:sk.color,
       duration:sk.duration, duration_unit:sk.duration_unit||"minutes",
       dep_type:sk.dep_type||"", dep_seq:"",
-      _procRef: sk._procRef||null, // if this row came from an expanded process
+      recur_every:sk.recur_every||"", recur_unit:sk.recur_unit||"hours",
+      _procRef: sk._procRef||null,
     })));
     setNameError(""); setShowForm(true);
   };
@@ -6830,7 +6837,7 @@ function ProcessesPage({ user, setPage, toast }) {
   const addToForm = item => {
     if (item._isRole) {
       const fullRole = roles.find(r=>r.rid===item.rid);
-      const roleSkills = (fullRole?.skills||[]).map(s=>({...s,duration:s.duration||null,duration_unit:s.duration_unit||"minutes",dep_type:"",dep_seq:""}));
+      const roleSkills = (fullRole?.skills||[]).map(s=>({...s,duration:s.duration||null,duration_unit:s.duration_unit||"minutes",dep_type:"",dep_seq:"",recur_every:"",recur_unit:"hours"}));
       setFormSkills(p=>{ const ex=new Set(p.map(x=>x.skid)); return [...p,...roleSkills.filter(s=>!ex.has(s.skid))]; });
     } else if (item._isProcess) {
       // Expand a process into its skills, grouped together
@@ -6839,6 +6846,7 @@ function ProcessesPage({ user, setPage, toast }) {
         skid:s.skid, name:s.name, color:s.color,
         duration:s.duration, duration_unit:s.duration_unit||"minutes",
         dep_type:s.dep_type||"", dep_seq:"",
+        recur_every:s.recur_every||"", recur_unit:s.recur_unit||"hours",
         _procRef:fullProc.name,
       }));
       setFormSkills(p=>{
@@ -6846,7 +6854,7 @@ function ProcessesPage({ user, setPage, toast }) {
         return [...p, ...procSkills.filter(s=>!ex.has(s.skid))];
       });
     } else {
-      setFormSkills(p=>p.find(x=>x.skid===item.skid)?p:[...p,{...item,duration:item.duration||null,duration_unit:item.duration_unit||"minutes",dep_type:"",dep_seq:""}]);
+      setFormSkills(p=>p.find(x=>x.skid===item.skid)?p:[...p,{...item,duration:item.duration||null,duration_unit:item.duration_unit||"minutes",dep_type:"",dep_seq:"",recur_every:"",recur_unit:"hours"}]);
     }
   };
 
@@ -6864,6 +6872,8 @@ function ProcessesPage({ user, setPage, toast }) {
         skid:s.skid, seq:i+1,
         duration:s.duration||null, duration_unit:s.duration_unit||"minutes",
         dep_type:s.dep_type||null, dep_seq:s.dep_seq||null,
+        recur_every: s.recur_every ? Number(s.recur_every) : null,
+        recur_unit: s.recur_unit||"hours",
       }));
       if (editProc) {
         const updated = await api.updateProcess(editProc.procid, { name, skills: skillPayload });
@@ -7147,7 +7157,7 @@ function ProcessesPage({ user, setPage, toast }) {
               <table style={{ width:"100%", borderCollapse:"collapse" }}>
                 <thead>
                   <tr style={{ background:G.sand }}>
-                    {["#","Skill / Step","Duration","Dep. type","Depends on",""].map(h=>(
+                    {["#","Skill / Step","Duration","Repeat","Dep. type","Depends on",""].map(h=>(
                       <th key={h} style={{padding:"8px 12px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,whiteSpace:"nowrap"}}>{h}</th>
                     ))}
                   </tr>
@@ -7167,6 +7177,19 @@ function ProcessesPage({ user, setPage, toast }) {
                           <select value={sk.duration_unit||"minutes"} onChange={e=>updateRow(i,"duration_unit",e.target.value)}
                             style={{padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
                             {DUR_UNITS.map(u=><option key={u.value} value={u.value}>{u.label}</option>)}
+                          </select>
+                        </div>
+                      </td>
+                      <td style={{padding:"8px 12px"}}>
+                        <div style={{display:"flex",gap:5,alignItems:"center"}}>
+                          <span style={{fontSize:11,color:G.muted,whiteSpace:"nowrap"}}>every</span>
+                          <input type="number" min="1" value={sk.recur_every||""} onChange={e=>updateRow(i,"recur_every",e.target.value?Math.max(1,parseInt(e.target.value)||1):"")} placeholder="—"
+                            style={{width:44,padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}/>
+                          <select value={sk.recur_unit||"hours"} onChange={e=>updateRow(i,"recur_unit",e.target.value)}
+                            disabled={!sk.recur_every}
+                            style={{padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none",background:!sk.recur_every?G.sand:G.white}}>
+                            <option value="hours">hrs</option>
+                            <option value="days">days</option>
                           </select>
                         </div>
                       </td>
@@ -7201,7 +7224,7 @@ function ProcessesPage({ user, setPage, toast }) {
                   <tr style={{ borderTop:`2px solid ${G.border}`, background:G.sand }}>
                     <td colSpan={2} style={{padding:"8px 12px",fontSize:13,fontWeight:700}}>Total</td>
                     <td style={{padding:"8px 12px",fontSize:13,fontWeight:700,color:G.caramel}}>{totalMins.toFixed(1)} min</td>
-                    <td colSpan={3}/>
+                    <td colSpan={4}/>
                   </tr>
                 </tbody>
               </table>

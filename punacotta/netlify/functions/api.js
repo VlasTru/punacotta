@@ -63,6 +63,10 @@ async function ensureMigrations() {
     await dbr(`ALTER TABLE process_run_step ADD COLUMN IF NOT EXISTS elapsed_secs INTEGER NOT NULL DEFAULT 0`)
     await dbr(`ALTER TABLE process_run_step ADD COLUMN IF NOT EXISTS delay_reason TEXT`)
     await dbr(`ALTER TABLE process_run_step ADD COLUMN IF NOT EXISTS is_delayed BOOLEAN NOT NULL DEFAULT false`)
+    // Recurring steps
+    await dbr(`ALTER TABLE process_skill ADD COLUMN IF NOT EXISTS recur_every INTEGER`)
+    await dbr(`ALTER TABLE process_skill ADD COLUMN IF NOT EXISTS recur_unit VARCHAR(10) DEFAULT 'hours'`)
+    await dbr(`ALTER TABLE process_run_step ADD COLUMN IF NOT EXISTS recur_index INTEGER NOT NULL DEFAULT 0`)
   } catch(e) { console.error('Migration error:', e.message) }
 }
 
@@ -1778,6 +1782,7 @@ async function route(method, segments, body, headers, event) {
       if (!proc) return null
       const skills = await dbq(
         `SELECT ps.psid, ps.seq, ps.duration, ps.duration_unit, ps.dep_type, ps.dep_psid,
+                ps.recur_every, ps.recur_unit,
                 s.skid, s.name, s.color
          FROM process_skill ps JOIN skill s ON s.skid=ps.skid
          WHERE ps.procid=$1 ORDER BY ps.seq`, [procid])
@@ -1796,6 +1801,7 @@ async function route(method, segments, body, headers, event) {
       for (const p of procs) {
         const skills = await dbq(
           `SELECT ps.psid, ps.seq, ps.duration, ps.duration_unit, ps.dep_type, ps.dep_psid,
+                  ps.recur_every, ps.recur_unit,
                   s.skid, s.name, s.color
            FROM process_skill ps JOIN skill s ON s.skid=ps.skid WHERE ps.procid=$1 ORDER BY ps.seq`, [p.procid])
         result.push({ ...p, skills })
@@ -1828,8 +1834,8 @@ async function route(method, segments, body, headers, event) {
         const inserted = []
         for (const [i, s] of skills.entries()) {
           const res = await dbr(
-            `INSERT INTO process_skill (procid,skid,seq,duration,duration_unit) VALUES ($1,$2,$3,$4,$5) RETURNING psid`,
-            [r1, s.skid, i+1, s.duration||null, s.duration_unit||'minutes'])
+            `INSERT INTO process_skill (procid,skid,seq,duration,duration_unit,recur_every,recur_unit) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING psid`,
+            [r1, s.skid, i+1, s.duration||null, s.duration_unit||'minutes', s.recur_every||null, s.recur_unit||'hours'])
           inserted.push({ ...s, psid: res.rows[0].psid, idx: i })
         }
         // Second pass: set dep_psid by matching dep_seq reference
@@ -2219,6 +2225,7 @@ async function route(method, segments, body, headers, event) {
       if (!run) return null
       const steps = await dbq(
         `SELECT prs.*, ps.seq, ps.duration, ps.duration_unit, ps.dep_type, ps.dep_psid,
+                ps.recur_every, ps.recur_unit,
                 s.name AS skill_name, s.color, s.skid,
                 u.first_name, u.last_name
          FROM process_run_step prs
@@ -2376,7 +2383,11 @@ async function route(method, segments, body, headers, event) {
     // POST /process-runs/:prid/steps/:psrid/complete
     if (r1 && r2 === 'steps' && segments[3] && segments[4] === 'complete' && method === 'POST') {
       const psrid = segments[3]
-      const [step] = await dbq('SELECT * FROM process_run_step WHERE psrid=$1 AND prid=$2', [psrid, r1])
+      const [step] = await dbq(
+        `SELECT prs.*, ps.recur_every, ps.recur_unit, prs.recur_index
+         FROM process_run_step prs
+         JOIN process_skill ps ON ps.psid=prs.psid
+         WHERE prs.psrid=$1 AND prs.prid=$2`, [psrid, r1])
       if (!step) return [404, { error: 'Step not found' }]
       // Add elapsed from last start if currently running
       const addSecs = (step.status === 'in_progress' && step.actual_started_at)
@@ -2388,7 +2399,20 @@ async function route(method, segments, body, headers, event) {
              elapsed_secs=elapsed_secs+$1
          WHERE psrid=$2 AND prid=$3`,
         [addSecs, psrid, r1])
-      // Check if all steps done → complete the run
+      // If recurring: spawn the next occurrence as a new pending step
+      if (step.recur_every) {
+        const intervalSecs = step.recur_unit === 'days'
+          ? step.recur_every * 86400
+          : step.recur_every * 3600
+        const nextIndex = (step.recur_index || 0) + 1
+        await dbr(
+          `INSERT INTO process_run_step
+             (prid, psid, uid, status, started_at, recur_index)
+           VALUES ($1, $2, $3, 'pending', NOW() + ($4 || ' seconds')::interval, $5)`,
+          [r1, step.psid, step.uid || null, String(intervalSecs), nextIndex])
+        return [200, await fetchRun(r1)]
+      }
+      // Non-recurring: check if all steps done → complete the run
       const remaining = await dbq(
         `SELECT psrid FROM process_run_step WHERE prid=$1 AND status NOT IN ('completed','skipped')`, [r1])
       if (!remaining.length) {
