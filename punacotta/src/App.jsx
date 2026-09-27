@@ -417,20 +417,20 @@ function Badge({ children, color, bg }) {
 function Spinner() {
   return (
     <div style={{ display:"flex", justifyContent:"center", alignItems:"center", padding:"40px 0" }}>
-      <svg width="44" height="44" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <svg width="48" height="72" viewBox="0 0 48 72" fill="none" xmlns="http://www.w3.org/2000/svg">
         <style>{`
-          @keyframes wink {
-            0%,100% { transform: scaleX(1); }
-            40%      { transform: scaleX(0.08); }
-            55%      { transform: scaleX(1.15); }
-            70%      { transform: scaleX(1); }
+          @keyframes tanelu-wink {
+            0%,35%,100% { transform: scaleY(1); }
+            45%          { transform: scaleY(0.07); }
+            58%          { transform: scaleY(1.12); }
+            70%          { transform: scaleY(1); }
           }
         `}</style>
-        {/* Static rect — tanelu logo rectangle */}
-        <rect x="2" y="2" width="40" height="40" rx="10" fill={G.caramel} />
-        {/* Winking circle (eye) */}
-        <g style={{ transformOrigin:"22px 22px", animation:"wink 1.6s ease-in-out infinite" }}>
-          <circle cx="22" cy="22" r="10" fill={G.cream} />
+        {/* Rectangle — top part of tanelu logo */}
+        <rect x="2" y="2" width="44" height="26" rx="6" fill={G.caramel} />
+        {/* Circle — bottom part, winks */}
+        <g style={{ transformOrigin:"24px 56px", animation:"tanelu-wink 1.8s ease-in-out infinite" }}>
+          <circle cx="24" cy="56" r="14" fill={G.caramel} />
         </g>
       </svg>
     </div>
