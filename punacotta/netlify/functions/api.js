@@ -56,6 +56,18 @@ async function ensureMigrations() {
     await dbr(`ALTER TABLE "order" ADD COLUMN IF NOT EXISTS guest_email VARCHAR(200)`)
     await dbr(`ALTER TABLE "order" ADD COLUMN IF NOT EXISTS guest_phone VARCHAR(50)`)
     await dbr(`ALTER TABLE "order" ADD COLUMN IF NOT EXISTS prid INTEGER`)
+    // Phase 1: step-level progress management
+    await dbr(`ALTER TABLE process_run_step ADD COLUMN IF NOT EXISTS actual_started_at TIMESTAMPTZ`)
+    await dbr(`ALTER TABLE process_run_step ADD COLUMN IF NOT EXISTS actual_completed_at TIMESTAMPTZ`)
+    await dbr(`ALTER TABLE process_run_step ADD COLUMN IF NOT EXISTS paused_at TIMESTAMPTZ`)
+    await dbr(`ALTER TABLE process_run_step ADD COLUMN IF NOT EXISTS elapsed_secs INTEGER NOT NULL DEFAULT 0`)
+    await dbr(`ALTER TABLE process_run_step ADD COLUMN IF NOT EXISTS delay_reason TEXT`)
+    await dbr(`ALTER TABLE process_run_step ADD COLUMN IF NOT EXISTS is_delayed BOOLEAN NOT NULL DEFAULT false`)
+    // Recurring steps
+    await dbr(`ALTER TABLE process_skill ADD COLUMN IF NOT EXISTS recur_every INTEGER`)
+    await dbr(`ALTER TABLE process_skill ADD COLUMN IF NOT EXISTS recur_unit VARCHAR(10) DEFAULT 'hours'`)
+    await dbr(`ALTER TABLE process_skill ADD COLUMN IF NOT EXISTS recur_times INTEGER`)
+    await dbr(`ALTER TABLE process_run_step ADD COLUMN IF NOT EXISTS recur_index INTEGER NOT NULL DEFAULT 0`)
   } catch(e) { console.error('Migration error:', e.message) }
 }
 
@@ -110,7 +122,9 @@ async function enrichUser(user) {
 function safe(u) { const { password_hash, ...r } = u; return r }
 
 // ─── MAIL ─────────────────────────────────────────────────────────────────────
-const BASE_URL = process.env.URL || 'https://punacotta.netlify.app'
+const BASE_URL = process.env.APP_URL || process.env.URL || 'https://tanelu.com'
+// App URL for hash-routed pages (avoids landing page redirect at root)
+const APP_URL = (process.env.APP_URL || process.env.URL || 'https://tanelu.com') + '/app'
 
 async function sendMail(to, subject, text, html) {
   // Skip sending to obviously fake/test domains — log instead
@@ -406,11 +420,11 @@ async function route(method, segments, body, headers, event) {
       await sendMail(
         u.email,
         'Welcome to Pun&Cotta – confirm your email',
-        `Hi ${u.first_name},\n\nPlease confirm your email:\n${BASE_URL}/#verify/${token}\n\nThis link expires in 1 hour.\n\nPun&Cotta`,
+        `Hi ${u.first_name},\n\nPlease confirm your email:\n${APP_URL}#verify/${token}\n\nThis link expires in 1 hour.\n\nPun&Cotta`,
         mailHtml(
           'Welcome to Pun&Cotta 🎉',
           `Hi ${u.first_name}, thanks for signing up! Please confirm your email address to get started.`,
-          `${BASE_URL}/#verify/${token}`,
+          `${APP_URL}#verify/${token}`,
           'Confirm my email'
         )
       )
@@ -425,11 +439,11 @@ async function route(method, segments, body, headers, event) {
         await sendMail(
           u.email,
           'Pun&Cotta – reset your password',
-          `Hi ${u.first_name},\n\nReset your password:\n${BASE_URL}/#reset/${token}\n\nThis link expires in 1 hour.\n\nPun&Cotta`,
+          `Hi ${u.first_name},\n\nReset your password:\n${APP_URL}#reset/${token}\n\nThis link expires in 1 hour.\n\nPun&Cotta`,
           mailHtml(
             'Reset your password',
             `Hi ${u.first_name}, we received a request to reset your Pun&amp;Cotta password. Click the button below — the link is valid for 1 hour.`,
-            `${BASE_URL}/#reset/${token}`,
+            `${APP_URL}#reset/${token}`,
             'Reset my password'
           )
         )
@@ -1567,11 +1581,11 @@ async function route(method, segments, body, headers, event) {
         await sendMail(
           newEmp.email,
           `You've been invited to join ${restaurantName} on Tanelu`,
-          `Hi,\n\nYou've been added as a team member at ${restaurantName}.\n\nClick the link below to set up your account:\n${BASE_URL}/#invite/${inviteToken}\n\nThis link expires in 7 days.\n\nTanelu`,
+          `Hi,\n\nYou've been added as a team member at ${restaurantName}.\n\nClick the link below to set up your account:\n${APP_URL}#invite/${inviteToken}\n\nThis link expires in 7 days.\n\nTanelu`,
           mailHtml(
             `You're invited to join ${restaurantName}`,
             `You've been added as a team member at <strong>${restaurantName}</strong> on Tanelu. Click below to set up your account and access your roster and schedule.`,
-            `${BASE_URL}/#invite/${inviteToken}`,
+            `${APP_URL}#invite/${inviteToken}`,
             'Set up my account'
           )
         )
@@ -1593,10 +1607,10 @@ async function route(method, segments, body, headers, event) {
       const restaurantName = owner?.business_name || owner?.first_name || 'your restaurant'
       await sendMail(emp.email,
         `Invitation to join ${restaurantName} on Tanelu`,
-        `Hi,\n\nHere is your updated invite link:\n${BASE_URL}/#invite/${inviteToken}\n\nThis link expires in 7 days.\n\nTanelu`,
+        `Hi,\n\nHere is your updated invite link:\n${APP_URL}#invite/${inviteToken}\n\nThis link expires in 7 days.\n\nTanelu`,
         mailHtml(`Join ${restaurantName} on Tanelu`,
           `You've been added as a team member at <strong>${restaurantName}</strong>. Click below to set up your account.`,
-          `${BASE_URL}/#invite/${inviteToken}`, 'Set up my account'))
+          `${APP_URL}#invite/${inviteToken}`, 'Set up my account'))
       return [200, { sent: true }]
     }
 
@@ -1714,6 +1728,7 @@ async function route(method, segments, body, headers, event) {
     if (method === 'POST') {
       const { name, duration, duration_unit, dep_type, dep_skid } = body
       if (!name?.trim()) return [400, { error: 'Skill name required' }]
+      if (duration != null && Number(duration) < 0) return [400, { error: 'Duration may not be negative' }]
       const res = await dbr(
         `INSERT INTO skill (owner_uid,name,duration,duration_unit,dep_type,dep_skid)
          VALUES ($1,$2,$3,$4,$5,$6)
@@ -1723,6 +1738,7 @@ async function route(method, segments, body, headers, event) {
     }
     if (r1 && method === 'PATCH') {
       const { name, duration, duration_unit, dep_type, dep_skid } = body
+      if (duration != null && Number(duration) < 0) return [400, { error: 'Duration may not be negative' }]
       const sets = [], vals = [r1]
       if (name          !== undefined) { sets.push(`name=$${vals.length+1}`);          vals.push(name.trim()) }
       if (duration      !== undefined) { sets.push(`duration=$${vals.length+1}`);      vals.push(duration||null) }
@@ -1767,6 +1783,7 @@ async function route(method, segments, body, headers, event) {
       if (!proc) return null
       const skills = await dbq(
         `SELECT ps.psid, ps.seq, ps.duration, ps.duration_unit, ps.dep_type, ps.dep_psid,
+                ps.recur_every, ps.recur_unit, ps.recur_times,
                 s.skid, s.name, s.color
          FROM process_skill ps JOIN skill s ON s.skid=ps.skid
          WHERE ps.procid=$1 ORDER BY ps.seq`, [procid])
@@ -1785,6 +1802,7 @@ async function route(method, segments, body, headers, event) {
       for (const p of procs) {
         const skills = await dbq(
           `SELECT ps.psid, ps.seq, ps.duration, ps.duration_unit, ps.dep_type, ps.dep_psid,
+                  ps.recur_every, ps.recur_unit, ps.recur_times,
                   s.skid, s.name, s.color
            FROM process_skill ps JOIN skill s ON s.skid=ps.skid WHERE ps.procid=$1 ORDER BY ps.seq`, [p.procid])
         result.push({ ...p, skills })
@@ -1803,13 +1821,26 @@ async function route(method, segments, body, headers, event) {
       if (!proc) return [404, { error: 'Not found' }]
       if (name !== undefined) await dbr('UPDATE process SET name=$1 WHERE procid=$2', [name.trim(), r1])
       if (Array.isArray(skills)) {
+        // Block step changes if an active run exists — changes apply to future runs only
+        const [activeRun] = await dbq(
+          `SELECT prid FROM process_run WHERE procid=$1 AND status IN ('running','paused') LIMIT 1`, [r1])
+        if (activeRun) return [409, { error: 'This process has an active run. Stop it before editing its steps.' }]
+        // Validate durations before touching the DB
+        for (const s of skills) {
+          if (s.duration != null && Number(s.duration) < 0)
+            return [400, { error: `Duration for step "${s.name||s.skid}" may not be negative` }]
+        }
+        // Remove step history for non-active runs so the FK won't block the skill delete
+        // (active runs are already blocked above; stopped/completed runs are safe to clean up)
+        await dbr(`DELETE FROM process_run_step WHERE psid IN (
+          SELECT psid FROM process_skill WHERE procid=$1)`, [r1])
         await dbr('DELETE FROM process_skill WHERE procid=$1', [r1])
         // First pass: insert all rows to get psids
         const inserted = []
         for (const [i, s] of skills.entries()) {
           const res = await dbr(
-            `INSERT INTO process_skill (procid,skid,seq,duration,duration_unit) VALUES ($1,$2,$3,$4,$5) RETURNING psid`,
-            [r1, s.skid, i+1, s.duration||null, s.duration_unit||'minutes'])
+            `INSERT INTO process_skill (procid,skid,seq,duration,duration_unit,recur_every,recur_unit,recur_times) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING psid`,
+            [r1, s.skid, i+1, s.duration||null, s.duration_unit||'minutes', s.recur_every||null, s.recur_unit||'hours', s.recur_times||null])
           inserted.push({ ...s, psid: res.rows[0].psid, idx: i })
         }
         // Second pass: set dep_psid by matching dep_seq reference
@@ -1850,6 +1881,9 @@ async function route(method, segments, body, headers, event) {
 
     if (r1 && method === 'DELETE') {
       // process_run_step → process_run → process_skill → process_item → process
+      // Null out order.prid first to avoid FK violation
+      await dbr(`UPDATE "order" SET prid=NULL WHERE prid IN (
+        SELECT prid FROM process_run WHERE procid=$1)`, [r1])
       await dbr(`DELETE FROM process_run_step WHERE prid IN (
         SELECT prid FROM process_run WHERE procid=$1)`, [r1])
       await dbr('DELETE FROM process_run   WHERE procid=$1', [r1])
@@ -1889,7 +1923,12 @@ async function route(method, segments, body, headers, event) {
       const { scheduled_at, ignore_hours } = body
 
       const [proc] = await dbq('SELECT * FROM process WHERE procid=$1 AND owner_uid=$2', [r1, ownerUid])
-      if (!proc) return [404, { error: 'Process not found' }]
+      if (!proc) {
+        // Debug: check if process exists at all
+        const [any] = await dbq('SELECT procid, owner_uid FROM process WHERE procid=$1', [r1])
+        console.error(`Process not found: procid=${r1} ownerUid=${ownerUid} user.uid=${user.uid} user.is_manufacturer=${user.is_manufacturer} user.employer_uid=${user.employer_uid} foundAny=${JSON.stringify(any)}`)
+        return [404, { error: `Process not found (procid=${r1}, ownerUid=${ownerUid})` }]
+      }
 
       // Get all steps with their skill requirements
       const steps = await dbq(
@@ -2191,7 +2230,8 @@ async function route(method, segments, body, headers, event) {
       if (!run) return null
       const steps = await dbq(
         `SELECT prs.*, ps.seq, ps.duration, ps.duration_unit, ps.dep_type, ps.dep_psid,
-                s.name AS skill_name, s.color, s.dep_skid,
+                ps.recur_every, ps.recur_unit, ps.recur_times,
+                s.name AS skill_name, s.color, s.skid,
                 u.first_name, u.last_name
          FROM process_run_step prs
          JOIN process_skill ps ON ps.psid=prs.psid
@@ -2201,12 +2241,33 @@ async function route(method, segments, body, headers, event) {
       return { ...run, steps }
     }
 
-    // GET /process-runs — list all runs for this restaurant
+    // GET /process-runs — list all runs for this restaurant (with steps when ?steps=1)
     if (!r1 && method === 'GET') {
       const runs = await dbq(
         `SELECT pr.*, p.name AS process_name
          FROM process_run pr JOIN process p ON p.procid=pr.procid
          WHERE pr.owner_uid=$1 ORDER BY pr.started_at DESC`, [ownerUid])
+      if (event?.queryStringParameters?.steps === '1') {
+        // Attach steps to each run (for notification polling)
+        const prids = runs.map(r => r.prid)
+        if (prids.length > 0) {
+          const allSteps = await dbq(
+            `SELECT prs.*, ps.seq, ps.duration, ps.duration_unit, ps.dep_type, ps.dep_psid,
+                    s.name AS step_name, s.color, s.skid,
+                    u.first_name, u.last_name
+             FROM process_run_step prs
+             JOIN process_skill ps ON ps.psid=prs.psid
+             JOIN skill s ON s.skid=ps.skid
+             LEFT JOIN "user" u ON u.uid=prs.uid
+             WHERE prs.prid=ANY($1) ORDER BY ps.seq`, [prids])
+          const stepsByPrid = {}
+          for (const s of allSteps) {
+            if (!stepsByPrid[s.prid]) stepsByPrid[s.prid] = []
+            stepsByPrid[s.prid].push(s)
+          }
+          for (const r of runs) r.steps = stepsByPrid[r.prid] || []
+        }
+      }
       return [200, runs]
     }
 
@@ -2284,32 +2345,111 @@ async function route(method, segments, body, headers, event) {
       const [step] = await dbq('SELECT * FROM process_run_step WHERE psrid=$1 AND prid=$2', [psrid, r1])
       if (!step) return [404, { error: 'Step not found' }]
       if (step.status !== 'pending') return [400, { error: 'Step is not pending' }]
-      await dbr('UPDATE process_run_step SET status=$1, started_at=NOW(), uid=$2 WHERE psrid=$3',
-        ['in_progress', user.uid, psrid])
-      // Check if this completes all steps → auto-complete run
-      const pending = await dbq(
-        `SELECT psrid FROM process_run_step WHERE prid=$1 AND status IN ('pending')`, [r1])
-      if (!pending.length) {
-        // Notify next step employee if dep type allows
-        // (simplified: just check if any pending steps remain after this one)
-      }
+      await dbr(
+        `UPDATE process_run_step
+         SET status='in_progress', started_at=NOW(), actual_started_at=NOW(), uid=$1
+         WHERE psrid=$2`,
+        [user.uid, psrid])
+      return [200, await fetchRun(r1)]
+    }
+
+    // POST /process-runs/:prid/steps/:psrid/pause
+    if (r1 && r2 === 'steps' && segments[3] && segments[4] === 'pause' && method === 'POST') {
+      const psrid = segments[3]
+      const [step] = await dbq('SELECT * FROM process_run_step WHERE psrid=$1 AND prid=$2', [psrid, r1])
+      if (!step) return [404, { error: 'Step not found' }]
+      if (step.status !== 'in_progress') return [400, { error: 'Step is not in progress' }]
+      // Accumulate elapsed seconds since last start
+      const addSecs = step.actual_started_at
+        ? Math.floor((Date.now() - new Date(step.actual_started_at).getTime()) / 1000)
+        : 0
+      await dbr(
+        `UPDATE process_run_step
+         SET status='on_hold', paused_at=NOW(), elapsed_secs=elapsed_secs+$1
+         WHERE psrid=$2`,
+        [addSecs, psrid])
+      return [200, await fetchRun(r1)]
+    }
+
+    // POST /process-runs/:prid/steps/:psrid/resume
+    if (r1 && r2 === 'steps' && segments[3] && segments[4] === 'resume' && method === 'POST') {
+      const psrid = segments[3]
+      const [step] = await dbq('SELECT * FROM process_run_step WHERE psrid=$1 AND prid=$2', [psrid, r1])
+      if (!step) return [404, { error: 'Step not found' }]
+      if (step.status !== 'on_hold') return [400, { error: 'Step is not on hold' }]
+      await dbr(
+        `UPDATE process_run_step
+         SET status='in_progress', actual_started_at=NOW(), paused_at=NULL
+         WHERE psrid=$1`,
+        [psrid])
       return [200, await fetchRun(r1)]
     }
 
     // POST /process-runs/:prid/steps/:psrid/complete
     if (r1 && r2 === 'steps' && segments[3] && segments[4] === 'complete' && method === 'POST') {
       const psrid = segments[3]
-      await dbr('UPDATE process_run_step SET status=$1, completed_at=NOW() WHERE psrid=$2 AND prid=$3',
-        ['completed', psrid, r1])
-      // Check if all steps completed → complete the run
+      const [step] = await dbq(
+        `SELECT prs.*, ps.recur_every, ps.recur_unit, prs.recur_index
+         FROM process_run_step prs
+         JOIN process_skill ps ON ps.psid=prs.psid
+         WHERE prs.psrid=$1 AND prs.prid=$2`, [psrid, r1])
+      if (!step) return [404, { error: 'Step not found' }]
+      // Add elapsed from last start if currently running
+      const addSecs = (step.status === 'in_progress' && step.actual_started_at)
+        ? Math.floor((Date.now() - new Date(step.actual_started_at).getTime()) / 1000)
+        : 0
+      await dbr(
+        `UPDATE process_run_step
+         SET status='completed', actual_completed_at=NOW(), completed_at=NOW(),
+             elapsed_secs=elapsed_secs+$1
+         WHERE psrid=$2 AND prid=$3`,
+        [addSecs, psrid, r1])
+      // If recurring: spawn the next occurrence as a new pending step
+      if (step.recur_every) {
+        const intervalSecs = step.recur_unit === 'days'
+          ? step.recur_every * 86400
+          : step.recur_every * 3600
+        const nextIndex = (step.recur_index || 0) + 1
+        await dbr(
+          `INSERT INTO process_run_step
+             (prid, psid, uid, status, started_at, recur_index)
+           VALUES ($1, $2, $3, 'pending', NOW() + ($4 || ' seconds')::interval, $5)`,
+          [r1, step.psid, step.uid || null, String(intervalSecs), nextIndex])
+        return [200, await fetchRun(r1)]
+      }
+      // Non-recurring: check if all steps done → complete the run
       const remaining = await dbq(
         `SELECT psrid FROM process_run_step WHERE prid=$1 AND status NOT IN ('completed','skipped')`, [r1])
       if (!remaining.length) {
         await dbr('UPDATE process_run SET status=$1, completed_at=NOW() WHERE prid=$2', ['completed', r1])
         await syncOrderStatus(r1, 'completed')
       } else {
-        // Activate dependent steps whose predecessor just completed
         await activateDependentSteps(r1, psrid)
+      }
+      return [200, await fetchRun(r1)]
+    }
+
+    // POST /process-runs/:prid/steps/:psrid/skip
+    if (r1 && r2 === 'steps' && segments[3] && segments[4] === 'skip' && method === 'POST') {
+      const psrid = segments[3]
+      const { delay_reason } = body || {}
+      const [step] = await dbq('SELECT * FROM process_run_step WHERE psrid=$1 AND prid=$2', [psrid, r1])
+      if (!step) return [404, { error: 'Step not found' }]
+      if (['completed','skipped'].includes(step.status)) return [400, { error: 'Step already finished' }]
+      await dbr(
+        `UPDATE process_run_step
+         SET status='skipped', actual_completed_at=NOW(),
+             delay_reason=$1, is_delayed=true
+         WHERE psrid=$2 AND prid=$3`,
+        [delay_reason || null, psrid, r1])
+      // Activate next steps that were waiting on this one
+      await activateDependentSteps(r1, psrid)
+      // Check if all steps done now
+      const remaining = await dbq(
+        `SELECT psrid FROM process_run_step WHERE prid=$1 AND status NOT IN ('completed','skipped')`, [r1])
+      if (!remaining.length) {
+        await dbr('UPDATE process_run SET status=$1, completed_at=NOW() WHERE prid=$2', ['completed', r1])
+        await syncOrderStatus(r1, 'completed')
       }
       return [200, await fetchRun(r1)]
     }
@@ -2337,7 +2477,7 @@ async function route(method, segments, body, headers, event) {
               `Your step "${dep.skill_name}" is ready to start`,
               `Hi ${emp.first_name},\n\nThe preceding step has finished. You can now start "${dep.skill_name}".\n\nTanelu`,
               mailHtml('Step ready', `The preceding step has finished. You can now start <strong>${dep.skill_name}</strong>.`,
-                `${BASE_URL}/#roster`, 'Open Tanelu'))
+                `${APP_URL}#roster`, 'Open Tanelu'))
           }
         }
       }
@@ -2452,7 +2592,7 @@ async function route(method, segments, body, headers, event) {
       for (const e of emps) {
         await sendMail(e.email, `Roster published — week of ${wk}`,
           `Hi ${e.first_name}, the roster for week of ${wk} is now open. Please post your availability.`,
-          mailHtml('Roster published', `The roster for the week of ${wk} is now open for editing. Please log in and post your available time slots.`, `${BASE_URL}/#roster`, 'Open roster'))
+          mailHtml('Roster published', `The roster for the week of ${wk} is now open for editing. Please log in and post your available time slots.`, `${APP_URL}#roster`, 'Open roster'))
       }
       return [200, await fetchRoster(r1)]
     }
@@ -2479,7 +2619,7 @@ async function route(method, segments, body, headers, event) {
       for (const e of emps) {
         await sendMail(e.email, `Roster approved — week of ${wk}`,
           `Hi ${e.first_name}, the roster for week of ${wk} has been approved. Your schedule is now final.`,
-          mailHtml('Roster approved', `The roster for the week of ${wk} is approved and mandatory.`, `${BASE_URL}/#roster`, 'View roster'))
+          mailHtml('Roster approved', `The roster for the week of ${wk} is approved and mandatory.`, `${APP_URL}#roster`, 'View roster'))
       }
       return [200, await fetchRoster(r1)]
     }

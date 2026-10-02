@@ -270,6 +270,8 @@ const LangContext = createContext('en');
 function useLangContext() { return useContext(LangContext); }
 
 const CURRENCIES = ["AMD","RUR","USD","EUR"];
+const CUTOFF_HOURS = Array.from({length:48},(_,i)=>`${String(Math.floor(i/2)).padStart(2,"0")}:${i%2===0?"00":"30"}`);
+const DELIVERY_DAYS = [0,1,2,3,4,5,6,7,10,14,21,30];
 
 // Unit submultiple config — read-only, not editable by Restaurant
 const UNIT_META = {
@@ -345,10 +347,10 @@ function Dialog({ open, title, children, onConfirm, onCancel, confirmLabel="Yes"
   if (!open) return null;
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center" }}>
-      <div style={{ background:G.white, borderRadius:16, padding:32, maxWidth:440, width:"90%", animation:"fadeIn 0.2s ease", boxShadow:"0 20px 60px rgba(44,24,16,0.2)" }}>
-        <h3 style={{ fontFamily:G.font, fontSize:20, marginBottom:16 }}>{title}</h3>
-        <div style={{ color:G.muted, lineHeight:1.6, marginBottom:24, fontSize:15 }}>{children}</div>
-        <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+      <div style={{ background:G.white, borderRadius:16, padding:32, maxWidth:440, width:"90%", animation:"fadeIn 0.2s ease", boxShadow:"0 20px 60px rgba(44,24,16,0.2)", maxHeight:"90vh", display:"flex", flexDirection:"column" }}>
+        <h3 style={{ fontFamily:G.font, fontSize:20, marginBottom:16, flexShrink:0 }}>{title}</h3>
+        <div style={{ color:G.muted, lineHeight:1.6, marginBottom:24, fontSize:15, overflowY:"auto", flex:1 }}>{children}</div>
+        <div style={{ display:"flex", gap:10, justifyContent:"flex-end", flexShrink:0 }}>
           <Btn variant="ghost" onClick={onCancel}>{tl("Cancel")}</Btn>
           <Btn variant={danger?"danger":"primary"} onClick={onConfirm}>{confirmLabel}</Btn>
         </div>
@@ -413,7 +415,26 @@ function Badge({ children, color, bg }) {
 }
 
 function Spinner() {
-  return <div style={{ width:32, height:32, border:`3px solid ${G.border}`, borderTopColor:G.caramel, borderRadius:"50%", animation:"spin 0.8s linear infinite", margin:"40px auto" }} />;
+  return (
+    <div style={{ display:"flex", justifyContent:"center", alignItems:"center", padding:"40px 0" }}>
+      <svg width="48" height="72" viewBox="0 0 48 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <style>{`
+          @keyframes tanelu-wink {
+            0%,35%,100% { transform: scaleY(1); }
+            45%          { transform: scaleY(0.07); }
+            58%          { transform: scaleY(1.12); }
+            70%          { transform: scaleY(1); }
+          }
+        `}</style>
+        {/* Rectangle — top part of tanelu logo */}
+        <rect x="2" y="2" width="44" height="26" rx="6" fill={G.caramel} />
+        {/* Circle — bottom part, winks */}
+        <g style={{ transformOrigin:"24px 56px", animation:"tanelu-wink 0.5s ease-in-out infinite" }}>
+          <circle cx="24" cy="56" r="14" fill={G.caramel} />
+        </g>
+      </svg>
+    </div>
+  );
 }
 
 // ─── IMAGE UPLOADER + CROP ────────────────────────────────────────────────────
@@ -979,7 +1000,235 @@ function NavSearchBar({ onClick }) {
 }
 
 
-function Nav({ user, page, setPage, logout, lang, setLang }) {
+// ─── NOTIFICATION BELL ────────────────────────────────────────────────────────
+function stepDurationMinutes(step) {
+  const d = step.duration || 0;
+  const u = step.duration_unit || 'minutes';
+  if (u === 'hours') return d * 60;
+  if (u === 'seconds') return d / 60;
+  return d; // minutes default
+}
+
+function useNotifications(user) {
+  // notifs: Map<psrid, { psrid, prid, process_name, step_name, dueAt, type, seenAt }>
+  // type: 'now' | 'overdue' | 'upcoming'
+  const [notifs, setNotifs] = useState(new Map());
+  const stoppedPrids = useRef(new Set());
+
+  const compute = useCallback(async () => {
+    if (!user) return;
+    let runs;
+    try { runs = await api.getProcessRunsWithSteps(); } catch { return; }
+
+    const now = Date.now();
+    setNotifs(prev => {
+      const next = new Map(prev);
+
+      // Wipe notifications for stopped/completed runs
+      for (const run of runs) {
+        if (run.status === 'stopped' || run.status === 'completed') {
+          for (const [psrid, n] of next) {
+            if (n.prid === run.prid) next.delete(psrid);
+          }
+        }
+      }
+
+      const activeRuns = runs.filter(r => r.status === 'running' || r.status === 'paused');
+      for (const run of activeRuns) {
+        if (!run.steps || !Array.isArray(run.steps)) continue;
+        const steps = [...run.steps].sort((a, b) => a.seq - b.seq);
+        const runStart = run.started_at ? new Date(run.started_at).getTime() : now;
+
+        for (let i = 0; i < steps.length; i++) {
+          const step = steps[i];
+          const prevStep = i > 0 ? steps[i - 1] : null;
+
+          if (step.status !== 'pending') continue;
+
+          // Due time = run start + sum of all preceding step durations
+          let dueSumMs = 0;
+          for (let j = 0; j < i; j++) {
+            dueSumMs += stepDurationMinutes(steps[j]) * 60000;
+          }
+          const dueAt = runStart + dueSumMs;
+          const diffMs = dueAt - now;
+
+          // Early warning timing
+          const precedingDurMin = prevStep ? stepDurationMinutes(prevStep) : 999;
+          let earlyWarnMs;
+          if (precedingDurMin <= 1) earlyWarnMs = 0;
+          else if (precedingDurMin <= 5) earlyWarnMs = 60000;
+          else earlyWarnMs = 5 * 60000;
+
+          const psrid = step.psrid;
+          const existing = next.get(psrid);
+
+          let type;
+          if (diffMs < 0) {
+            type = 'overdue'; // was due in the past
+          } else if (diffMs === 0 || diffMs < 30000) {
+            type = 'now';
+          } else if (diffMs <= earlyWarnMs) {
+            type = 'upcoming';
+          } else {
+            // Not yet time to notify — but don't delete if already notified
+            continue;
+          }
+
+          next.set(psrid, {
+            psrid,
+            prid: run.prid,
+            process_name: run.process_name,
+            step_name: step.step_name || step.name || `Step ${step.seq}`,
+            dueAt,
+            type,
+            seenAt: existing?.seenAt || null,
+            addedAt: existing?.addedAt || now,
+          });
+        }
+      }
+      return next;
+    });
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    compute();
+    const interval = setInterval(compute, 30000);
+    return () => clearInterval(interval);
+  }, [user, compute]);
+
+  const dismiss = useCallback(psrid => {
+    setNotifs(prev => { const next = new Map(prev); next.delete(psrid); return next; });
+  }, []);
+
+  const markSeen = useCallback(() => {
+    setNotifs(prev => {
+      const next = new Map(prev);
+      const now2 = Date.now();
+      for (const [k, v] of next) next.set(k, { ...v, seenAt: v.seenAt || now2 });
+      return next;
+    });
+  }, []);
+
+  const unseenCount = useMemo(() => {
+    let n = 0;
+    for (const v of notifs.values()) if (!v.seenAt) n++;
+    return n;
+  }, [notifs]);
+
+  return { notifs, dismiss, markSeen, unseenCount, refresh: compute };
+}
+
+function fmtNotifTime(dueAt, type) {
+  const now = Date.now();
+  if (type === 'now') return null; // text says "now"
+  if (type === 'upcoming') {
+    const diffMs = dueAt - now;
+    const diffMin = Math.ceil(diffMs / 60000);
+    if (diffMin < 60) return `${diffMin}m`;
+    const h = Math.floor(diffMin / 60), m = diffMin % 60;
+    return m ? `${h}h ${m}m` : `${h}h`;
+  }
+  if (type === 'overdue') {
+    const diffMs = now - dueAt;
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 60) return `${diffMin}m`;
+    const h = Math.floor(diffMin / 60), m = diffMin % 60;
+    return m ? `${h}h ${m}m` : `${h}h`;
+  }
+  return null;
+}
+
+function fmtNotifTs(addedAt) {
+  if (!addedAt) return '';
+  const d = new Date(addedAt);
+  const now = new Date();
+  const hm = d.toTimeString().slice(0,5);
+  const today = now.toDateString();
+  const yest = new Date(now - 86400000).toDateString();
+  if (d.toDateString() === today) return `${hm} Today`;
+  if (d.toDateString() === yest) return `${hm} Yesterday`;
+  return `${hm} ${d.toLocaleDateString('en-US',{month:'short',day:'numeric'})}`;
+}
+
+function NotificationBell({ notifs, unseenCount, markSeen, dismiss, refresh }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const toggle = () => {
+    if (!open) markSeen();
+    setOpen(p => !p);
+  };
+
+  const items = [...notifs.values()].sort((a, b) => b.addedAt - a.addedAt);
+  const badge = unseenCount > 9 ? '9+' : unseenCount > 0 ? String(unseenCount) : null;
+
+  const handlePlay = async (n) => {
+    try {
+      await api.startStep(n.prid, n.psrid);
+      dismiss(n.psrid);
+      refresh();
+    } catch(e) {
+      // silent — step might already be started
+    }
+  };
+
+  return (
+    <div ref={ref} style={{ position:'relative', flexShrink:0, marginRight:8 }}>
+      <button onClick={toggle} style={{ position:'relative', background:'none', border:`1px solid ${G.border}`, borderRadius:8, cursor:'pointer', padding:'6px 10px', display:'flex', alignItems:'center', fontSize:18, color:G.muted, lineHeight:1 }}
+        onMouseEnter={e=>e.currentTarget.style.borderColor=G.caramel}
+        onMouseLeave={e=>e.currentTarget.style.borderColor=G.border}>
+        🔔
+        {badge&&(
+          <span style={{ position:'absolute', top:-5, right:-5, background:G.red, color:'#fff', borderRadius:99, fontSize:10, fontFamily:G.mono, fontWeight:700, minWidth:16, height:16, display:'flex', alignItems:'center', justifyContent:'center', padding:'0 3px', lineHeight:1, border:`2px solid ${G.white}` }}>
+            {badge}
+          </span>
+        )}
+      </button>
+      {open&&(
+        <div style={{ position:'fixed', top:66, right:16, width:340, maxHeight:480, overflowY:'auto', background:G.white, border:`1px solid ${G.border}`, borderRadius:12, boxShadow:'0 8px 32px rgba(44,24,16,0.18)', zIndex:500, animation:'fadeIn 0.15s ease' }}>
+          <div style={{ padding:'12px 16px', borderBottom:`1px solid ${G.border}`, fontFamily:G.mono, fontSize:13, fontWeight:600, color:G.dark, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+            <span>Notifications</span>
+            {items.length>0&&<button onClick={()=>{ items.forEach(n=>dismiss(n.psrid)); }} style={{ background:'none', border:'none', cursor:'pointer', fontFamily:G.mono, fontSize:11, color:G.muted }}>Clear all</button>}
+          </div>
+          {items.length===0
+            ? <div style={{ padding:'28px 16px', fontFamily:G.mono, fontSize:13, color:G.muted, textAlign:'center' }}>No notifications</div>
+            : items.map(n => {
+                const timeStr = fmtNotifTime(n.dueAt, n.type);
+                let text;
+                if (n.type==='now') text = `${n.process_name} | ${n.step_name} is due to start now`;
+                else if (n.type==='overdue') text = `${n.process_name} | ${n.step_name} was due to start ${timeStr} ago`;
+                else text = `${n.process_name} | ${n.step_name} due to start in ${timeStr}`;
+                return (
+                  <div key={n.psrid} style={{ display:'flex', alignItems:'flex-start', gap:10, padding:'11px 14px', borderBottom:`1px solid ${G.sand}`, background:n.seenAt?'transparent':G.sand }}>
+                    {(n.type==='now'||n.type==='overdue')
+                      ? <button onClick={()=>handlePlay(n)} title="Start step" style={{ background:G.caramel, border:'none', borderRadius:6, cursor:'pointer', color:'#fff', fontSize:11, padding:'3px 7px', flexShrink:0, marginTop:1, fontWeight:700 }}>▶</button>
+                      : <span style={{ width:28, flexShrink:0 }}/>
+                    }
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontFamily:G.mono, fontSize:12, color:G.dark, lineHeight:1.4 }}>{text}</div>
+                      <div style={{ fontFamily:G.mono, fontSize:10, color:G.muted, marginTop:3 }}>{fmtNotifTs(n.addedAt)}</div>
+                    </div>
+                    <button onClick={()=>dismiss(n.psrid)} style={{ background:'none', border:'none', cursor:'pointer', color:G.muted, fontSize:14, lineHeight:1, flexShrink:0, padding:'2px 4px' }}>×</button>
+                  </div>
+                );
+              })
+          }
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Nav({ user, page, setPage, logout, lang, setLang, notifProps }) {
   const isM = user?.is_manufacturer;
   const [dropOpen,   setDropOpen]   = useState(false);
   const [cpOpen,     setCpOpen]     = useState(false);
@@ -1017,6 +1266,8 @@ function Nav({ user, page, setPage, logout, lang, setLang }) {
           <button key={l.key} onClick={()=>navigate(l.key)} style={{ background:page===l.key?G.sand:"none", border:"none", padding:"6px 10px", borderRadius:8, fontFamily:G.mono, fontSize:13, fontWeight:page===l.key?600:400, color:page===l.key?G.caramel:G.muted, cursor:"pointer", transition:"all 0.15s", whiteSpace:"nowrap" }}>{l.label}</button>
         ))}
       </div>
+      {/* Notification bell */}
+      {notifProps&&<NotificationBell {...notifProps}/>}
       {/* Search bar */}
       <NavSearchBar onClick={()=>setCpOpen(true)}/>
       {/* Language toggle */}
@@ -1291,6 +1542,9 @@ function ProductsPage({ toast }) {
   const [editExpiry, setEditExpiry] = useState("");
   const [linkPid, setLinkPid] = useState(null);
   const [linkSid, setLinkSid] = useState(""); const [linkPrice, setLinkPrice] = useState(""); const [linkCurrency, setLinkCurrency] = useState("AMD");
+  const [showNewSupplierInline, setShowNewSupplierInline] = useState(false);
+  const [newSupplierForm, setNewSupplierForm] = useState({name:"",email:"",phone:"",street_address:"",city:"",zip:""});
+  const [savingNewSupplier, setSavingNewSupplier] = useState(false);
   const [stock, setStock]           = useState({}); // pid → qty
   const [wastageMode, setWastageMode] = useState(false);
   const [wastageDeltas, setWastageDeltas] = useState({}); // pid → negative delta
@@ -1357,6 +1611,19 @@ function ProductsPage({ toast }) {
   const unlinkSupplier = async (sid, psid) => {
     try { await api.unlinkSupplierProduct(sid, psid); await load(); toast("Supplier unlinked"); }
     catch(e){ toast(e.message,"error"); }
+  };
+
+  const saveNewSupplierInline = async () => {
+    if (!newSupplierForm.name.trim()) { toast("Name required","error"); return; }
+    setSavingNewSupplier(true);
+    try {
+      const s = await api.createSupplier(newSupplierForm);
+      setSuppliers(p=>[...p,s]);
+      setLinkSid(String(s.sid));
+      setShowNewSupplierInline(false);
+      setNewSupplierForm({name:"",email:"",phone:"",street_address:"",city:"",zip:""});
+      toast(`"${s.name}" created`);
+    } catch(e){ toast(e.message,"error"); } finally{ setSavingNewSupplier(false); }
   };
 
   const openDeleteDialog = async () => {
@@ -1444,17 +1711,37 @@ function ProductsPage({ toast }) {
             </div>
           ))}
           {linkPid===r.pid ? (
-            <div style={{ display:"flex", gap:4, alignItems:"center", flexWrap:"wrap", marginTop:2 }}>
-              <select value={linkSid} onChange={e=>setLinkSid(e.target.value)} style={{padding:"3px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
-                <option value="">Supplier…</option>
-                {suppliers.map(s=><option key={s.sid} value={s.sid}>{s.name}</option>)}
-              </select>
-              <input type="number" value={linkPrice} onChange={e=>setLinkPrice(e.target.value)} placeholder="Price" style={{width:60,padding:"3px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}} />
-              <select value={linkCurrency} onChange={e=>setLinkCurrency(e.target.value)} style={{padding:"3px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
-                {["AMD","USD","EUR","RUR"].map(c=><option key={c}>{c}</option>)}
-              </select>
-              <Btn size="sm" onClick={linkSupplier}>Link</Btn>
-              <button onClick={()=>setLinkPid(null)} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:14}}>×</button>
+            <div style={{ marginTop:4 }}>
+              <div style={{ display:"flex", gap:4, alignItems:"center", flexWrap:"wrap" }}>
+                <select value={linkSid} onChange={e=>{ if(e.target.value==="__new__"){ setShowNewSupplierInline(true); } else { setLinkSid(e.target.value); setShowNewSupplierInline(false); } }}
+                  style={{padding:"3px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
+                  <option value="">Supplier…</option>
+                  {suppliers.map(s=><option key={s.sid} value={s.sid}>{s.name}</option>)}
+                  <option value="__new__">+ New supplier…</option>
+                </select>
+                <input type="number" value={linkPrice} onChange={e=>setLinkPrice(e.target.value)} placeholder="Price" style={{width:60,padding:"3px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}} />
+                <select value={linkCurrency} onChange={e=>setLinkCurrency(e.target.value)} style={{padding:"3px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
+                  {["AMD","USD","EUR","RUR"].map(c=><option key={c}>{c}</option>)}
+                </select>
+                <Btn size="sm" onClick={linkSupplier}>Link</Btn>
+                <button onClick={()=>{setLinkPid(null);setShowNewSupplierInline(false);}} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:14}}>×</button>
+              </div>
+              {showNewSupplierInline&&(
+                <div style={{marginTop:8,padding:12,background:G.sand,borderRadius:8,display:"flex",flexDirection:"column",gap:8}}>
+                  <p style={{fontSize:12,fontWeight:700,color:G.dark,margin:0}}>New Supplier</p>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                    <input placeholder="Name *" value={newSupplierForm.name} onChange={e=>setNewSupplierForm(p=>({...p,name:e.target.value}))} style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none",gridColumn:"1/-1"}}/>
+                    <input placeholder="Email" value={newSupplierForm.email} onChange={e=>setNewSupplierForm(p=>({...p,email:e.target.value}))} style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}/>
+                    <input placeholder="Phone" value={newSupplierForm.phone} onChange={e=>setNewSupplierForm(p=>({...p,phone:e.target.value}))} style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}/>
+                    <input placeholder="Street address" value={newSupplierForm.street_address} onChange={e=>setNewSupplierForm(p=>({...p,street_address:e.target.value}))} style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}/>
+                    <input placeholder="City" value={newSupplierForm.city} onChange={e=>setNewSupplierForm(p=>({...p,city:e.target.value}))} style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}/>
+                  </div>
+                  <div style={{display:"flex",gap:6}}>
+                    <Btn size="sm" onClick={saveNewSupplierInline} loading={savingNewSupplier}>Save supplier</Btn>
+                    <Btn size="sm" variant="ghost" onClick={()=>setShowNewSupplierInline(false)}>Cancel</Btn>
+                  </div>
+                </div>
+              )}
             </div>
           ):(
             <button onClick={()=>{setLinkPid(r.pid);setLinkSid("");setLinkPrice("");}}
@@ -5477,7 +5764,7 @@ function SkillEditDialog({ skill, allSkills, onSave, onClose }) {
         <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
           <Input label="Name" value={form.name} onChange={v=>set("name",v)} required />
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-            <Input label="Duration" type="number" value={String(form.duration)} onChange={v=>set("duration",v)} placeholder="e.g. 30" />
+            <Input label="Duration" type="number" min="0" value={String(form.duration)} onChange={v=>set("duration", Math.max(0, parseFloat(v)||0))} placeholder="e.g. 30" />
             <div>
               <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Unit</label>
               <select value={form.duration_unit} onChange={e=>set("duration_unit",e.target.value)}
@@ -6081,12 +6368,204 @@ function RolesPage({ roles, skills, setRoles, setSkills, createSkill, toast, onB
   );
 }
 
+// ─── RUN DETAIL SIDEBAR ───────────────────────────────────────────────────────
+function RunDetailSidebar({ run, user, onClose, onRunUpdated, toast }) {
+  const [stepAction, setStepAction] = useState(null); // {psrid, action}
+  const [skipReason, setSkipReason] = useState("");
+  const [showSkipFor, setShowSkipFor] = useState(null); // psrid
+
+  if (!run) return null;
+
+  const steps = run.steps || [];
+  const STATUS_COLOR = {
+    pending:"#94a3b8", in_progress:G.caramel, on_hold:"#eab308",
+    completed:G.green, skipped:G.muted,
+  };
+  const STATUS_LABEL = {
+    pending:"Pending", in_progress:"In progress", on_hold:"On hold",
+    completed:"Done", skipped:"Skipped",
+  };
+
+  const fmtElapsed = secs => {
+    if (!secs) return "—";
+    const h = Math.floor(secs/3600), m = Math.floor((secs%3600)/60), s = secs%60;
+    if (h>0) return `${h}h ${m}m`;
+    if (m>0) return `${m}m ${s}s`;
+    return `${s}s`;
+  };
+
+  // Determine which actions a user can take on a step
+  const canAct = step => {
+    if (run.status === "cancelled" || run.status === "completed") return false;
+    if (user?.is_manufacturer) return true; // Restaurant can manage any step
+    // Employee: only steps assigned to them
+    return step.uid === user?.uid;
+  };
+
+  const doStepAction = async (psrid, action, extra) => {
+    setStepAction({psrid, action});
+    try {
+      let updated;
+      if (action === "start")    updated = await api.startStep(run.prid, psrid);
+      if (action === "pause")    updated = await api.pauseStep(run.prid, psrid);
+      if (action === "resume")   updated = await api.resumeStep(run.prid, psrid);
+      if (action === "complete") updated = await api.completeStep(run.prid, psrid);
+      if (action === "skip")     updated = await api.skipStep(run.prid, psrid, extra);
+      onRunUpdated(updated);
+    } catch(e){ toast(e.message, "error"); } finally { setStepAction(null); }
+  };
+
+  const handleSkip = psrid => {
+    doStepAction(psrid, "skip", { delay_reason: skipReason||undefined });
+    setShowSkipFor(null); setSkipReason("");
+  };
+
+  const runStatusColor = { in_progress:G.caramel, on_hold:"#eab308", completed:G.green, cancelled:G.red };
+  const col = runStatusColor[run.status] || G.muted;
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.35)",zIndex:1400}}/>
+      {/* Panel */}
+      <div style={{
+        position:"fixed",top:0,right:0,bottom:0,width:420,maxWidth:"100vw",
+        background:G.cream,boxShadow:"-4px 0 32px rgba(44,24,16,0.18)",
+        zIndex:1401,display:"flex",flexDirection:"column",overflowY:"hidden",
+      }}>
+        {/* Header */}
+        <div style={{padding:"20px 24px 16px",borderBottom:`1px solid ${G.border}`,flexShrink:0}}>
+          <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8}}>
+            <div>
+              <h2 style={{fontFamily:G.font,fontSize:20,color:G.dark,margin:"0 0 6px"}}>{run.process_name}</h2>
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                <span style={{fontSize:12,padding:"3px 10px",borderRadius:20,background:`${col}20`,color:col,fontWeight:700}}>
+                  {run.status.replace("_"," ")}
+                </span>
+                {run.started_at&&(
+                  <span style={{fontSize:12,color:G.muted}}>
+                    Started {new Date(run.started_at).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}
+                  </span>
+                )}
+              </div>
+            </div>
+            <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:22,lineHeight:1,padding:4,flexShrink:0}}>×</button>
+          </div>
+        </div>
+
+        {/* Steps list */}
+        <div style={{flex:1,overflowY:"auto",padding:"16px 24px"}}>
+          <p style={{fontSize:12,color:G.muted,marginBottom:12,textTransform:"uppercase",letterSpacing:0.8,fontWeight:600}}>
+            Steps — {steps.filter(s=>s.status==="completed").length}/{steps.length} done
+          </p>
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {steps.map((step,i)=>{
+              const sc = STATUS_COLOR[step.status]||G.muted;
+              const busy = stepAction?.psrid===step.psrid;
+              const actable = canAct(step);
+              const isSkipOpen = showSkipFor===step.psrid;
+
+              return (
+                <div key={step.psrid} style={{
+                  background:G.white,borderRadius:12,border:`1px solid ${G.border}`,
+                  padding:"12px 14px",opacity:step.status==="skipped"?0.55:1,
+                }}>
+                  {/* Row 1: seq + skill name + status badge */}
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                    <span style={{
+                      width:24,height:24,borderRadius:"50%",background:`${sc}22`,
+                      color:sc,fontSize:11,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,
+                    }}>{i+1}</span>
+                    <span style={{flex:1,fontSize:14,fontWeight:600,color:G.dark}}>{step.skill_name}</span>
+                    <span style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:`${sc}18`,color:sc,fontWeight:600,whiteSpace:"nowrap"}}>
+                      {STATUS_LABEL[step.status]||step.status}
+                    </span>
+                  </div>
+
+                  {/* Row 2: assignee + duration + elapsed */}
+                  <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:actable&&step.status!=="completed"&&step.status!=="skipped"?10:0}}>
+                    {(step.first_name||step.last_name) && (
+                      <span style={{fontSize:12,color:G.muted}}>
+                        👤 {[step.first_name,step.last_name].filter(Boolean).join(" ")}
+                      </span>
+                    )}
+                    {step.duration && (
+                      <span style={{fontSize:12,color:G.muted}}>
+                        ⏱ {step.duration} {step.duration_unit||"min"}
+                      </span>
+                    )}
+                    {step.elapsed_secs>0 && (
+                      <span style={{fontSize:12,color:G.caramel,fontWeight:600}}>
+                        Active: {fmtElapsed(step.elapsed_secs)}
+                      </span>
+                    )}
+                    {step.recur_every && (
+                      <span style={{fontSize:11,color:G.caramel,fontWeight:600}}>
+                        🔁 every {step.recur_every} {step.recur_unit||"hours"}
+                        {step.recur_index > 0 ? ` · #${step.recur_index + 1}` : ""}
+                      </span>
+                    )}
+                    {step.is_delayed && (
+                      <span style={{fontSize:11,color:G.red,fontWeight:600}}>⚠ Delayed</span>
+                    )}
+                    {step.delay_reason && (
+                      <span style={{fontSize:11,color:G.muted,fontStyle:"italic"}}>"{step.delay_reason}"</span>
+                    )}
+                  </div>
+
+                  {/* Action buttons */}
+                  {actable && !["completed","skipped"].includes(step.status) && !isSkipOpen && (
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                      {step.status==="pending" && (
+                        <Btn size="sm" onClick={()=>doStepAction(step.psrid,"start")} loading={busy}>▶ Start</Btn>
+                      )}
+                      {step.status==="in_progress" && (<>
+                        <Btn size="sm" variant="secondary" onClick={()=>doStepAction(step.psrid,"pause")} loading={busy}>⏸ Pause</Btn>
+                        <Btn size="sm" onClick={()=>doStepAction(step.psrid,"complete")} loading={busy}>✓ Complete</Btn>
+                      </>)}
+                      {step.status==="on_hold" && (<>
+                        <Btn size="sm" onClick={()=>doStepAction(step.psrid,"resume")} loading={busy}>▶ Resume</Btn>
+                        <Btn size="sm" onClick={()=>doStepAction(step.psrid,"complete")} loading={busy}>✓ Complete</Btn>
+                      </>)}
+                      <button onClick={()=>setShowSkipFor(step.psrid)}
+                        style={{padding:"4px 12px",borderRadius:6,border:`1px solid ${G.border}`,background:"none",
+                          fontSize:12,fontFamily:G.mono,color:G.muted,cursor:"pointer"}}>
+                        Skip
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Skip reason form */}
+                  {isSkipOpen && (
+                    <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:6}}>
+                      <input value={skipReason} onChange={e=>setSkipReason(e.target.value)}
+                        placeholder="Reason for skipping (optional)"
+                        style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none",width:"100%",boxSizing:"border-box"}}/>
+                      <div style={{display:"flex",gap:6}}>
+                        <Btn size="sm" variant="danger" onClick={()=>handleSkip(step.psrid)} loading={busy}>⚠ Skip step</Btn>
+                        <button onClick={()=>{setShowSkipFor(null);setSkipReason("");}}
+                          style={{padding:"4px 12px",borderRadius:6,border:`1px solid ${G.border}`,background:"none",fontSize:12,fontFamily:G.mono,color:G.muted,cursor:"pointer"}}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ─── EXECUTIONS CALENDAR ──────────────────────────────────────────────────────
-function ExecutionsCalendar({ runs, onAction }) {
+function ExecutionsCalendar({ runs, onAction, onOpenDetail }) {
   if (!runs || !runs.length) return null;
 
   const RUN_COLS = { in_progress:G.caramel, on_hold:"#eab308", completed:G.green, cancelled:G.red };
-  const dayMins = 600, labelW = 180, W = 920, chartW = W - labelW - 16;
+  const labelW = 180, W = 920, chartW = W - labelW - 16;
   const barH = 36, gap = 14, rowH = barH + gap;
   const svgH = runs.length * rowH + 40;
 
@@ -6103,7 +6582,19 @@ function ExecutionsCalendar({ runs, onAction }) {
     if (!iso) return 0;
     return Math.max(0, (new Date(iso).getTime() - anchorHour) / 60000);
   };
-  const minToX = m => Math.min(chartW, Math.max(0, (m / dayMins) * chartW));
+
+  // Auto-size window: find the latest end time across all runs, pad by 30 min, min 60 min
+  const latestMins = validRuns.reduce((max, r) => {
+    const endMs = r.completed_at ? new Date(r.completed_at).getTime()
+      : r.status === "in_progress" ? Date.now()
+      : new Date(r.started_at).getTime() + 30 * 60000;
+    const m = (endMs - anchorHour) / 60000;
+    return m > max ? m : max;
+  }, 60);
+  const windowMins = Math.ceil((latestMins + 30) / 60) * 60; // round up to whole hour + 30 min buffer
+  const tickInterval = windowMins <= 240 ? 30 : windowMins <= 720 ? 60 : 120;
+
+  const minToX = m => Math.max(0, (m / windowMins) * chartW);
 
   const anchorLabel = new Date(anchorHour).toLocaleTimeString("en-GB", {hour:"2-digit", minute:"2-digit"});
 
@@ -6111,15 +6602,13 @@ function ExecutionsCalendar({ runs, onAction }) {
     <div style={{overflowX:"auto", background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:16, marginBottom:12}}>
       <p style={{fontSize:11, color:G.muted, marginBottom:8}}>Timeline from {anchorLabel}</p>
       <svg width={W} height={svgH}>
-        {Array.from({length:21}, (_,i)=>i*30).map(m=>(
+        {Array.from({length: Math.ceil(windowMins / tickInterval) + 1}, (_,i) => i * tickInterval).map(m=>(
           <g key={m}>
             <line x1={labelW+minToX(m)} y1={0} x2={labelW+minToX(m)} y2={svgH}
               stroke={G.border} strokeWidth={m%60===0?1:0.5}/>
-            {m%60===0&&(
-              <text x={labelW+minToX(m)+3} y={12} fontSize={9} fill={G.muted}>
-                {new Date(anchorHour + m*60000).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}
-              </text>
-            )}
+            <text x={labelW+minToX(m)+3} y={12} fontSize={9} fill={G.muted}>
+              {new Date(anchorHour + m*60000).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}
+            </text>
           </g>
         ))}
         {runs.map((run,i)=>{
@@ -6169,7 +6658,10 @@ function ExecutionsCalendar({ runs, onAction }) {
             <div key={run.prid} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
               padding:"10px 14px",background:G.sand,borderRadius:8}}>
               <div style={{display:"flex",alignItems:"center",gap:10}}>
-                <span style={{fontWeight:700,fontSize:14,color:G.dark}}>{run.process_name}</span>
+                <button onClick={()=>onOpenDetail&&onOpenDetail(run)}
+                  style={{fontWeight:700,fontSize:14,color:G.caramel,background:"none",border:"none",cursor:"pointer",padding:0,fontFamily:G.mono,textDecoration:"underline",textDecorationColor:`${G.caramel}50`}}>
+                  {run.process_name}
+                </button>
                 <span style={{fontSize:12,padding:"2px 10px",borderRadius:20,background:`${col}20`,color:col,fontWeight:600}}>
                   {run.status.replace("_"," ")}
                 </span>
@@ -6258,6 +6750,9 @@ function ProcessesPage({ user, setPage, toast }) {
   const [startDialog, setStartDialog] = useState(null);
   // startDialog shape: {proc, step:'items'|'warnings', suggestedItems, selectedItems, warnings}
   const [startSaving, setStartSaving] = useState(false);
+  const [execPeriod, setExecPeriod] = useState("week"); // "day" | "week"
+  const [execDate,   setExecDate]   = useState(() => new Date().toISOString().slice(0,10));
+  const [selectedRun, setSelectedRun] = useState(null); // run with steps for sidebar
 
   const load = useCallback(async()=>{
     setLoading(true);
@@ -6312,7 +6807,21 @@ function ProcessesPage({ user, setPage, toast }) {
       const fns = { pause:api.pauseRun, resume:api.resumeRun, stop:api.stopRun };
       const updated = await fns[action](prid);
       setRuns(p=>p.map(r=>r.prid===updated.prid?updated:r));
+      // Keep sidebar in sync
+      if (selectedRun?.prid===updated.prid) setSelectedRun(updated);
     } catch(e){ toast(e.message,"error"); }
+  };
+
+  const openRunDetail = async run => {
+    try {
+      const full = await api.getProcessRun(run.prid);
+      setSelectedRun(full);
+    } catch(e){ toast(e.message,"error"); }
+  };
+
+  const handleStepUpdated = updated => {
+    setRuns(p=>p.map(r=>r.prid===updated.prid?{...r, ...updated}:r));
+    setSelectedRun(updated);
   };
 
 
@@ -6324,11 +6833,14 @@ function ProcessesPage({ user, setPage, toast }) {
   const openNew = () => { setEditProc(null); setFormName(""); setFormSkills([]); setNameError(""); setShowForm(true); };
   const openEdit = proc => {
     setEditProc(proc); setFormName(proc.name);
-    setFormSkills((proc.skills||[]).map(sk=>({
+    setFormSkills((proc.skills||[]).map((sk, _i, arr)=>({
       skid:sk.skid, name:sk.name, color:sk.color,
       duration:sk.duration, duration_unit:sk.duration_unit||"minutes",
-      dep_type:sk.dep_type||"", dep_seq:"",
-      _procRef: sk._procRef||null, // if this row came from an expanded process
+      dep_type:sk.dep_type||"",
+      // Resolve dep_psid → dep_seq (1-based position in the list)
+      dep_seq: sk.dep_psid ? String(arr.findIndex(s=>s.psid===sk.dep_psid)+1||"") : "",
+      recur_every:sk.recur_every||"", recur_unit:sk.recur_unit||"hours", recur_times:sk.recur_times||"",
+      _procRef: sk._procRef||null,
     })));
     setNameError(""); setShowForm(true);
   };
@@ -6337,7 +6849,7 @@ function ProcessesPage({ user, setPage, toast }) {
   const addToForm = item => {
     if (item._isRole) {
       const fullRole = roles.find(r=>r.rid===item.rid);
-      const roleSkills = (fullRole?.skills||[]).map(s=>({...s,duration:s.duration||null,duration_unit:s.duration_unit||"minutes",dep_type:"",dep_seq:""}));
+      const roleSkills = (fullRole?.skills||[]).map(s=>({...s,duration:s.duration||null,duration_unit:s.duration_unit||"minutes",dep_type:"",dep_seq:"",recur_every:"",recur_unit:"hours",recur_times:""}));
       setFormSkills(p=>{ const ex=new Set(p.map(x=>x.skid)); return [...p,...roleSkills.filter(s=>!ex.has(s.skid))]; });
     } else if (item._isProcess) {
       // Expand a process into its skills, grouped together
@@ -6346,6 +6858,7 @@ function ProcessesPage({ user, setPage, toast }) {
         skid:s.skid, name:s.name, color:s.color,
         duration:s.duration, duration_unit:s.duration_unit||"minutes",
         dep_type:s.dep_type||"", dep_seq:"",
+        recur_every:s.recur_every||"", recur_unit:s.recur_unit||"hours", recur_times:s.recur_times||"",
         _procRef:fullProc.name,
       }));
       setFormSkills(p=>{
@@ -6353,7 +6866,7 @@ function ProcessesPage({ user, setPage, toast }) {
         return [...p, ...procSkills.filter(s=>!ex.has(s.skid))];
       });
     } else {
-      setFormSkills(p=>p.find(x=>x.skid===item.skid)?p:[...p,{...item,duration:item.duration||null,duration_unit:item.duration_unit||"minutes",dep_type:"",dep_seq:""}]);
+      setFormSkills(p=>p.find(x=>x.skid===item.skid)?p:[...p,{...item,duration:item.duration||null,duration_unit:item.duration_unit||"minutes",dep_type:"",dep_seq:"",recur_every:"",recur_unit:"hours",recur_times:""}]);
     }
   };
 
@@ -6371,6 +6884,9 @@ function ProcessesPage({ user, setPage, toast }) {
         skid:s.skid, seq:i+1,
         duration:s.duration||null, duration_unit:s.duration_unit||"minutes",
         dep_type:s.dep_type||null, dep_seq:s.dep_seq||null,
+        recur_every: s.recur_every ? Number(s.recur_every) : null,
+        recur_unit: s.recur_unit||"hours",
+        recur_times: s.recur_times ? Number(s.recur_times) : null,
       }));
       if (editProc) {
         const updated = await api.updateProcess(editProc.procid, { name, skills: skillPayload });
@@ -6405,211 +6921,179 @@ function ProcessesPage({ user, setPage, toast }) {
     if (unit==="hours")   return Number(dur)*60;
     return Number(dur);
   };
-  const totalMins = formSkills.reduce((s,sk)=>s+toMins(sk.duration,sk.duration_unit),0);
+  const totalMins = formSkills.reduce((s,sk)=>{
+    const base = toMins(sk.duration, sk.duration_unit);
+    const mult = sk.recur_times ? Number(sk.recur_times) : 1;
+    return s + base * mult;
+  }, 0);
+  const fmtTotalMins = m => {
+    const total = Math.round(m);
+    const d = Math.floor(total / 1440);
+    const h = Math.floor((total % 1440) / 60);
+    const min = total % 60;
+    const parts = [];
+    if (d) parts.push(`${d}d`);
+    if (h) parts.push(`${h}hr`);
+    if (min || !parts.length) parts.push(`${min}min`);
+    return parts.join(' ');
+  };
 
-  // ── PERT Chart with multi-track layout ─────────────────────────────────────
-  // Layout rules:
-  //   FS → successor on SAME track, placed after predecessor (sequential)
-  //   SS → successor on NEW sub-track, x-aligned with predecessor's LEFT edge
-  //   FF → successor on NEW sub-track, x-aligned so its RIGHT edge matches predecessor's RIGHT edge
-  //   SF → successor on NEW sub-track, x-aligned so its RIGHT edge matches predecessor's LEFT edge
+  // ── MiniGantt — per-process Gantt chart embedded in each process card ────────
+  const MiniGantt = ({ proc, forcedView }) => {
+    const skills = proc.skills || [];
+    if (!skills.length) return null;
 
-  const PertChart = () => {
-    const barH=38, subGap=6, procGap=22;
-    const labelW=185, W=940, chartW=W-labelW-16;
-    const dayMins=600;
-    const minToX = m => Math.max(0,(m/dayMins)*chartW);
+    // Compute max end time in minutes (layout in minutes, then scale to pixels)
+    const placed = {}; // psid → { x1Mins, x2Mins }
+    let cursor = 0;
+    skills.forEach(sk => {
+      const durMins = Math.max(1, toMins(sk.duration, sk.duration_unit) || 30);
+      const pred = sk.dep_psid ? placed[sk.dep_psid] : null;
+      let x1;
+      if (!pred) {
+        x1 = cursor;
+      } else if (sk.dep_type === "SS") { x1 = pred.x1; }
+      else if (sk.dep_type === "FF")   { x1 = pred.x2 - durMins; }
+      else if (sk.dep_type === "SF")   { x1 = pred.x1 - durMins; }
+      else                              { x1 = pred.x2; } // FS / default
+      x1 = Math.max(0, x1);
+      placed[sk.psid] = { x1, x2: x1 + durMins, durMins };
+      if (!pred) cursor = x1 + durMins;
+    });
+    const maxMins = Object.values(placed).reduce((m, b) => Math.max(m, b.x2), 0);
 
-    if (!processes.length) return (
-      <div style={{padding:60,textAlign:"center",color:G.muted,fontFamily:G.mono,fontSize:14}}>
-        No processes yet. Click "+ Process" to create one.
-      </div>
-    );
+    // Auto-choose view: week if > 10h (600min), day otherwise. Allow manual toggle.
+    const autoView = maxMins > 600 ? "week" : "day";
+    const [view, setView] = useState(forcedView || autoView);
+    // Window: day = nearest hour above maxMins; week = nearest day above maxMins
+    const windowMins = view === "week"
+      ? Math.max(1440, Math.ceil(maxMins / 1440) * 1440)
+      : Math.max(60, Math.ceil(maxMins / 60) * 60);
 
-    // ── Layout engine ─────────────────────────────────────────────────────────
-    // For each process, assign each skill to a (track, x1, x2).
-    // Track 0 = main row. SS/FF/SF successors get a new track.
-    const processLayouts = processes.map(proc => {
-      const skills = proc.skills || [];
-      // psid → { track, x1, x2, w }
-      const placed = {};
-      // track → current right edge (for FS chaining)
-      const trackCursor = { 0: labelW };
-      let maxTrack = 0;
+    const barH = 26, rowGap = 6, trackH = barH + rowGap;
+    const labelW = 130, W = 700, chartW = W - labelW - 8;
+    const minToX = m => Math.max(0, (m / windowMins) * chartW);
+    const svgH = skills.length * trackH + 28;
 
-      skills.forEach(sk => {
-        const w = Math.max(12, minToX(toMins(sk.duration, sk.duration_unit)));
-        const dep = sk.dep_type;
-        const predPsid = sk.dep_psid;
-
-        if (!dep || dep === "FS" || !predPsid || !placed[predPsid]) {
-          // FS or no dep: place on track 0, after current cursor
-          const x1 = trackCursor[0] || labelW;
-          placed[sk.psid] = { track:0, x1, x2:x1+w, w };
-          trackCursor[0] = x1+w;
-        } else {
-          const pred = placed[predPsid];
-          // Assign a new track
-          const track = maxTrack + 1;
-          maxTrack = track;
-          trackCursor[track] = trackCursor[track] || labelW;
-          let x1;
-          if (dep === "SS") x1 = pred.x1;           // align left edges
-          if (dep === "FF") x1 = pred.x2 - w;       // align right edges
-          if (dep === "SF") x1 = pred.x1 - w;       // successor ends where pred starts
-          // Ensure x1 doesn't go left of labelW
-          x1 = Math.max(labelW, x1);
-          placed[sk.psid] = { track, x1, x2:x1+w, w };
-          trackCursor[track] = Math.max(trackCursor[track]||0, x1+w);
-        }
-      });
-
-      return { proc, skills, placed, maxTrack };
+    // Build pixel-placed blocks
+    const blocks = {};
+    skills.forEach((sk, idx) => {
+      const b = placed[sk.psid];
+      if (!b) return;
+      blocks[sk.psid] = {
+        px1: labelW + minToX(b.x1),
+        px2: labelW + minToX(b.x2),
+        pw:  Math.max(8, minToX(b.x2) - minToX(b.x1)),
+        y:   20 + idx * trackH,
+      };
     });
 
-    // ── Assign y positions ────────────────────────────────────────────────────
-    // Each process occupies (maxTrack+1) sub-rows
-    let curY = 30;
-    const processY = {}; // procid → base y
-    const trackH = barH + subGap;
-    processLayouts.forEach(({ proc, maxTrack }) => {
-      processY[proc.procid] = curY;
-      curY += (maxTrack + 1) * trackH + procGap;
-    });
-    const svgH = curY + 40;
-
-    // ── Build blockMap for arrow drawing ─────────────────────────────────────
-    const blockMap = {};
-    processLayouts.forEach(({ proc, placed }) => {
-      const baseY = processY[proc.procid];
-      Object.entries(placed).forEach(([psid, b]) => {
-        blockMap[psid] = {
-          x1: b.x1, x2: b.x2, w: b.w,
-          y: baseY + b.track * trackH,
-          barH,
-        };
-      });
-    });
-
-    // ── Build arrows ──────────────────────────────────────────────────────────
+    // Arrows
     const arrows = [];
-    processes.forEach(proc => {
-      (proc.skills||[]).forEach(sk => {
-        if (!sk.dep_type || !sk.dep_psid) return;
-        const src = blockMap[sk.dep_psid];
-        const tgt = blockMap[sk.psid];
-        if (!src || !tgt) return;
-        const dep = sk.dep_type;
-
-        // Anchor points based on dep type
-        let x1,y1,x2,y2;
-        if (dep==="FS"){ x1=src.x2; y1=src.y+barH/2; x2=tgt.x1; y2=tgt.y+barH/2; }
-        else if (dep==="SS"){ x1=src.x1; y1=src.y+barH; x2=tgt.x1; y2=tgt.y; }
-        else if (dep==="FF"){ x1=src.x2; y1=src.y+barH; x2=tgt.x2; y2=tgt.y; }
-        else if (dep==="SF"){ x1=src.x1; y1=src.y+barH; x2=tgt.x2; y2=tgt.y; }
-        else { x1=src.x2; y1=src.y+barH/2; x2=tgt.x1; y2=tgt.y+barH/2; }
-
-        // For FS same row: horizontal. For others: vertical drop
-        let d;
-        if (dep==="FS") {
-          d = `M${x1},${y1} L${x2},${y2}`;
-        } else {
-          // Short vertical line from bottom of pred to top of succ, with small bends
-          const midY = (y1+y2)/2;
-          d = `M${x1},${y1} C${x1},${midY} ${x2},${midY} ${x2},${y2}`;
-        }
-        arrows.push({ d, dep, lx:(x1+x2)/2+8, ly:(y1+y2)/2 });
-      });
+    skills.forEach(sk => {
+      if (!sk.dep_type || !sk.dep_psid) return;
+      const src = blocks[sk.dep_psid], tgt = blocks[sk.psid];
+      if (!src || !tgt) return;
+      const dep = sk.dep_type;
+      let ax, ay, bx, by;
+      if      (dep==="FS"){ ax=src.px2; ay=src.y+barH/2; bx=tgt.px1; by=tgt.y+barH/2; }
+      else if (dep==="SS"){ ax=src.px1; ay=src.y+barH;   bx=tgt.px1; by=tgt.y; }
+      else if (dep==="FF"){ ax=src.px2; ay=src.y+barH;   bx=tgt.px2; by=tgt.y; }
+      else if (dep==="SF"){ ax=src.px1; ay=src.y+barH;   bx=tgt.px2; by=tgt.y; }
+      else                { ax=src.px2; ay=src.y+barH/2; bx=tgt.px1; by=tgt.y+barH/2; }
+      let d;
+      if (Math.abs(ay-by) < 3) {
+        d = `M${ax},${ay} L${bx},${by}`;
+      } else if (dep==="FS") {
+        const ex = ax + 6;
+        d = `M${ax},${ay} L${ex},${ay} L${ex},${by} L${bx},${by}`;
+      } else {
+        const midY = (ay+by)/2;
+        d = `M${ax},${ay} C${ax},${midY} ${bx},${midY} ${bx},${by}`;
+      }
+      arrows.push({ d, dep });
     });
 
-    const hours = Array.from({length:11},(_,i)=>i*60);
+    // Ticks: day view = hours, week view = days
+    const tickUnit = view === "week" ? 1440 : 60;
+    const ticks = Array.from({ length: Math.ceil(windowMins / tickUnit) + 1 }, (_, i) => i * tickUnit);
+    const fmtTick = m => view === "week"
+      ? (m === 0 ? "Start" : `Day ${m/1440 + 1}`)
+      : `${String(Math.floor(m/60)).padStart(2,"0")}:00`;
+    const majorTick = view === "week" ? 1440 : 120;
 
     return (
-      <div style={{ overflowX:"auto", marginBottom:24, background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:16 }}>
-        <svg width={W} height={svgH} style={{display:"block"}}>
-          <defs>
-            <marker id="arr-tip" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
-              <polygon points="0 0, 7 3.5, 0 7" fill="#666"/>
-            </marker>
-          </defs>
-
-          {/* Hour grid */}
-          {hours.map(m=>(
-            <g key={m}>
-              <line x1={labelW+minToX(m)} y1={18} x2={labelW+minToX(m)} y2={svgH-40} stroke={G.border} strokeWidth={0.8}/>
-              <text x={labelW+minToX(m)+3} y={13} fontSize={9} fill={G.muted}>{`${8+m/60}:00`}</text>
-            </g>
+      <div style={{ marginTop:12, marginBottom:8 }}>
+        {/* Toggle */}
+        <div style={{ display:"flex", gap:6, marginBottom:6, alignItems:"center" }}>
+          <span style={{ fontSize:11, color:G.muted }}>View:</span>
+          {["day","week"].map(v => (
+            <button key={v} onClick={() => setView(v)}
+              style={{ padding:"2px 10px", borderRadius:5, border:`1px solid ${view===v?G.caramel:G.border}`,
+                background: view===v?G.caramel:G.white, color: view===v?G.white:G.dark,
+                fontSize:11, fontFamily:G.mono, fontWeight:600, cursor:"pointer" }}>
+              {v==="day"?"Day":"Week"}
+            </button>
           ))}
-
-          {/* Process bars */}
-          {processLayouts.map(({ proc, placed }) => {
-            const baseY = processY[proc.procid];
-            return (
-              <g key={proc.procid}>
-                {/* Process label — vertically centred across all its tracks */}
-                <text x={labelW-8} y={baseY + barH/2 + 4}
-                  fontSize={12} fontWeight="700" fill={G.dark} textAnchor="end" dominantBaseline="middle"
-                  style={{cursor:"pointer"}} onClick={()=>openEdit(proc)}>
-                  {proc.name.slice(0,22)}
-                </text>
-                {/* Skill blocks */}
-                {(proc.skills||[]).map(sk => {
-                  const b = placed[sk.psid];
-                  if (!b) return null;
-                  const bx = b.x1, by = baseY + b.track*trackH;
-                  const color = sk.color || G.muted;
-                  const dashed = sk.dep_type && sk.dep_type !== "FS";
-                  return (
-                    <g key={sk.psid}>
-                      <rect x={bx} y={by} width={b.w} height={barH}
-                        fill={`${color}22`} stroke={color} strokeWidth={1.5}
-                        strokeDasharray={dashed?"6,3":"none"} rx={5}/>
-                      {b.w>24&&<text x={bx+5} y={by+15} fontSize={10} fill={color} fontWeight="600">{sk.name.slice(0,Math.floor(b.w/6.5))}</text>}
-                      {b.w>36&&sk.duration&&<text x={bx+5} y={by+30} fontSize={8.5} fill={G.muted}>{sk.duration}{durAbbr(sk.duration_unit)}</text>}
-                    </g>
-                  );
-                })}
+        </div>
+        <div style={{ overflowX:"auto" }}>
+          <svg width={W} height={svgH} style={{ display:"block", fontFamily:G.mono }}>
+            <defs>
+              <marker id={`arr-${proc.procid}`} markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                <polygon points="0 0, 6 3, 0 6" fill="#888"/>
+              </marker>
+            </defs>
+            {/* Grid lines */}
+            {ticks.map(m => (
+              <g key={m}>
+                <line x1={labelW+minToX(m)} y1={14} x2={labelW+minToX(m)} y2={svgH}
+                  stroke={G.border} strokeWidth={m%majorTick===0 ? 1 : 0.4}/>
+                {m%majorTick===0 && (
+                  <text x={labelW+minToX(m)+3} y={10} fontSize={8} fill={G.muted}>{fmtTick(m)}</text>
+                )}
               </g>
-            );
-          })}
-
-          {/* Dependency arrows */}
-          {arrows.map((a,i)=>(
-            <g key={i}>
-              <path d={a.d} fill="none" stroke="#666" strokeWidth="1.5"
-                strokeDasharray={a.dep==="FS"?"none":"none"}
-                markerEnd="url(#arr-tip)" strokeLinejoin="round"/>
-              <text x={a.lx} y={a.ly+4} fontSize={8} fill="#666" textAnchor="start" fontWeight="700"
-                style={{paintOrder:"stroke",stroke:G.white,strokeWidth:3}}>
-                {a.dep}
-              </text>
-            </g>
-          ))}
-        </svg>
-
-        {/* Legend — bottom */}
-        <div style={{display:"flex",gap:20,flexWrap:"wrap",paddingTop:12,borderTop:`1px solid ${G.border}`,marginTop:4,fontSize:11,color:G.muted}}>
-          {DEP_TYPES.map(dt=>(
-            <span key={dt.value} style={{display:"flex",alignItems:"center",gap:6}}>
-              <svg width="50" height="26">
-                {/* predecessor */}
-                <rect x="0" y="2" width="20" height="12" fill={`${G.caramel}25`} stroke={G.caramel} strokeWidth="1.5" rx="2"/>
-                {/* successor */}
-                {dt.value==="FS" && <rect x="24" y="2" width="20" height="12" fill={`${G.dark}15`} stroke={G.dark} strokeWidth="1.5" rx="2"/>}
-                {dt.value==="SS" && <rect x="0"  y="14" width="20" height="12" fill={`${G.dark}15`} stroke={G.dark} strokeWidth="1.5" rx="2" strokeDasharray="4,2"/>}
-                {dt.value==="FF" && <rect x="4"  y="14" width="20" height="12" fill={`${G.dark}15`} stroke={G.dark} strokeWidth="1.5" rx="2" strokeDasharray="4,2"/>}
-                {dt.value==="SF" && <rect x="-4" y="14" width="16" height="12" fill={`${G.dark}15`} stroke={G.dark} strokeWidth="1.5" rx="2" strokeDasharray="4,2"/>}
-                {/* Arrow */}
-                {dt.value==="FS" && <line x1="20" y1="8" x2="24" y2="8" stroke="#666" strokeWidth="1.2" markerEnd="url(#arr-tip)"/>}
-                {dt.value!=="FS" && <path d="M10,14 L10,18 L10,22" stroke="#666" strokeWidth="1.2" fill="none" markerEnd="url(#arr-tip)"/>}
-              </svg>
-              <span><b>{dt.value}</b> {dt.label.replace(/ \(.*\)/,"")}</span>
-            </span>
-          ))}
-          <span style={{display:"flex",alignItems:"center",gap:6}}>
-            <svg width="30" height="14"><rect x="1" y="1" width="28" height="12" fill="transparent" stroke={G.muted} strokeWidth="1.5" strokeDasharray="4,2" rx="2"/></svg>
-            Dashed = parallel successor
-          </span>
+            ))}
+            {/* Day/week shading: alternate columns for week view */}
+            {view==="week" && ticks.filter(m=>m>0).map(m => (
+              (m/1440)%2===0 && (
+                <rect key={m} x={labelW+minToX(m-1440)} y={14} width={minToX(1440)} height={svgH-14}
+                  fill={`${G.sand}50`}/>
+              )
+            ))}
+            {/* Step rows */}
+            {skills.map((sk, idx) => {
+              const b = blocks[sk.psid];
+              if (!b) return null;
+              const color = sk.color || G.muted;
+              return (
+                <g key={sk.psid}>
+                  {/* Stripe */}
+                  <rect x={labelW} y={b.y} width={chartW} height={barH}
+                    fill={idx%2===0 ? "transparent" : `${G.sand}40`}/>
+                  {/* Step name label */}
+                  <text x={labelW-5} y={b.y+barH/2+1} fontSize={9} fill={G.muted}
+                    textAnchor="end" dominantBaseline="middle">
+                    {sk.name.slice(0,17)}
+                  </text>
+                  {/* Bar */}
+                  <rect x={b.px1} y={b.y+2} width={b.pw} height={barH-4}
+                    fill={`${color}30`} stroke={color} strokeWidth={1.5} rx={4}/>
+                  {/* Duration label inside bar */}
+                  {b.pw > 32 && (
+                    <text x={b.px1+5} y={b.y+barH/2+1} fontSize={8} fill={color}
+                      fontWeight="600" dominantBaseline="middle">
+                      {sk.duration}{durAbbr(sk.duration_unit)}
+                    </text>
+                  )}
+                </g>
+              );
+            })}
+            {/* Dependency arrows */}
+            {arrows.map((a,i) => (
+              <path key={i} d={a.d} fill="none" stroke="#999" strokeWidth="1.2"
+                markerEnd={`url(#arr-${proc.procid})`} strokeLinejoin="round"/>
+            ))}
+          </svg>
         </div>
       </div>
     );
@@ -6626,14 +7110,12 @@ function ProcessesPage({ user, setPage, toast }) {
   return (
     <Page title={tl("Processes")} actions={
       <div style={{display:"flex",gap:10}}>
-        {user?.employer_uid && (
+        {user?.employer_uid && !user?.is_manufacturer && (
           <Btn variant="secondary" size="sm" onClick={()=>setPage("processes-emp")}>Executions →</Btn>
         )}
         <Btn size="sm" onClick={openNew}>+ Process</Btn>
       </div>
     }>
-      <PertChart/>
-
       {showForm&&(
         <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
           <div style={{marginBottom:18}}>
@@ -6654,7 +7136,7 @@ function ProcessesPage({ user, setPage, toast }) {
               <table style={{ width:"100%", borderCollapse:"collapse" }}>
                 <thead>
                   <tr style={{ background:G.sand }}>
-                    {["#","Skill / Step","Duration","Dep. type","Depends on",""].map(h=>(
+                    {["#","Skill / Step","Duration","Repeat","Times","Dep. type","Depends on",""].map(h=>(
                       <th key={h} style={{padding:"8px 12px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,whiteSpace:"nowrap"}}>{h}</th>
                     ))}
                   </tr>
@@ -6669,13 +7151,32 @@ function ProcessesPage({ user, setPage, toast }) {
                       </td>
                       <td style={{padding:"8px 12px"}}>
                         <div style={{display:"flex",gap:5,alignItems:"center"}}>
-                          <input type="number" value={sk.duration||""} onChange={e=>updateRow(i,"duration",e.target.value)} placeholder="0"
-                            style={{width:52,padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}/>
+                          <input type="number" min="0" value={sk.duration||""} onChange={e=>updateRow(i,"duration", Math.max(0, parseFloat(e.target.value)||0))} placeholder="0"
+                            style={{width:52,padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",borderColor:Number(sk.duration)<0?G.red:G.border}}/>
                           <select value={sk.duration_unit||"minutes"} onChange={e=>updateRow(i,"duration_unit",e.target.value)}
                             style={{padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
                             {DUR_UNITS.map(u=><option key={u.value} value={u.value}>{u.label}</option>)}
                           </select>
                         </div>
+                      </td>
+                      <td style={{padding:"8px 12px"}}>
+                        <div style={{display:"flex",gap:5,alignItems:"center"}}>
+                          <span style={{fontSize:11,color:G.muted,whiteSpace:"nowrap"}}>every</span>
+                          <input type="number" min="1" value={sk.recur_every||""} onChange={e=>updateRow(i,"recur_every",e.target.value?Math.max(1,parseInt(e.target.value)||1):"")} placeholder="—"
+                            style={{width:44,padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}/>
+                          <select value={sk.recur_unit||"hours"} onChange={e=>updateRow(i,"recur_unit",e.target.value)}
+                            disabled={!sk.recur_every}
+                            style={{padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none",background:!sk.recur_every?G.sand:G.white}}>
+                            <option value="hours">hrs</option>
+                            <option value="days">days</option>
+                          </select>
+                        </div>
+                      </td>
+                      <td style={{padding:"8px 12px"}}>
+                        <input type="number" min="1" step="1" value={sk.recur_times||""} onChange={e=>updateRow(i,"recur_times",e.target.value?Math.max(1,Math.round(Number(e.target.value))||1):"")} placeholder="—"
+                          disabled={!sk.recur_every}
+                          title="How many times this step recurs (multiplies duration)"
+                          style={{width:52,padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",background:!sk.recur_every?G.sand:G.white}}/>
                       </td>
                       <td style={{padding:"8px 12px"}}>
                         <select value={sk.dep_type||""} onChange={e=>updateRow(i,"dep_type",e.target.value)}
@@ -6707,8 +7208,8 @@ function ProcessesPage({ user, setPage, toast }) {
                   ))}
                   <tr style={{ borderTop:`2px solid ${G.border}`, background:G.sand }}>
                     <td colSpan={2} style={{padding:"8px 12px",fontSize:13,fontWeight:700}}>Total</td>
-                    <td style={{padding:"8px 12px",fontSize:13,fontWeight:700,color:G.caramel}}>{totalMins.toFixed(1)} min</td>
-                    <td colSpan={3}/>
+                    <td style={{padding:"8px 12px",fontSize:13,fontWeight:700,color:G.caramel}}>{fmtTotalMins(totalMins)}</td>
+                    <td colSpan={5}/>
                   </tr>
                 </tbody>
               </table>
@@ -6731,7 +7232,8 @@ function ProcessesPage({ user, setPage, toast }) {
                 style={{background:"none",border:"none",cursor:"pointer",fontWeight:700,fontSize:15,color:G.caramel,padding:0,textDecoration:"underline dotted",textUnderlineOffset:3,marginBottom:6,display:"block",textAlign:"left"}}>
                 {proc.name}
               </button>
-              <div style={{ display:"flex", flexWrap:"wrap", gap:4 }}>
+              <MiniGantt proc={proc}/>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginTop:8 }}>
                 {(proc.skills||[]).map(sk=>(
                   <span key={sk.psid} style={{ fontSize:12, padding:"2px 10px", borderRadius:20, background:`${sk.color||G.muted}18`, color:sk.color||G.muted, border:`1px solid ${sk.color||G.muted}40`, display:"flex", alignItems:"center", gap:4 }}>
                     {sk.name}{sk.duration?` · ${sk.duration}${durAbbr(sk.duration_unit)}`:""}
@@ -6750,12 +7252,65 @@ function ProcessesPage({ user, setPage, toast }) {
 
       {/* ── Executions calendar ──────────────────────────────────────────────── */}
       <div style={{marginTop:32}}>
-        <h3 style={{fontFamily:G.font,fontSize:18,marginBottom:14,color:G.dark}}>{tl("Executions")}</h3>
-        {runs.length===0 ? (
-          <p style={{fontSize:13,color:G.muted,fontStyle:"italic"}}>No processes have been started yet. Click ▶ Run on any process above to begin.</p>
-        ) : <ExecutionsCalendar runs={runs} onAction={handleRunAction}/>}
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14,flexWrap:"wrap"}}>
+          <h3 style={{fontFamily:G.font,fontSize:18,color:G.dark,margin:0}}>{tl("Executions")}</h3>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginLeft:"auto"}}>
+            {/* ← → navigation */}
+            {[{dir:-1,label:"←"},{dir:1,label:"→"}].map(({dir,label})=>(
+              <button key={dir} onClick={()=>{
+                const d = new Date(execDate+"T00:00:00");
+                d.setDate(d.getDate() + dir * (execPeriod==="week" ? 7 : 1));
+                setExecDate(d.toISOString().slice(0,10));
+              }} style={{padding:"5px 10px",borderRadius:7,border:`1px solid ${G.border}`,background:G.white,
+                color:G.dark,fontSize:14,fontFamily:G.mono,cursor:"pointer",lineHeight:1}}>
+                {label}
+              </button>
+            ))}
+            <input type="date" value={execDate} onChange={e=>setExecDate(e.target.value)}
+              style={{padding:"5px 10px",borderRadius:7,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",background:G.white,color:G.dark}}/>
+            {["day","week"].map(p=>(
+              <button key={p} onClick={()=>setExecPeriod(p)}
+                style={{padding:"5px 14px",borderRadius:7,border:`1px solid ${execPeriod===p?G.caramel:G.border}`,
+                  background:execPeriod===p?G.caramel:G.white,color:execPeriod===p?G.white:G.dark,
+                  fontSize:13,fontFamily:G.mono,fontWeight:600,cursor:"pointer",transition:"all 0.15s"}}>
+                {p==="day"?"Day":"Week"}
+              </button>
+            ))}
+          </div>
+        </div>
+        {(()=>{
+          const anchor = new Date(execDate+"T00:00:00");
+          const periodStart = anchor.getTime();
+          const periodEnd   = execPeriod==="week"
+            ? periodStart + 7*24*60*60*1000
+            : periodStart + 24*60*60*1000;
+          const filtered = runs.filter(r=>{
+            if (!r.started_at) return false;
+            const s = new Date(r.started_at).getTime();
+            const e = r.completed_at ? new Date(r.completed_at).getTime() : Date.now();
+            return s < periodEnd && e > periodStart;
+          });
+          if (filtered.length===0) return (
+            <p style={{fontSize:13,color:G.muted,fontStyle:"italic"}}>
+              {runs.length===0
+                ? "No processes have been started yet. Click ▶ Run on any process above to begin."
+                : "No processes in this period."}
+            </p>
+          );
+          return <ExecutionsCalendar runs={filtered} onAction={handleRunAction} onOpenDetail={openRunDetail}/>;
+        })()}
       </div>
 
+      {/* ── Run detail sidebar */}
+      {selectedRun&&(
+        <RunDetailSidebar
+          run={selectedRun}
+          user={user}
+          onClose={()=>setSelectedRun(null)}
+          onRunUpdated={handleStepUpdated}
+          toast={toast}
+        />
+      )}
 
       {/* ── Start validation dialog ───────────────────────────────────────────── */}
       {startDialog&&(
@@ -7437,7 +7992,11 @@ function EmployeeProcessesPage({ user, toast, setPage }) {
 
   if (!ownerUid) return (
     <Page title={tl("Processes")}>
-      <p style={{color:G.muted,textAlign:"center",padding:40}}>Not associated with a restaurant.</p>
+      <p style={{color:G.muted,textAlign:"center",padding:40}}>
+        {user?.is_manufacturer
+          ? "Manage and run your processes from the Processes page."
+          : "Not associated with a restaurant."}
+      </p>
     </Page>
   );
 
@@ -7953,6 +8512,7 @@ export default function App() {
   _currentLang = lang;
   const {toasts,toast,remove} = useToast();
   const logout=()=>{localStorage.removeItem("token");setUser(null);setPage("login");};
+  const { notifs, dismiss, markSeen, unseenCount, refresh: refreshNotifs } = useNotifications(user);
   const onLogin = u => {
     setUser(u);
     setHashPage(null);
@@ -8009,7 +8569,7 @@ export default function App() {
         </>
       ):(
         <>
-          <Nav user={user} page={page} setPage={setPage} logout={logout} lang={lang} setLang={setLang}/>
+          <Nav user={user} page={page} setPage={setPage} logout={logout} lang={lang} setLang={setLang} notifProps={{ notifs, dismiss, markSeen, unseenCount, refresh: refreshNotifs }}/>
           {/* Floating "Yours, tanelu" balloon */}
           <div style={{position:"fixed",bottom:20,right:20,zIndex:500,
             background:G.white,border:`1px solid ${G.border}`,borderRadius:24,
