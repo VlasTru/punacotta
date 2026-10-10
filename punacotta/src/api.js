@@ -61,6 +61,7 @@ export const api = {
   lookupUserByEmail: (email) => req('GET', `/staff/lookup?email=${encodeURIComponent(email)}`),
   getArrivals:        ()          => req('GET',  '/arrivals'),
   placeArrivalOrder:  (data)      => req('POST', '/arrivals/order', data),
+  recordArrivalsView: (owner_uids) => req('POST', '/arrivals/view', { owner_uids }),
   // Invite
   getInvite:          (token)      => req('GET',  `/invite/${token}`),
   completeInvite:     (token,data) => req('POST', `/invite/${token}`, data),
@@ -139,6 +140,9 @@ export const api = {
   // Reports
   getSalesReport:  (period) => req('GET', `/reports/sales/${period}`),
   getAbcReport:    ()       => req('GET', '/reports/abc'),
+  getBoaImpact:    (days)   => req('GET', `/reports/boa-impact/${days}`),
+  logHandover:     (oid)    => req('POST', '/reports/boa-impact/handover', { oid }),
+  logWaste:        (prid, rid, wasted_qty) => req('POST', '/reports/boa-impact/waste', { prid, rid, wasted_qty }),
   updateSupplierOrder:    (soid,data)  => req('PATCH', `/procurement/orders/${soid}`, data),
   submitSupplierOrder:    (soid)       => req('POST',  `/procurement/orders/${soid}/submit`),
   cancelSupplierOrder:    (soid)       => req('POST',   `/procurement/orders/${soid}/cancel`),

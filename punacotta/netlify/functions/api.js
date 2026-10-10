@@ -68,6 +68,15 @@ async function ensureMigrations() {
     await dbr(`ALTER TABLE process_skill ADD COLUMN IF NOT EXISTS recur_unit VARCHAR(10) DEFAULT 'hours'`)
     await dbr(`ALTER TABLE process_skill ADD COLUMN IF NOT EXISTS recur_times INTEGER`)
     await dbr(`ALTER TABLE process_run_step ADD COLUMN IF NOT EXISTS recur_index INTEGER NOT NULL DEFAULT 0`)
+    // BoA impact instrumentation: when an order became ready / was handed over,
+    // unsold units per batch item, and daily Board of Arrivals page loads per seller
+    await dbr(`ALTER TABLE "order" ADD COLUMN IF NOT EXISTS done_at TIMESTAMPTZ`)
+    await dbr(`ALTER TABLE "order" ADD COLUMN IF NOT EXISTS handed_over_at TIMESTAMPTZ`)
+    await dbr(`ALTER TABLE process_run_item ADD COLUMN IF NOT EXISTS wasted_qty NUMERIC(10,3)`)
+    await dbr(`CREATE TABLE IF NOT EXISTS boa_view_day (
+      day DATE NOT NULL, owner_uid INTEGER NOT NULL, views INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (day, owner_uid)
+    )`)
   } catch(e) { console.error('Migration error:', e.message) }
 }
 
@@ -895,6 +904,8 @@ async function route(method, segments, body, headers, event) {
         const next = transitions[o.status]
         if (!next) return [400, { error: 'Cannot advance from this status' }]
         await dbr('UPDATE "order" SET status=$1 WHERE oid=$2', [next, r1])
+        if (next === 'Done')      await dbr('UPDATE "order" SET done_at=COALESCE(done_at,NOW()) WHERE oid=$1', [r1])
+        if (next === 'Delivered') await dbr('UPDATE "order" SET handed_over_at=COALESCE(handed_over_at,NOW()) WHERE oid=$1', [r1])
         return [200, await fetchOrder(r1)]
       }
       if (r2 === 'decline') {
@@ -916,7 +927,7 @@ async function route(method, segments, body, headers, event) {
         const [o] = await dbq('SELECT * FROM "order" WHERE oid=$1 AND owner_uid=$2', [r1, user.uid])
         if (!o) return [404, { error: 'Not found' }]
         if (!['Done','Dispatched'].includes(o.status)) return [400, { error: 'Cannot confirm' }]
-        await dbr("UPDATE \"order\" SET status='Delivered' WHERE oid=$1", [r1])
+        await dbr("UPDATE \"order\" SET status='Delivered', handed_over_at=COALESCE(handed_over_at,NOW()) WHERE oid=$1", [r1])
         return [200, await fetchOrder(r1)]
       }
     }
@@ -2299,6 +2310,10 @@ async function route(method, segments, body, headers, event) {
         await dbr(
           `UPDATE "order" SET status=$1 WHERE prid=$2`,
           [orderStatus, prid])
+        // Remember when the batch became ready, for freshness reporting
+        if (orderStatus === 'Done') {
+          await dbr(`UPDATE "order" SET done_at=COALESCE(done_at,NOW()) WHERE prid=$1`, [prid])
+        }
       }
     }
 
@@ -2885,6 +2900,21 @@ async function route(method, segments, body, headers, event) {
     return [200, results];
   }
 
+  // POST /arrivals/view { owner_uids: [..] } — the page calls this once per visit (not on its
+  // 60 s refresh) so Reports can show the board-load → reservation funnel per seller
+  if (r0 === 'arrivals' && r1 === 'view' && method === 'POST') {
+    const uids = [...new Set((Array.isArray(body?.owner_uids) ? body.owner_uids : [])
+      .map(Number).filter(n => Number.isInteger(n) && n > 0))].slice(0, 50)
+    try {
+      for (const uid of uids) {
+        await dbr(
+          `INSERT INTO boa_view_day (day, owner_uid, views) VALUES (CURRENT_DATE, $1, 1)
+           ON CONFLICT (day, owner_uid) DO UPDATE SET views = boa_view_day.views + 1`, [uid])
+      }
+    } catch (e) { console.error('boa view count:', e.message) }
+    return [200, { ok: true }]
+  }
+
   // ── BOARD OF ARRIVALS — PLACE ORDER ──────────────────────────────────────────
   if (r0 === 'arrivals' && r1 === 'order' && method === 'POST') {
     const { items, guest_name, guest_email, guest_phone, fulfillment, delivery_address } = body
@@ -3229,6 +3259,238 @@ async function route(method, segments, body, headers, event) {
       }
 
       return [200, { items: classified, rules: rules.slice(0,10) }]
+    }
+
+    // ── BoA IMPACT ─────────────────────────────────────────────────────────
+    // Does pre-selling through the Board of Arrivals (BoA) complement stock sales?
+    //   GET  /reports/boa-impact/:days       aggregated series for the three charts
+    //   POST /reports/boa-impact/handover    { oid }                    log handover time
+    //   POST /reports/boa-impact/waste       { prid, rid, wasted_qty }  log unsold units
+    // A BoA order = no menu, tied to a run, placed by a guest with an email.
+    // 'stock' orders are production placeholders created when a run starts, not sales.
+    if (r1 === 'boa-impact') {
+      if (segments[2] === 'handover' && method === 'POST') {
+        const oid = Number(body?.oid)
+        if (!oid) return [400, { error: 'oid required' }]
+        const [o] = await dbq(
+          `SELECT o.oid FROM "order" o LEFT JOIN menu m ON m.mid=o.mid
+           WHERE o.oid=$1 AND (m.owner_uid=$2 OR (o.mid IS NULL AND o.owner_uid=$2))`,
+          [oid, user.uid])
+        if (!o) return [404, { error: 'Order not found' }]
+        await dbr(`UPDATE "order" SET handed_over_at=COALESCE(handed_over_at, NOW()) WHERE oid=$1`, [oid])
+        return [200, { ok: true }]
+      }
+
+      if (segments[2] === 'waste' && method === 'POST') {
+        const prid = Number(body?.prid), rid = Number(body?.rid)
+        const wasted = Number(body?.wasted_qty)
+        if (!prid || !rid || !Number.isFinite(wasted) || wasted < 0)
+          return [400, { error: 'prid, rid and wasted_qty (≥ 0) required' }]
+        const [row] = await dbq(
+          `SELECT pri.qty FROM process_run_item pri
+           JOIN process_run pr ON pr.prid=pri.prid
+           WHERE pri.prid=$1 AND pri.rid=$2 AND pr.owner_uid=$3`, [prid, rid, user.uid])
+        if (!row) return [404, { error: 'Batch item not found' }]
+        if (wasted > Number(row.qty)) return [400, { error: `Cannot exceed batch quantity (${Number(row.qty)})` }]
+        await dbr(`UPDATE process_run_item SET wasted_qty=$3 WHERE prid=$1 AND rid=$2`, [prid, rid, wasted])
+        return [200, { ok: true }]
+      }
+
+      if (method === 'GET') {
+        const days = Math.min(365, Math.max(7, parseInt(segments[2], 10) || 182))
+        const uid = user.uid
+        const BOA  = `o.mid IS NULL AND o.prid IS NOT NULL AND o.guest_email IS NOT NULL`
+        const LIVE = `o.status NOT IN ('Declined','Cancelled')`
+        const SALE = `COALESCE(o.fulfillment,'pickup') <> 'stock'`
+        const SINCE = `make_interval(days => $2::int)`
+
+        const [
+          boaAges, convAges, weeklyBoa, weeklyConv, leadRows, batches,
+          [views], [resv], [collected], buyers, pending, [firstBoa],
+        ] = await Promise.all([
+          // Age of a BoA order's batch at the moment of handover
+          dbq(`SELECT EXTRACT(EPOCH FROM (o.handed_over_at - pr.completed_at))/3600 AS age_h
+               FROM "order" o
+               JOIN process_run pr ON pr.prid=o.prid
+               WHERE ${BOA} AND o.owner_uid=$1 AND ${LIVE}
+                 AND o.handed_over_at IS NOT NULL AND pr.completed_at IS NOT NULL
+                 AND o.handed_over_at >= pr.completed_at
+                 AND o.created_at >= NOW() - ${SINCE}`, [uid, days]),
+
+          // Stock-model sales: age of the most recent finished batch of the same item.
+          // Batches are not linked to stock sales, so this is an estimate. "Most recent batch"
+          // is the youngest stock could be (FIFO would be older), i.e. it favours stock.
+          dbq(`SELECT EXTRACT(EPOCH FROM (o.handed_over_at - lr.completed_at))/3600 AS age_h
+               FROM "order" o
+               JOIN menu m ON m.mid=o.mid AND m.owner_uid=$1
+               JOIN order_item oi ON oi.oid=o.oid
+               JOIN LATERAL (
+                 SELECT pr.completed_at FROM process_run pr
+                 JOIN process_run_item pri ON pri.prid=pr.prid AND pri.rid=oi.rid
+                 WHERE pr.owner_uid=$1 AND pr.status='completed'
+                   AND pr.completed_at <= o.handed_over_at
+                 ORDER BY pr.completed_at DESC LIMIT 1
+               ) lr ON true
+               WHERE ${SALE} AND ${LIVE} AND o.handed_over_at IS NOT NULL
+                 AND o.created_at >= NOW() - ${SINCE}`, [uid, days]),
+
+          // Weekly revenue. BoA order_item.price holds the line total (price × qty fulfilled),
+          // stock-model order_item.price is per unit — hence the different formulas.
+          dbq(`SELECT to_char(date_trunc('week', o.created_at), 'YYYY-MM-DD') AS wk,
+                      COUNT(DISTINCT o.oid)::int AS orders, COALESCE(SUM(oi.price),0) AS revenue
+               FROM "order" o JOIN order_item oi ON oi.oid=o.oid
+               WHERE ${BOA} AND o.owner_uid=$1 AND ${LIVE}
+                 AND o.created_at >= NOW() - ${SINCE}
+               GROUP BY 1 ORDER BY 1`, [uid, days]),
+
+          dbq(`SELECT to_char(date_trunc('week', o.created_at), 'YYYY-MM-DD') AS wk,
+                      COUNT(DISTINCT o.oid)::int AS orders, COALESCE(SUM(oi.price*oi.qty),0) AS revenue
+               FROM "order" o
+               JOIN menu m ON m.mid=o.mid AND m.owner_uid=$1
+               JOIN order_item oi ON oi.oid=o.oid
+               WHERE ${SALE} AND ${LIVE} AND o.created_at >= NOW() - ${SINCE}
+               GROUP BY 1 ORDER BY 1`, [uid, days]),
+
+          // How long before the batch was ready did each confirmed reservation arrive?
+          dbq(`SELECT EXTRACT(EPOCH FROM (pr.completed_at - br.created_at))/3600 AS lead_h
+               FROM boa_reservation br
+               JOIN process_run pr ON pr.prid=br.prid
+               WHERE br.owner_uid=$1 AND br.status='confirmed' AND pr.status <> 'cancelled'
+                 AND br.created_at >= NOW() - ${SINCE}`, [uid, days]),
+
+          // Per finished batch item: share reserved before ready vs logged waste
+          dbq(`SELECT pr.prid, pri.rid, r.name AS item, pr.completed_at,
+                      pri.qty AS run_qty, pri.wasted_qty,
+                      COALESCE(SUM(oi.qty) FILTER (WHERE br.created_at < pr.completed_at), 0) AS pre_qty,
+                      COALESCE(SUM(oi.qty), 0) AS boa_qty
+               FROM process_run pr
+               JOIN process_run_item pri ON pri.prid=pr.prid
+               JOIN recipe r ON r.rid=pri.rid
+               LEFT JOIN boa_reservation br ON br.prid=pr.prid AND br.rid=pri.rid AND br.status='confirmed'
+               LEFT JOIN "order" o ON o.oid=br.oid AND o.status NOT IN ('Declined','Cancelled')
+               LEFT JOIN order_item oi ON oi.oid=o.oid AND oi.rid=pri.rid
+               WHERE pr.owner_uid=$1 AND pr.status='completed'
+                 AND pr.completed_at >= NOW() - ${SINCE}
+               GROUP BY pr.prid, pri.rid, r.name, pr.completed_at, pri.qty, pri.wasted_qty
+               ORDER BY pr.completed_at DESC`, [uid, days]),
+
+          // Funnel: board loads → reservations → handed over
+          dbq(`SELECT COALESCE(SUM(views),0)::int AS views, to_char(MIN(day), 'YYYY-MM-DD') AS since
+               FROM boa_view_day WHERE owner_uid=$1 AND day >= CURRENT_DATE - $2::int`, [uid, days]),
+          dbq(`SELECT COUNT(*) FILTER (WHERE status='confirmed')::int AS confirmed,
+                      COUNT(*) FILTER (WHERE status='pending')::int AS waitlisted,
+                      COALESCE(SUM(qty) FILTER (WHERE status='pending'),0) AS waitlist_units
+               FROM boa_reservation WHERE owner_uid=$1 AND created_at >= NOW() - ${SINCE}`, [uid, days]),
+          dbq(`SELECT COUNT(*)::int AS n FROM "order" o
+               WHERE ${BOA} AND o.owner_uid=$1 AND ${LIVE} AND o.handed_over_at IS NOT NULL
+                 AND o.created_at >= NOW() - ${SINCE}`, [uid, days]),
+
+          // Who buys through BoA: new to the seller, a known stock-model customer, or a repeat BoA buyer.
+          // Guests of other channels have no matchable email, so "new" is an upper bound.
+          dbq(`WITH boa AS (
+                 SELECT lower(br.guest_email) AS email, MIN(br.created_at) AS first_at
+                 FROM boa_reservation br
+                 WHERE br.owner_uid=$1 AND br.status='confirmed' AND br.guest_email IS NOT NULL
+                   AND br.created_at >= NOW() - ${SINCE}
+                 GROUP BY 1)
+               SELECT
+                 EXISTS (SELECT 1 FROM boa_reservation b2
+                         WHERE b2.owner_uid=$1 AND lower(b2.guest_email)=boa.email
+                           AND b2.created_at < boa.first_at) AS prior_boa,
+                 EXISTS (SELECT 1 FROM "order" o2
+                         JOIN menu m2 ON m2.mid=o2.mid AND m2.owner_uid=$1
+                         JOIN "user" u2 ON u2.uid=o2.owner_uid
+                         WHERE lower(u2.email)=boa.email AND o2.created_at < boa.first_at
+                           AND COALESCE(o2.fulfillment,'pickup') <> 'stock') AS prior_stock
+               FROM boa`, [uid, days]),
+
+          // Orders that are ready but have no handover time yet (for the logging panel)
+          dbq(`SELECT o.oid, o.done_at, o.created_at, (o.mid IS NULL) AS is_boa,
+                      COALESCE(o.guest_name, o.walkin_name, TRIM(COALESCE(cu.first_name,'')||' '||COALESCE(cu.last_name,''))) AS customer,
+                      (SELECT string_agg(r.name||' ×'||oi.qty, ', ')
+                         FROM order_item oi JOIN recipe r ON r.rid=oi.rid WHERE oi.oid=o.oid) AS items
+               FROM "order" o
+               LEFT JOIN menu m ON m.mid=o.mid
+               LEFT JOIN "user" cu ON cu.uid=o.owner_uid AND o.mid IS NOT NULL
+               WHERE (m.owner_uid=$1 OR (o.mid IS NULL AND o.owner_uid=$1 AND o.guest_email IS NOT NULL))
+                 AND o.status IN ('Done','Dispatched') AND ${SALE}
+                 AND o.handed_over_at IS NULL
+                 AND o.created_at >= NOW() - ${SINCE}
+               ORDER BY o.created_at DESC LIMIT 25`, [uid, days]),
+
+          dbq(`SELECT MIN(o.created_at) AS first_at FROM "order" o WHERE ${BOA} AND o.owner_uid=$1`, [uid]),
+        ])
+
+        const median = a => {
+          if (!a.length) return null
+          const s = [...a].sort((x, y) => x - y), m = Math.floor(s.length / 2)
+          return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2
+        }
+        const bin = (vals, edges) => {                 // counts per [edge[i], edge[i+1]) + overflow
+          const out = new Array(edges.length).fill(0)
+          vals.forEach(v => {
+            let i = edges.length - 1
+            for (let k = 0; k < edges.length - 1; k++) if (v < edges[k + 1]) { i = k; break }
+            out[i]++
+          })
+          return out
+        }
+        const ageEdges = [0, 1, 2, 4, 8, 12, 24, 48]
+        const boaH  = boaAges.map(r => Number(r.age_h)).filter(Number.isFinite)
+        const convH = convAges.map(r => Number(r.age_h)).filter(Number.isFinite)
+
+        // Reservation lead time: negative = reserved after the batch was ready
+        const leads = leadRows.map(r => r.lead_h === null ? null : Number(r.lead_h))
+        const inProduction = leads.filter(v => v === null).length
+        const known = leads.filter(v => v !== null)
+        const after = known.filter(v => v <= 0).length
+        const leadBins = [
+          after,
+          ...bin(known.filter(v => v > 0), [0, 1, 4, 12, 24]),
+        ]
+        const beforeReady = known.filter(v => v > 0).length + inProduction
+
+        const batchRows = batches.map(b => {
+          const q = Number(b.run_qty) || 0
+          return {
+            prid: b.prid, rid: b.rid, item: b.item, completed_at: b.completed_at,
+            run_qty: q,
+            wasted_qty: b.wasted_qty === null ? null : Number(b.wasted_qty),
+            pre_share:   q ? Math.min(1, Number(b.pre_qty) / q) : 0,
+            boa_share:   q ? Math.min(1, Number(b.boa_qty) / q) : 0,
+          }
+        })
+
+        return [200, {
+          days,
+          boa_first_at: firstBoa?.first_at || null,
+          freshness: {
+            labels: ['<1 h','1–2 h','2–4 h','4–8 h','8–12 h','12–24 h','24–48 h','48 h+'],
+            boa:  { counts: bin(boaH, ageEdges),  n: boaH.length,  median_h: median(boaH) },
+            stock:{ counts: bin(convH, ageEdges), n: convH.length, median_h: median(convH) },
+          },
+          weekly: { boa: weeklyBoa.map(w => ({ ...w, revenue: Number(w.revenue) })),
+                    stock: weeklyConv.map(w => ({ ...w, revenue: Number(w.revenue) })) },
+          lead: {
+            labels: ['After ready','0–1 h','1–4 h','4–12 h','12–24 h','24 h+'],
+            counts: leadBins, in_production: inProduction,
+            n: known.length + inProduction, before_ready: beforeReady,
+          },
+          batches: batchRows,
+          funnel: {
+            views: views?.views || 0, views_since: views?.since || null,
+            reservations: resv?.confirmed || 0, waitlisted: resv?.waitlisted || 0,
+            waitlist_units: Number(resv?.waitlist_units) || 0,
+            handed_over: collected?.n || 0,
+          },
+          buyers: {
+            new: buyers.filter(b => !b.prior_boa && !b.prior_stock).length,
+            stock_customers: buyers.filter(b => !b.prior_boa && b.prior_stock).length,
+            repeat_boa: buyers.filter(b => b.prior_boa).length,
+          },
+          pending_handover: pending,
+        }]
+      }
     }
   }
 

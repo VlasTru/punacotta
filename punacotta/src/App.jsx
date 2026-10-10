@@ -4659,6 +4659,427 @@ function SupplierForm({
 }
 
 // ─── REPORTS PAGE ─────────────────────────────────────────────────────────────
+// ─── BOARD OF ARRIVALS IMPACT (Reports) ───────────────────────────────────────
+// Does pre-selling through the Board of Arrivals complement the stock model?
+// Series colours were run through the dataviz palette validator (light surface, 2 series).
+const BOA_C   = "#b4691f";   // Board of Arrivals
+const STOCK_C = "#1f6fc0";   // stock model
+
+const fmtHours = h => h==null ? "—" : h<1 ? `${Math.round(h*60)} min` : `${h.toFixed(1)} h`;
+const fmtK = v => v>=1000 ? `${(Math.round(v/100)/10).toString()}k` : String(Math.round(v));
+const niceMax = v => { if(!(v>0)) return 1; const p=10**Math.floor(Math.log10(v)); const f=v/p; return (f<=1?1:f<=2?2:f<=5?5:10)*p; };
+const pctStr = v => v==null ? "—" : `${Math.round(v*100)}%`;
+const ymdLocal = x => `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,"0")}-${String(x.getDate()).padStart(2,"0")}`;
+const mondayOf = x => { const m=new Date(x); m.setHours(0,0,0,0); m.setDate(m.getDate()-((m.getDay()+6)%7)); return m; };
+// Bar with 4px rounded data-end, square at the baseline
+const barPath = (x,y,w,h,r,roundTop) => {
+  if (h<=0) return "";
+  const rr = roundTop ? Math.min(r,h,w/2) : 0;
+  return `M${x},${y+h} V${y+rr} ${rr?`Q${x},${y} ${x+rr},${y}`:`L${x},${y}`} H${x+w-rr} ${rr?`Q${x+w},${y} ${x+w},${y+rr}`:`L${x+w},${y}`} V${y+h} Z`;
+};
+
+const BoaTile = ({label,value,sub}) => (
+  <div style={{background:G.sand,borderRadius:10,padding:"12px 16px",flex:"1 1 150px",minWidth:150}}>
+    <p style={{fontSize:11,color:G.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>{label}</p>
+    <p style={{fontFamily:G.font,fontSize:22,fontWeight:700,color:G.dark}}>{value}</p>
+    {sub&&<p style={{fontSize:11,color:G.muted,marginTop:2}}>{sub}</p>}
+  </div>
+);
+const BoaLegend = ({items}) => (
+  <div style={{display:"flex",flexWrap:"wrap",gap:14,marginBottom:8,fontSize:12,color:G.dark}}>
+    {items.map((it,i)=>(
+      <span key={i} style={{display:"inline-flex",alignItems:"center",gap:6}}>
+        <span style={{width:12,height:12,borderRadius:3,background:it.color,display:"inline-block"}}/>{it.label}
+      </span>
+    ))}
+  </div>
+);
+const BoaTable = ({cols,rows}) => (
+  <div style={{overflowX:"auto"}}>
+    <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+      <thead><tr>{cols.map(c=><th key={c} style={{textAlign:"left",padding:"4px 8px",color:G.muted,fontWeight:600,borderBottom:`1px solid ${G.border}`,whiteSpace:"nowrap"}}>{c}</th>)}</tr></thead>
+      <tbody>{rows.map((r,i)=><tr key={i}>{r.map((v,j)=><td key={j} style={{padding:"4px 8px",borderBottom:`1px solid ${G.border}`,color:G.dark,whiteSpace:"nowrap"}}>{v}</td>)}</tr>)}</tbody>
+    </table>
+  </div>
+);
+
+function BoaImpactSection({ toast }) {
+  const [days, setDays]       = useState(182);
+  const [d, setD]             = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [view, setView]       = useState("chart");
+  const [tip, setTip]         = useState(null);
+  const [busy, setBusy]       = useState(null);
+  const [wasteIn, setWasteIn] = useState({});
+  const [showLog, setShowLog] = useState(false);
+
+  const load = useCallback(async(n)=>{
+    setLoading(true);
+    try { setD(await api.getBoaImpact(n)); }
+    catch(e){ toast(e.message,"error"); }
+    finally{ setLoading(false); }
+  },[]);
+  useEffect(()=>{ load(182); },[]);
+  const changeDays = n => { setDays(n); load(n); };
+
+  // ── tooltip plumbing: one tooltip, positioned inside the chart card under the pointer ──
+  const place = (cx,cy,el,title,rows) => {
+    const card = el.closest("[data-chartbox]"); if(!card) return;
+    const box = card.getBoundingClientRect();
+    setTip({card:card.dataset.chartbox, x:Math.min(cx-box.left+12, box.width-180), y:Math.max(cy-box.top-8,0), title, rows});
+  };
+  const tipProps = (title,rows) => ({
+    tabIndex:0, style:{outline:"none"},
+    onPointerMove: e=>place(e.clientX,e.clientY,e.currentTarget,title,rows),
+    onFocus: e=>{ const b=e.currentTarget.getBoundingClientRect(); place(b.left+b.width/2,b.top,e.currentTarget,title,rows); },
+    onPointerLeave: ()=>setTip(null), onBlur: ()=>setTip(null),
+  });
+  const Tip = ({id}) => (tip&&tip.card===id) ? (
+    <div style={{position:"absolute",left:tip.x,top:tip.y,pointerEvents:"none",zIndex:20,background:G.white,
+      border:`1px solid ${G.border}`,borderRadius:8,padding:"8px 12px",fontSize:12,minWidth:130,lineHeight:1.6,
+      boxShadow:"0 4px 14px rgba(0,0,0,0.12)"}}>
+      <div style={{color:G.muted,marginBottom:2}}>{tip.title}</div>
+      {tip.rows.map((r,i)=>(
+        <div key={i} style={{display:"flex",alignItems:"center",gap:8}}>
+          {r.color&&<span style={{width:10,height:2,background:r.color,display:"inline-block",flex:"none"}}/>}
+          <b style={{color:G.dark}}>{r.value}</b><span style={{color:G.muted}}>{r.label}</span>
+        </div>
+      ))}
+    </div>
+  ) : null;
+
+  const card = (id,title,sub,body) => (
+    <div data-chartbox={id} style={{position:"relative",border:`1px solid ${G.border}`,borderRadius:12,padding:16,flex:"1 1 420px",minWidth:0}}>
+      <h4 style={{fontFamily:G.font,fontSize:15,marginBottom:2}}>{title}</h4>
+      <p style={{fontSize:12,color:G.muted,marginBottom:10,lineHeight:1.5}}>{sub}</p>
+      {body}
+      <Tip id={id}/>
+    </div>
+  );
+  const empty = msg => <div style={{padding:"36px 12px",textAlign:"center",color:G.muted,fontSize:13,lineHeight:1.6}}>{msg}</div>;
+
+  // ── derived data ────────────────────────────────────────────────────────────
+  const fr = d?.freshness, boa = fr?.boa, stk = fr?.stock;
+  const lead = d?.lead, fun = d?.funnel, buy = d?.buyers;
+  const logged = (d?.batches||[]).filter(b=>b.wasted_qty!=null && b.run_qty>0).map(b=>({...b, waste:b.wasted_qty/b.run_qty}));
+  const avgOf = a => a.length ? a.reduce((s,b)=>s+b.waste,0)/a.length : null;
+  const hi = logged.filter(b=>b.pre_share>=0.3), lo = logged.filter(b=>b.pre_share<0.3);
+  const unlogged = (d?.batches||[]).filter(b=>b.wasted_qty==null).slice(0,20);
+
+  const weeks = useMemo(()=>{
+    if(!d) return [];
+    const map = {};
+    d.weekly.stock.forEach(w=>{ map[w.wk]={...(map[w.wk]||{}),wk:w.wk,stock:w.revenue,stockN:w.orders}; });
+    d.weekly.boa.forEach(w=>{ map[w.wk]={...(map[w.wk]||{}),wk:w.wk,boa:w.revenue,boaN:w.orders}; });
+    const start = new Date(); start.setDate(start.getDate()-d.days);
+    for (let m=mondayOf(start), end=mondayOf(new Date()); m<=end; m.setDate(m.getDate()+7)) {
+      const k = ymdLocal(m); if(!map[k]) map[k]={wk:k};
+    }
+    return Object.values(map).sort((a,b)=>a.wk<b.wk?-1:1).map(w=>({stock:0,stockN:0,boa:0,boaN:0,...w}));
+  },[d]);
+
+  // ── chart 1: age at handover ───────────────────────────────────────────────
+  const renderFresh = () => {
+    if(!boa.n && !stk.n) return empty("No handover times logged yet. Use “Log missing data” below to record when customers collect their orders.");
+    const W=600,H=230,PL=44,PR=12,PT=14,PB=44,cW=W-PL-PR,cH=H-PT-PB;
+    const nb=fr.labels.length, slot=cW/nb;
+    const sh=(g,i)=>g.n?g.counts[i]/g.n:0;
+    const maxS=Math.max(...fr.labels.map((_,i)=>Math.max(sh(boa,i),sh(stk,i))),0.05);
+    const yMax=niceMax(maxS*100)/100;
+    const bw=Math.min(24,(slot-10)/2-1);
+    const yOf=v=>PT+cH-(v/yMax)*cH;
+    return (
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{display:"block"}} role="img" aria-label="Age of orders at handover, Board of Arrivals versus stock model">
+        {[0,0.25,0.5,0.75,1].map(t=>(
+          <g key={t}>
+            <line x1={PL} y1={PT+cH*(1-t)} x2={PL+cW} y2={PT+cH*(1-t)} stroke={G.border} strokeWidth={1}/>
+            <text x={PL-6} y={PT+cH*(1-t)+4} textAnchor="end" fontSize={10} fill={G.muted}>{Math.round(yMax*t*100)}%</text>
+          </g>
+        ))}
+        {fr.labels.map((lab,i)=>{
+          const gx=PL+i*slot+(slot-(2*bw+2))/2;
+          const rows=[
+            ...(boa.n?[{color:BOA_C,value:pctStr(sh(boa,i)),label:`Board of Arrivals · ${boa.counts[i]} of ${boa.n}`}]:[]),
+            ...(stk.n?[{color:STOCK_C,value:pctStr(sh(stk,i)),label:`Stock model · ${stk.counts[i]} of ${stk.n}`}]:[]),
+          ];
+          return (
+            <g key={i}>
+              {boa.n>0&&<path d={barPath(gx,yOf(sh(boa,i)),bw,PT+cH-yOf(sh(boa,i)),4,true)} fill={BOA_C}/>}
+              {stk.n>0&&<path d={barPath(gx+bw+2,yOf(sh(stk,i)),bw,PT+cH-yOf(sh(stk,i)),4,true)} fill={STOCK_C}/>}
+              <text x={PL+i*slot+slot/2} y={H-26} textAnchor="middle" fontSize={10} fill={G.muted}>{lab}</text>
+              <rect x={PL+i*slot} y={PT} width={slot} height={cH} fill="transparent" {...tipProps(`Handed over ${lab} after the batch was ready`,rows)}/>
+            </g>
+          );
+        })}
+        <line x1={PL} y1={PT+cH} x2={PL+cW} y2={PT+cH} stroke={G.border}/>
+        <text x={PL+cW/2} y={H-6} textAnchor="middle" fontSize={10} fill={G.muted}>Time from batch ready to handover · share of each group’s orders</text>
+      </svg>
+    );
+  };
+
+  // ── chart 2: weekly revenue, stock + BoA stacked ───────────────────────────
+  const renderWeekly = () => {
+    if(!weeks.some(w=>w.stock||w.boa)) return empty("No sales in this period yet.");
+    const W=600,H=240,PL=48,PR=12,PT=16,PB=36,cW=W-PL-PR,cH=H-PT-PB;
+    const n=weeks.length, slot=cW/n, bw=Math.min(24,Math.max(3,slot-6));
+    const yMax=niceMax(Math.max(...weeks.map(w=>w.stock+w.boa),1));
+    const hOf=v=>(v/yMax)*cH, base=PT+cH;
+    const firstKey = d.boa_first_at ? ymdLocal(mondayOf(new Date(d.boa_first_at))) : null;
+    const fi = firstKey ? weeks.findIndex(w=>w.wk===firstKey) : -1;
+    const lblEvery = Math.ceil(n/10);
+    return (
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{display:"block"}} role="img" aria-label="Weekly revenue, stock model and Board of Arrivals stacked">
+        {[0,0.25,0.5,0.75,1].map(t=>(
+          <g key={t}>
+            <line x1={PL} y1={PT+cH*(1-t)} x2={PL+cW} y2={PT+cH*(1-t)} stroke={G.border} strokeWidth={1}/>
+            <text x={PL-6} y={PT+cH*(1-t)+4} textAnchor="end" fontSize={10} fill={G.muted}>{fmtK(yMax*t)}</text>
+          </g>
+        ))}
+        {weeks.map((w,i)=>{
+          const x=PL+i*slot+(slot-bw)/2;
+          const hs=hOf(w.stock), hb=hOf(w.boa);
+          const dt=new Date(w.wk+"T00:00:00");
+          const rows=[
+            {color:STOCK_C,value:`${Math.round(w.stock).toLocaleString()} AMD`,label:`Stock model · ${w.stockN} orders`},
+            {color:BOA_C,value:`${Math.round(w.boa).toLocaleString()} AMD`,label:`Board of Arrivals · ${w.boaN} orders`},
+            {value:`${Math.round(w.stock+w.boa).toLocaleString()} AMD`,label:"total"},
+          ];
+          return (
+            <g key={w.wk}>
+              {hs>0&&<path d={barPath(x,base-hs,bw,hs,4,hb<=0)} fill={STOCK_C}/>}
+              {hb>0&&<path d={barPath(x,base-hs-hb-(hs>0?2:0),bw,hb,4,true)} fill={BOA_C}/>}
+              {i%lblEvery===0&&<text x={PL+i*slot+slot/2} y={H-18} textAnchor="middle" fontSize={9} fill={G.muted}>
+                {`${String(dt.getDate()).padStart(2,"0")}/${String(dt.getMonth()+1).padStart(2,"0")}`}</text>}
+              <rect x={PL+i*slot} y={PT} width={slot} height={cH} fill="transparent"
+                {...tipProps(`Week of ${dt.toLocaleDateString()}`,rows)}/>
+            </g>
+          );
+        })}
+        {fi>=0&&<g>
+          <line x1={PL+fi*slot} y1={PT} x2={PL+fi*slot} y2={base} stroke={G.dark} strokeWidth={1}/>
+          <text x={PL+fi*slot+4} y={PT+9} fontSize={10} fill={G.dark}>first BoA order</text>
+        </g>}
+        <line x1={PL} y1={base} x2={PL+cW} y2={base} stroke={G.border}/>
+        <text x={PL+cW/2} y={H-3} textAnchor="middle" fontSize={10} fill={G.muted}>Week starting · revenue, AMD</text>
+      </svg>
+    );
+  };
+
+  // ── chart 3: when do reservations arrive? ─────────────────────────────────
+  const renderLead = () => {
+    if(!lead.n) return empty("No confirmed reservations in this period.");
+    const labels=[...lead.labels,"Batch in production"], counts=[...lead.counts,lead.in_production];
+    const W=600,H=220,PL=40,PR=12,PT=12,PB=44,cW=W-PL-PR,cH=H-PT-PB;
+    const slot=cW/labels.length, bw=Math.min(24,slot-12);
+    const yMax=Math.max(1,niceMax(Math.max(...counts)));
+    const ticks=[0,0.5,1].map(t=>Math.round(yMax*t));
+    return (
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{display:"block"}} role="img" aria-label="How long before the batch was ready reservations arrived">
+        {[...new Set(ticks)].map(v=>(
+          <g key={v}>
+            <line x1={PL} y1={PT+cH-(v/yMax)*cH} x2={PL+cW} y2={PT+cH-(v/yMax)*cH} stroke={G.border}/>
+            <text x={PL-6} y={PT+cH-(v/yMax)*cH+4} textAnchor="end" fontSize={10} fill={G.muted}>{v}</text>
+          </g>
+        ))}
+        {labels.map((lab,i)=>{
+          const h=(counts[i]/yMax)*cH;
+          return (
+            <g key={i}>
+              <path d={barPath(PL+i*slot+(slot-bw)/2,PT+cH-h,bw,h,4,true)} fill={BOA_C}/>
+              <text x={PL+i*slot+slot/2} y={H-26} textAnchor="middle" fontSize={10} fill={G.muted}>{lab.length>10?lab.split(" ").slice(0,2).join(" "):lab}</text>
+              <rect x={PL+i*slot} y={PT} width={slot} height={cH} fill="transparent"
+                {...tipProps(lab==="After ready"?"Reserved after the batch was ready":lab==="Batch in production"?"Reserved, batch still in production":`Reserved ${lab} before the batch was ready`,
+                  [{color:BOA_C,value:String(counts[i]),label:"reservations"}])}/>
+            </g>
+          );
+        })}
+        <line x1={PL} y1={PT+cH} x2={PL+cW} y2={PT+cH} stroke={G.border}/>
+        <text x={PL+cW/2} y={H-6} textAnchor="middle" fontSize={10} fill={G.muted}>How long before the batch was ready the customer reserved</text>
+      </svg>
+    );
+  };
+
+  // ── chart 4: pre-sold share vs. waste per batch ───────────────────────────
+  const renderScatter = () => {
+    if(!logged.length) return empty("No batches with logged unsold units yet. Record them under “Log missing data” to see whether pre-selling reduces waste.");
+    const W=600,H=250,PL=48,PR=16,PT=14,PB=44,cW=W-PL-PR,cH=H-PT-PB;
+    const yMax=niceMax(Math.max(...logged.map(b=>b.waste*100),10));
+    const xOf=v=>PL+v*cW, yOf=v=>PT+cH-(v/yMax)*cH;
+    return (
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{display:"block"}} role="img" aria-label="Share of each batch reserved before ready versus unsold share">
+        {[0,0.25,0.5,0.75,1].map(t=>(
+          <g key={t}>
+            <line x1={PL} y1={PT+cH*(1-t)} x2={PL+cW} y2={PT+cH*(1-t)} stroke={G.border}/>
+            <text x={PL-6} y={PT+cH*(1-t)+4} textAnchor="end" fontSize={10} fill={G.muted}>{Math.round(yMax*t)}%</text>
+            <text x={xOf(t)} y={PT+cH+16} textAnchor="middle" fontSize={10} fill={G.muted}>{Math.round(t*100)}%</text>
+          </g>
+        ))}
+        <line x1={xOf(0.3)} y1={PT} x2={xOf(0.3)} y2={PT+cH} stroke={G.dark} strokeWidth={1}/>
+        <text x={xOf(0.3)+4} y={PT+9} fontSize={10} fill={G.dark}>30% pre-sold</text>
+        {logged.map((b,i)=>(
+          <g key={`${b.prid}-${b.rid}`}>
+            <circle cx={xOf(b.pre_share)} cy={yOf(b.waste*100)} r={4} fill={BOA_C} stroke={G.white} strokeWidth={2}/>
+            <circle cx={xOf(b.pre_share)} cy={yOf(b.waste*100)} r={12} fill="transparent"
+              {...tipProps(`${b.item} · ${new Date(b.completed_at).toLocaleDateString()}`,[
+                {value:pctStr(b.pre_share),label:"reserved before ready"},
+                {value:pctStr(b.waste),label:`unsold (${b.wasted_qty} of ${b.run_qty})`},
+              ])}/>
+          </g>
+        ))}
+        <line x1={PL} y1={PT+cH} x2={PL+cW} y2={PT+cH} stroke={G.border}/>
+        <text x={PL+cW/2} y={H-6} textAnchor="middle" fontSize={10} fill={G.muted}>Share of the batch reserved before it was ready</text>
+        <text x={12} y={PT+cH/2} textAnchor="middle" fontSize={10} fill={G.muted} transform={`rotate(-90,12,${PT+cH/2})`}>Unsold / wasted</text>
+      </svg>
+    );
+  };
+
+  // ── data entry ──────────────────────────────────────────────────────────────
+  const markHanded = async oid => {
+    setBusy(`h${oid}`);
+    try { await api.logHandover(oid); toast("Handover logged"); await load(days); }
+    catch(e){ toast(e.message,"error"); }
+    finally{ setBusy(null); }
+  };
+  const saveWaste = async b => {
+    const key=`${b.prid}-${b.rid}`, v=wasteIn[key];
+    if(v===undefined||v==="") return;
+    setBusy(key);
+    try {
+      await api.logWaste(b.prid,b.rid,Number(v)); toast("Saved");
+      setWasteIn(p=>{ const n={...p}; delete n[key]; return n; });
+      await load(days);
+    } catch(e){ toast(e.message,"error"); }
+    finally{ setBusy(null); }
+  };
+
+  const ready = d && fr;
+  return (
+    <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20 }}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:12,marginBottom:4}}>
+        <h3 style={{fontFamily:G.font,fontSize:17}}>Board of Arrivals impact</h3>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          <div style={{display:"flex",borderRadius:8,border:`1px solid ${G.border}`,overflow:"hidden"}}>
+            {[[84,"12 weeks"],[182,"26 weeks"],[364,"1 year"]].map(([n,l])=>(
+              <button key={n} onClick={()=>changeDays(n)} style={{padding:"6px 14px",border:"none",cursor:"pointer",fontSize:13,fontFamily:G.mono,
+                background:days===n?G.caramel:G.white,color:days===n?G.white:G.muted,transition:"all 0.15s"}}>{l}</button>
+            ))}
+          </div>
+          <div style={{display:"flex",borderRadius:8,border:`1px solid ${G.border}`,overflow:"hidden"}}>
+            {[["chart","Charts"],["table","Tables"]].map(([k,l])=>(
+              <button key={k} onClick={()=>setView(k)} style={{padding:"6px 14px",border:"none",cursor:"pointer",fontSize:13,fontFamily:G.mono,
+                background:view===k?G.caramel:G.white,color:view===k?G.white:G.muted,transition:"all 0.15s"}}>{l}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+      <p style={{fontSize:13,color:G.muted,marginBottom:16,lineHeight:1.5}}>
+        Does selling a batch while it is still being made complement the stock model? Three checks: freshness at handover, whether BoA adds to stock sales, and waste per batch.
+      </p>
+
+      {!ready ? (loading ? <Spinner/> : empty("Could not load the report.")) : (
+        <div style={{opacity:loading?0.55:1,transition:"opacity 0.15s"}}>
+          {/* KPIs */}
+          <div style={{display:"flex",flexWrap:"wrap",gap:12,marginBottom:12}}>
+            <BoaTile label="Median age at handover · BoA" value={fmtHours(boa.median_h)} sub={`${boa.n} orders with a handover time`}/>
+            <BoaTile label="Median age · stock model (est.)" value={fmtHours(stk.median_h)} sub={`${stk.n} order lines · most recent batch`}/>
+            <BoaTile label="Reserved before ready" value={lead.n?pctStr(lead.before_ready/lead.n):"—"} sub={`${lead.n} confirmed reservations`}/>
+            <BoaTile label="Unsold share · logged batches" value={pctStr(avgOf(logged))} sub={`${logged.length} batches logged`}/>
+            <BoaTile label="Waitlisted units" value={Math.round(fun.waitlist_units*10)/10} sub="demand beyond batch capacity"/>
+          </div>
+          {/* Funnel + buyers */}
+          <div style={{display:"flex",flexWrap:"wrap",gap:12,marginBottom:20}}>
+            <BoaTile label="Board visits" value={fun.views} sub={fun.views_since?`counted since ${fun.views_since}`:"counting starts with this release"}/>
+            <BoaTile label="Reservations" value={fun.reservations} sub={fun.views?`${pctStr(fun.reservations/fun.views)} of visits`:"—"}/>
+            <BoaTile label="Handed over" value={fun.handed_over} sub={fun.reservations?`${pctStr(fun.handed_over/fun.reservations)} of reservations`:"—"}/>
+            <BoaTile label="New to you" value={buy.new} sub="BoA buyers, no earlier order found"/>
+            <BoaTile label="Existing customers" value={buy.stock_customers} sub="had ordered from you before"/>
+            <BoaTile label="Repeat BoA buyers" value={buy.repeat_boa} sub="reserved on the board before"/>
+          </div>
+
+          {view==="chart" ? (
+            <div style={{display:"flex",flexWrap:"wrap",gap:16}}>
+              {card("fresh","Freshness at handover","Age of the batch when the customer collects, as a share of each group’s orders. The stock-model age is an estimate: it uses the most recent finished batch of the same item, which is the youngest that stock could be.",
+                <>{(boa.n||stk.n)>0&&<BoaLegend items={[{color:BOA_C,label:`Board of Arrivals (n=${boa.n})`},{color:STOCK_C,label:`Stock model, estimated (n=${stk.n})`}]}/>}{renderFresh()}</>)}
+              {card("weekly","Complement or substitute?","Weekly revenue split by channel. If BoA complements stock sales, the blue stack holds steady after the first BoA order while the total grows.",
+                <><BoaLegend items={[{color:STOCK_C,label:"Stock model"},{color:BOA_C,label:"Board of Arrivals"}]}/>{renderWeekly()}</>)}
+              {card("lead","When do reservations arrive?","Confirmed reservations by how long before the batch was ready they were made. Pre-selling only works if most of them land on the left of “After ready”.",
+                <><p style={{fontSize:13,color:G.dark,marginBottom:8}}>{lead.n?`${pctStr(lead.before_ready/lead.n)} of ${lead.n} reservations arrived before the batch was ready.`:""}</p>{renderLead()}</>)}
+              {card("waste","Pre-selling vs. waste","One dot per finished batch item: the more of it was reserved before it was ready, the less should go unsold.",
+                <>
+                  {logged.length>0&&<p style={{fontSize:13,color:G.dark,marginBottom:8,lineHeight:1.5}}>
+                    ≥30% pre-sold: <b>{pctStr(avgOf(hi))}</b> unsold ({hi.length} batches) · under 30%: <b>{pctStr(avgOf(lo))}</b> ({lo.length}).
+                    {logged.length<10&&<span style={{color:G.muted}}> Fewer than 10 batches logged, so treat this as anecdotal.</span>}
+                  </p>}
+                  {renderScatter()}
+                </>)}
+            </div>
+          ) : (
+            <div style={{display:"flex",flexDirection:"column",gap:20}}>
+              <div><h4 style={{fontFamily:G.font,fontSize:15,marginBottom:6}}>Freshness at handover (orders per age bucket)</h4>
+                <BoaTable cols={["Age","Board of Arrivals","Stock model (est.)"]}
+                  rows={fr.labels.map((l,i)=>[l,`${boa.counts[i]}${boa.n?` (${pctStr(boa.counts[i]/boa.n)})`:""}`,`${stk.counts[i]}${stk.n?` (${pctStr(stk.counts[i]/stk.n)})`:""}`])}/></div>
+              <div><h4 style={{fontFamily:G.font,fontSize:15,marginBottom:6}}>Weekly revenue (AMD)</h4>
+                <BoaTable cols={["Week starting","Stock model","Stock orders","Board of Arrivals","BoA orders","Total"]}
+                  rows={weeks.map(w=>[w.wk,Math.round(w.stock).toLocaleString(),w.stockN,Math.round(w.boa).toLocaleString(),w.boaN,Math.round(w.stock+w.boa).toLocaleString()])}/></div>
+              <div><h4 style={{fontFamily:G.font,fontSize:15,marginBottom:6}}>Reservation lead time</h4>
+                <BoaTable cols={["Reserved","Reservations"]}
+                  rows={[...lead.labels.map((l,i)=>[l,lead.counts[i]]),["Batch in production",lead.in_production]]}/></div>
+              <div><h4 style={{fontFamily:G.font,fontSize:15,marginBottom:6}}>Batches</h4>
+                <BoaTable cols={["Item","Finished","Batch qty","Pre-sold","All BoA","Unsold qty","Unsold %"]}
+                  rows={d.batches.map(b=>[b.item,new Date(b.completed_at).toLocaleDateString(),b.run_qty,pctStr(b.pre_share),pctStr(b.boa_share),b.wasted_qty==null?"not logged":b.wasted_qty,b.wasted_qty==null||!b.run_qty?"—":pctStr(b.wasted_qty/b.run_qty)])}/></div>
+            </div>
+          )}
+
+          {/* Data entry */}
+          <div style={{marginTop:20,borderTop:`1px solid ${G.border}`,paddingTop:14}}>
+            <button onClick={()=>setShowLog(s=>!s)} style={{background:"none",border:"none",cursor:"pointer",fontFamily:G.mono,fontSize:13,color:G.caramel,padding:0}}>
+              {showLog?"▾":"▸"} Log missing data ({d.pending_handover.length} handovers · {unlogged.length} batches)
+            </button>
+            {showLog&&(
+              <div style={{display:"flex",flexWrap:"wrap",gap:24,marginTop:14}}>
+                <div style={{flex:"1 1 360px",minWidth:0}}>
+                  <h4 style={{fontFamily:G.font,fontSize:14,marginBottom:4}}>Ready orders without a handover time</h4>
+                  <p style={{fontSize:12,color:G.muted,marginBottom:8,lineHeight:1.5}}>Click when the customer collects the order. The time of the click is recorded, which is what the freshness chart measures.</p>
+                  {!d.pending_handover.length ? <p style={{fontSize:13,color:G.muted}}>Nothing waiting.</p> : d.pending_handover.map(o=>(
+                    <div key={o.oid} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"8px 0",borderBottom:`1px solid ${G.border}`}}>
+                      <div style={{fontSize:13,minWidth:0}}>
+                        <b style={{color:G.dark}}>#{o.oid}</b> <span style={{color:G.muted}}>{o.is_boa?"BoA":"Stock model"} · {o.customer||"Guest"}</span>
+                        <div style={{fontSize:12,color:G.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{o.items||"—"}</div>
+                      </div>
+                      <Btn size="sm" onClick={()=>markHanded(o.oid)} disabled={busy===`h${o.oid}`}>Handed over</Btn>
+                    </div>
+                  ))}
+                </div>
+                <div style={{flex:"1 1 360px",minWidth:0}}>
+                  <h4 style={{fontFamily:G.font,fontSize:14,marginBottom:4}}>Finished batches without an unsold count</h4>
+                  <p style={{fontSize:12,color:G.muted,marginBottom:8,lineHeight:1.5}}>Enter how many units went unsold or were thrown away (0 if none).</p>
+                  {!unlogged.length ? <p style={{fontSize:13,color:G.muted}}>All finished batches are logged.</p> : unlogged.map(b=>{
+                    const key=`${b.prid}-${b.rid}`;
+                    return (
+                      <div key={key} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"8px 0",borderBottom:`1px solid ${G.border}`}}>
+                        <div style={{fontSize:13,minWidth:0}}>
+                          <b style={{color:G.dark}}>{b.item}</b>
+                          <div style={{fontSize:12,color:G.muted}}>{new Date(b.completed_at).toLocaleDateString()} · batch of {b.run_qty}</div>
+                        </div>
+                        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                          <input type="number" min="0" max={b.run_qty} step="any" value={wasteIn[key]??""} placeholder="unsold"
+                            onChange={e=>setWasteIn(p=>({...p,[key]:e.target.value}))}
+                            style={{width:80,padding:"5px 8px",borderRadius:7,border:`1px solid ${G.border}`,fontFamily:G.mono,fontSize:13}}/>
+                          <Btn size="sm" onClick={()=>saveWaste(b)} disabled={busy===key||(wasteIn[key]??"")===""}>Save</Btn>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ReportsPage({ toast }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
@@ -4763,6 +5184,9 @@ function ReportsPage({ toast }) {
           </svg>
         )}
       </div>
+
+      {/* BOARD OF ARRIVALS IMPACT */}
+      <BoaImpactSection toast={toast}/>
 
       {/* ABC/XYZ */}
       <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, position:"relative" }}>
@@ -4986,12 +5410,24 @@ function BoardOfArrivals({ toast }) {
 
   const load = useCallback(async()=>{
     setLoading(true);
-    try { setArrivals(await api.getArrivals()); }
+    try {
+      const rows = await api.getArrivals();
+      setArrivals(rows);
+      return rows;
+    }
     catch(e){ toast(e.message,"error"); }
     finally{ setLoading(false); }
   },[]);
 
-  useEffect(()=>{ load(); const t=setInterval(load,60000); return()=>clearInterval(t); },[]);
+  useEffect(()=>{
+    // Count the visit once (not the 60 s refresh) for the BoA funnel in Reports
+    load().then(rows=>{
+      const uids=[...new Set((rows||[]).map(r=>r.owner_uid).filter(Boolean))];
+      if(uids.length) api.recordArrivalsView(uids).catch(()=>{});
+    });
+    const t=setInterval(load,60000);
+    return()=>clearInterval(t);
+  },[]);
 
   // Request geolocation on mount
   useEffect(()=>{
