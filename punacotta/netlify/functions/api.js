@@ -40,6 +40,13 @@ async function ensureMigrations() {
       qty NUMERIC(10,3) NOT NULL, source VARCHAR(20) NOT NULL DEFAULT 'manual',
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )`)
+    // Item stock is a ledger: one idempotent row per (item, source, source_id) —
+    // run (batch completed), stock_order, order (customer order Done), boa, unsold — plus wastage
+    await dbr(`ALTER TABLE recipe_stock ADD COLUMN IF NOT EXISTS source_id INTEGER`)
+    await dbr(`CREATE UNIQUE INDEX IF NOT EXISTS recipe_stock_src_uq ON recipe_stock (rid, owner_uid, source, source_id)`)
+    await dbr(`CREATE TABLE IF NOT EXISTS recipe_stock_init (
+      owner_uid INTEGER PRIMARY KEY, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`)
     await dbr(`CREATE TABLE IF NOT EXISTS process_run_item (
       prid INTEGER NOT NULL, rid INTEGER NOT NULL, qty NUMERIC(10,3) NOT NULL DEFAULT 1,
       PRIMARY KEY (prid, rid)
@@ -303,6 +310,115 @@ function parseMultipart(event) {
     }
   }
   return fields
+}
+
+// ─── ITEM STOCK LEDGER ────────────────────────────────────────────────────────
+// Items-tab stock = SUM(recipe_stock.qty). Rows:
+//   run         +  batch quantity when a run completes (minus units pre-sold through the Board of Arrivals)
+//   stock_order +  a manual "Stock" order reaching Done (run-created Stock orders are credited by their run)
+//   order       −  a customer order reaching Done, capped at what is in stock
+//   boa         −  a Board of Arrivals order placed after its batch was already completed
+//   unsold      −  unsold / wasted units logged for a batch in Reports
+//   wastage     −  manual wastage from the Items tab
+// Every row except wastage is keyed by (item, source, source_id), so replays never double count.
+const UNIT_CONV = { kilograms: 1000, litres: 1000, pounds: 16 }
+// Order lines for submultiple items are stored as MOQ steps; convert to the item's own unit
+const lineUnits = (qty, r) =>
+  r.allow_submultiples && Number(r.moq) > 0
+    ? Number(qty) * Number(r.moq) / (UNIT_CONV[r.unit_name] || 1)
+    : Number(qty)
+
+async function setStockEntry(ownerUid, rid, source, sourceId, qty) {
+  if (!qty) {
+    await dbr(`DELETE FROM recipe_stock WHERE rid=$1 AND owner_uid=$2 AND source=$3 AND source_id=$4`,
+      [rid, ownerUid, source, sourceId])
+    return
+  }
+  await dbr(
+    `INSERT INTO recipe_stock (rid, owner_uid, qty, source, source_id, created_at)
+     VALUES ($1,$2,$3,$4,$5,NOW())
+     ON CONFLICT (rid, owner_uid, source, source_id) DO UPDATE SET qty=$3`,
+    [rid, ownerUid, qty, source, sourceId])
+}
+
+// Stock on hand for an item, ignoring one ledger entry (so a recalculation never counts itself)
+async function stockOnHand(ownerUid, rid, exclSource, exclId) {
+  const [row] = await dbq(
+    `SELECT COALESCE(SUM(qty),0) AS qty FROM recipe_stock
+     WHERE rid=$1 AND owner_uid=$2 AND NOT (source=$3 AND source_id IS NOT DISTINCT FROM $4::int)`,
+    [rid, ownerUid, exclSource, exclId])
+  return Math.max(0, Number(row.qty))
+}
+
+async function creditRunStock(prid) {
+  const [run] = await dbq('SELECT owner_uid FROM process_run WHERE prid=$1', [prid])
+  if (!run) return
+  const items = await dbq(
+    `SELECT pri.rid, pri.qty,
+            COALESCE((SELECT SUM(oi.qty) FROM boa_reservation br
+                      JOIN "order" o ON o.oid=br.oid AND o.status NOT IN ('Declined','Cancelled')
+                      JOIN order_item oi ON oi.oid=o.oid AND oi.rid=br.rid
+                      WHERE br.prid=pri.prid AND br.rid=pri.rid AND br.status='confirmed'), 0) AS boa_qty
+     FROM process_run_item pri WHERE pri.prid=$1`, [prid])
+  for (const it of items)
+    await setStockEntry(run.owner_uid, it.rid, 'run', prid, Math.max(0, Number(it.qty) - Number(it.boa_qty)))
+}
+
+async function applyOrderDoneStock(oid) {
+  const [o] = await dbq(
+    `SELECT o.oid, o.mid, o.prid, o.fulfillment, m.owner_uid AS seller
+     FROM "order" o LEFT JOIN menu m ON m.mid=o.mid WHERE o.oid=$1`, [oid])
+  if (!o || !o.seller) return                    // Board of Arrivals orders have no menu: handled with their batch
+  const items = await dbq(
+    `SELECT oi.rid, oi.qty, r.allow_submultiples, r.moq, un.name AS unit_name
+     FROM order_item oi JOIN recipe r ON r.rid=oi.rid LEFT JOIN units un ON un.unid=r.unid
+     WHERE oi.oid=$1`, [oid])
+  if (o.fulfillment === 'stock') {
+    if (o.prid) return                           // created by a run: credited when the run completes
+    for (const it of items) await setStockEntry(o.seller, it.rid, 'stock_order', oid, lineUnits(it.qty, it))
+    return
+  }
+  for (const it of items) {
+    const want = lineUnits(it.qty, it)
+    const have = await stockOnHand(o.seller, it.rid, 'order', oid)
+    await setStockEntry(o.seller, it.rid, 'order', oid, -Math.min(want, have))
+  }
+}
+
+async function reverseOrderStock(oid) {          // a Done order was declined or cancelled
+  await dbr(`DELETE FROM recipe_stock WHERE source IN ('order','stock_order') AND source_id=$1`, [oid])
+}
+
+async function logUnsoldStock(ownerUid, prid, rid, wasted) {
+  const have = await stockOnHand(ownerUid, rid, 'unsold', prid)
+  await setStockEntry(ownerUid, rid, 'unsold', prid, -Math.min(Number(wasted) || 0, have))
+}
+
+// One-time per seller: rebuild stock from the last year of history, oldest event first,
+// so the caps behave as they would have live. Guarded by recipe_stock_init.
+async function backfillRecipeStock(ownerUid) {
+  const marked = await dbq(
+    `INSERT INTO recipe_stock_init (owner_uid) VALUES ($1) ON CONFLICT DO NOTHING RETURNING owner_uid`, [ownerUid])
+  if (!marked.length) return
+  const events = [
+    ...(await dbq(
+      `SELECT 'run' AS kind, prid AS id, completed_at AS t FROM process_run
+       WHERE owner_uid=$1 AND status='completed' AND completed_at >= NOW() - INTERVAL '365 days'`, [ownerUid])),
+    ...(await dbq(
+      `SELECT 'order' AS kind, o.oid AS id, COALESCE(o.done_at, o.created_at) AS t
+       FROM "order" o JOIN menu m ON m.mid=o.mid AND m.owner_uid=$1
+       WHERE o.status IN ('Done','Dispatched','Delivered')
+         AND COALESCE(o.done_at, o.created_at) >= NOW() - INTERVAL '365 days'`, [ownerUid])),
+    ...(await dbq(
+      `SELECT 'unsold' AS kind, pri.prid AS id, pri.rid AS rid, pr.completed_at AS t, pri.wasted_qty AS qty
+       FROM process_run_item pri JOIN process_run pr ON pr.prid=pri.prid
+       WHERE pr.owner_uid=$1 AND pri.wasted_qty IS NOT NULL AND pr.status='completed'`, [ownerUid])),
+  ].sort((a, b) => new Date(a.t) - new Date(b.t))
+  for (const ev of events) {
+    if (ev.kind === 'run') await creditRunStock(ev.id)
+    else if (ev.kind === 'order') await applyOrderDoneStock(ev.id)
+    else await logUnsoldStock(ownerUid, ev.id, ev.rid, ev.qty)
+  }
 }
 
 // ─── ROUTER ───────────────────────────────────────────────────────────────────
@@ -904,7 +1020,10 @@ async function route(method, segments, body, headers, event) {
         const next = transitions[o.status]
         if (!next) return [400, { error: 'Cannot advance from this status' }]
         await dbr('UPDATE "order" SET status=$1 WHERE oid=$2', [next, r1])
-        if (next === 'Done')      await dbr('UPDATE "order" SET done_at=COALESCE(done_at,NOW()) WHERE oid=$1', [r1])
+        if (next === 'Done') {
+          await dbr('UPDATE "order" SET done_at=COALESCE(done_at,NOW()) WHERE oid=$1', [r1])
+          await applyOrderDoneStock(r1)
+        }
         if (next === 'Delivered') await dbr('UPDATE "order" SET handed_over_at=COALESCE(handed_over_at,NOW()) WHERE oid=$1', [r1])
         return [200, await fetchOrder(r1)]
       }
@@ -914,6 +1033,7 @@ async function route(method, segments, body, headers, event) {
         if (!o) return [404, { error: 'Not found' }]
         if (['Declined','Delivered'].includes(o.status)) return [400, { error: 'Cannot decline' }]
         await dbr("UPDATE \"order\" SET status='Declined' WHERE oid=$1", [r1])
+        await reverseOrderStock(r1)
         return [200, await fetchOrder(r1)]
       }
       if (r2 === 'cancel') {
@@ -921,6 +1041,7 @@ async function route(method, segments, body, headers, event) {
         if (!o) return [404, { error: 'Not found' }]
         if (['Declined','Delivered'].includes(o.status)) return [400, { error: 'Cannot cancel' }]
         await dbr("UPDATE \"order\" SET status='Declined' WHERE oid=$1", [r1])
+        await reverseOrderStock(r1)
         return [200, await fetchOrder(r1)]
       }
       if (r2 === 'confirm-delivery') {
@@ -2315,6 +2436,12 @@ async function route(method, segments, body, headers, event) {
           await dbr(`UPDATE "order" SET done_at=COALESCE(done_at,NOW()) WHERE prid=$1`, [prid])
         }
       }
+      // Batch finished → its units go into item stock first, then customer orders tied to it deduct theirs
+      if (runStatus === 'completed') {
+        await creditRunStock(prid)
+        const linked = await dbq(`SELECT oid FROM "order" WHERE prid=$1`, [prid])
+        for (const { oid } of linked) await applyOrderDoneStock(oid)
+      }
     }
 
     // POST /process-runs/:prid/pause
@@ -2504,6 +2631,9 @@ async function route(method, segments, body, headers, event) {
     if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
 
     if (method === 'GET') {
+      // First visit after stock tracking went live: rebuild from past runs and orders (once)
+      try { await backfillRecipeStock(user.uid) }
+      catch (e) { console.error('recipe stock backfill:', e.message) }
       const rows = await dbq(
         `SELECT rid, SUM(qty) AS qty FROM recipe_stock WHERE owner_uid=$1 GROUP BY rid`,
         [user.uid])
@@ -2964,6 +3094,16 @@ async function route(method, segments, body, headers, event) {
         [oid, rid, Math.ceil(canFulfill), Math.round(price*canFulfill)])
       await dbr(`UPDATE boa_reservation SET oid=$1 WHERE resid=$2`, [oid, resid])
 
+      // Reserved after the batch was already finished: those units were credited to item stock,
+      // so take them out now (earlier reservations were never credited in the first place)
+      if (canFulfill > 0) {
+        const [pr] = await dbq('SELECT status FROM process_run WHERE prid=$1', [prid])
+        if (pr?.status === 'completed') {
+          const have = await stockOnHand(owner_uid, rid, 'boa', oid)
+          await setStockEntry(owner_uid, rid, 'boa', oid, -Math.min(canFulfill, have))
+        }
+      }
+
       results.push({ prid, rid, qty_confirmed:canFulfill, qty_waiting:waiting,
         resid, oid, needs_split: waiting > 0 })
     }
@@ -3293,6 +3433,7 @@ async function route(method, segments, body, headers, event) {
         if (!row) return [404, { error: 'Batch item not found' }]
         if (wasted > Number(row.qty)) return [400, { error: `Cannot exceed batch quantity (${Number(row.qty)})` }]
         await dbr(`UPDATE process_run_item SET wasted_qty=$3 WHERE prid=$1 AND rid=$2`, [prid, rid, wasted])
+        await logUnsoldStock(user.uid, prid, rid, wasted)   // unsold units leave item stock
         return [200, { ok: true }]
       }
 
