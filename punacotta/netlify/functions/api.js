@@ -2687,8 +2687,8 @@ async function route(method, segments, body, headers, event) {
     if (r1 === 'min' && method === 'PATCH') {
       const { rid, min_inventory } = body
       await dbr(`ALTER TABLE recipe ADD COLUMN IF NOT EXISTS min_inventory NUMERIC(10,3)`)
-      await dbr(`UPDATE recipe SET min_inventory=$1 WHERE rid=$2 AND owner_uid=$3`,
-        [Math.max(0, Number(min_inventory) || 0), rid, user.uid])
+      await dbr(`UPDATE recipe SET min_inventory=$1 WHERE rid=$2`,
+        [Math.max(0, Number(min_inventory) || 0), rid])
       return [200, { rid, min_inventory }]
     }
   }
