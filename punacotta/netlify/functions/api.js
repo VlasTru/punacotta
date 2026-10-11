@@ -80,6 +80,8 @@ async function ensureMigrations() {
     await dbr(`ALTER TABLE "order" ADD COLUMN IF NOT EXISTS done_at TIMESTAMPTZ`)
     await dbr(`ALTER TABLE "order" ADD COLUMN IF NOT EXISTS handed_over_at TIMESTAMPTZ`)
     await dbr(`ALTER TABLE process_run_item ADD COLUMN IF NOT EXISTS wasted_qty NUMERIC(10,3)`)
+    await dbr(`ALTER TABLE process_run_item ADD COLUMN IF NOT EXISTS accepted_qty NUMERIC(10,3)`)
+    await dbr(`ALTER TABLE recipe ADD COLUMN IF NOT EXISTS expiry_hours NUMERIC(10,2)`)
     await dbr(`CREATE TABLE IF NOT EXISTS boa_view_day (
       day DATE NOT NULL, owner_uid INTEGER NOT NULL, views INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (day, owner_uid)
@@ -214,7 +216,7 @@ function mailHtml(title, body, cta_url, cta_label) {
 const RECIPE_SEL = `
   SELECT r.rid, r.name, r.description, r.price, r.currency, r.available,
          r.deliverable, r.image_url, r.image_thumb_url, r.cloudinary_id,
-         r.allow_submultiples, r.moq, r.procid, r.min_inventory,
+         r.allow_submultiples, r.moq, r.procid, r.min_inventory, r.expiry_hours,
          u.name AS units, u.unid, c.name AS category, c.caid
   FROM recipe r
   LEFT JOIN units u ON u.unid=r.unid
@@ -354,7 +356,7 @@ async function creditRunStock(prid) {
   const [run] = await dbq('SELECT owner_uid FROM process_run WHERE prid=$1', [prid])
   if (!run) return
   const items = await dbq(
-    `SELECT pri.rid, pri.qty,
+    `SELECT pri.rid, COALESCE(pri.accepted_qty, pri.qty) AS qty,
             COALESCE((SELECT SUM(oi.qty) FROM boa_reservation br
                       JOIN "order" o ON o.oid=br.oid AND o.status NOT IN ('Declined','Cancelled')
                       JOIN order_item oi ON oi.oid=o.oid AND oi.rid=br.rid
@@ -739,15 +741,16 @@ async function route(method, segments, body, headers, event) {
       if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
       const { name, description, unid, caid, price, currency, available,
               deliverable, image_url, image_thumb_url, cloudinary_id,
-              allow_submultiples, moq, procid, contents } = body
+              allow_submultiples, moq, procid, expiry_hours, contents } = body
       if (!name?.trim()) return [400, { error: 'Name required' }]
       await dbr(`UPDATE recipe SET name=$1,description=$2,unid=$3,caid=$4,price=$5,currency=$6,
                  available=$7,deliverable=$8,image_url=$9,image_thumb_url=$10,cloudinary_id=$11,
-                 allow_submultiples=$12,moq=$13,procid=$14 WHERE rid=$15`,
+                 allow_submultiples=$12,moq=$13,procid=$14,expiry_hours=$16 WHERE rid=$15`,
         [name.trim(), description||null, unid||null, caid||null,
          Number(price)||0, currency||'AMD', available!==false, deliverable!==false,
          image_url||null, image_thumb_url||null, cloudinary_id||null,
-         !!allow_submultiples, moq?Number(moq):null, procid||null, r1])
+         !!allow_submultiples, moq?Number(moq):null, procid||null, r1,
+         expiry_hours!==''&&expiry_hours!=null&&Number(expiry_hours)>0?Number(expiry_hours):null])
       if (Array.isArray(contents)) await saveContents(r1, contents)
       const rows = await dbq(RECIPE_SEL + ' WHERE r.rid=$1', [r1])
       return [200, (await attachContents(rows))[0]]
@@ -770,16 +773,17 @@ async function route(method, segments, body, headers, event) {
     if (method === 'POST') {
       const { name, description, unid, caid, price, currency, available,
               deliverable, image_url, image_thumb_url, cloudinary_id,
-              allow_submultiples, moq, procid, contents } = body
+              allow_submultiples, moq, procid, expiry_hours, contents } = body
       if (!name?.trim()) return [400, { error: 'Name required' }]
       const res = await dbr(
         `INSERT INTO recipe (name,description,unid,caid,price,currency,available,deliverable,
-                             image_url,image_thumb_url,cloudinary_id,allow_submultiples,moq,procid)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING rid`,
+                             image_url,image_thumb_url,cloudinary_id,allow_submultiples,moq,procid,expiry_hours)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING rid`,
         [name.trim(), description||null, unid||null, caid||null,
          Number(price)||0, currency||'AMD', available!==false, deliverable!==false,
          image_url||null, image_thumb_url||null, cloudinary_id||null,
-         !!allow_submultiples, moq?Number(moq):null, procid||null])
+         !!allow_submultiples, moq?Number(moq):null, procid||null,
+         expiry_hours!==''&&expiry_hours!=null&&Number(expiry_hours)>0?Number(expiry_hours):null])
       const rid = res.rows[0].rid
       if (Array.isArray(contents)) await saveContents(rid, contents)
       const rows = await dbq(RECIPE_SEL + ' WHERE r.rid=$1', [rid])
@@ -2370,7 +2374,11 @@ async function route(method, segments, body, headers, event) {
          JOIN skill s ON s.skid=ps.skid
          LEFT JOIN "user" u ON u.uid=prs.uid
          WHERE prs.prid=$1 ORDER BY ps.seq`, [prid])
-      return { ...run, steps }
+      const items = await dbq(
+        `SELECT pri.rid, pri.qty, pri.accepted_qty, pri.wasted_qty, r.name, un.name AS units
+         FROM process_run_item pri JOIN recipe r ON r.rid=pri.rid LEFT JOIN units un ON un.unid=r.unid
+         WHERE pri.prid=$1 ORDER BY r.name`, [prid])
+      return { ...run, steps, items }
     }
 
     // GET /process-runs — list all runs for this restaurant (with steps when ?steps=1)
@@ -2475,7 +2483,19 @@ async function route(method, segments, body, headers, event) {
       const [run] = await dbq('SELECT * FROM process_run WHERE prid=$1 AND owner_uid=$2', [r1, ownerUid])
       if (!run) return [404, { error: 'Not found' }]
       if (['cancelled','completed'].includes(run.status)) return [400, { error: 'Already finished' }]
+      // Accepted quantities (default: as declared); clamp to [0, declared]. Shortfall counts as wasted.
+      const runItems = await dbq('SELECT rid, qty FROM process_run_item WHERE prid=$1', [r1])
+      const acc = new Map((Array.isArray(body?.accepted) ? body.accepted : []).map(a => [Number(a.rid), Number(a.qty)]))
+      for (const it of runItems) {
+        const declared = Number(it.qty)
+        let q = acc.has(Number(it.rid)) ? acc.get(Number(it.rid)) : declared
+        if (!Number.isFinite(q)) q = declared
+        q = Math.min(declared, Math.max(0, q))
+        await dbr('UPDATE process_run_item SET accepted_qty=$3, wasted_qty=$4 WHERE prid=$1 AND rid=$2',
+          [r1, it.rid, q, Math.max(0, declared - q)])
+      }
       await dbr('UPDATE process_run SET status=$1, completed_at=NOW() WHERE prid=$2', ['cancelled', r1])
+      await creditRunStock(r1)
       await dbr(`UPDATE process_run_step SET status='skipped' WHERE prid=$1 AND status IN ('pending','in_progress','on_hold')`, [r1])
       await syncOrderStatus(r1, 'cancelled')
       return [200, await fetchRun(r1)]
@@ -2668,7 +2688,7 @@ async function route(method, segments, body, headers, event) {
       const { rid, min_inventory } = body
       await dbr(`ALTER TABLE recipe ADD COLUMN IF NOT EXISTS min_inventory NUMERIC(10,3)`)
       await dbr(`UPDATE recipe SET min_inventory=$1 WHERE rid=$2 AND owner_uid=$3`,
-        [min_inventory ?? null, rid, user.uid])
+        [Math.max(0, Number(min_inventory) || 0), rid, user.uid])
       return [200, { rid, min_inventory }]
     }
   }

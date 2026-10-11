@@ -105,7 +105,7 @@ export const api = {
   getProcessRun:      (prid)        => req('GET',  `/process-runs/${prid}`),
   pauseRun:           (prid)        => req('POST', `/process-runs/${prid}/pause`),
   resumeRun:          (prid)        => req('POST', `/process-runs/${prid}/resume`),
-  stopRun:            (prid)        => req('POST', `/process-runs/${prid}/stop`),
+  stopRun:            (prid,data={}) => req('POST', `/process-runs/${prid}/stop`, data),
   startStep:          (prid,psrid)  => req('POST', `/process-runs/${prid}/steps/${psrid}/start`),
   pauseStep:          (prid,psrid)  => req('POST', `/process-runs/${prid}/steps/${psrid}/pause`),
   resumeStep:         (prid,psrid)  => req('POST', `/process-runs/${prid}/steps/${psrid}/resume`),

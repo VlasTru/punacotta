@@ -537,7 +537,7 @@ function RecipeForm({
   const [form, setForm] = useState({
     name:"", description:"", unid:"", caid:"", price:"", currency:"AMD",
     available:true, deliverable:true, image_url:null, image_thumb_url:null, cloudinary_id:null,
-    allow_submultiples:false, moq:"", procid:null,
+    allow_submultiples:false, moq:"", procid:null, expiry_hours:"",
     ...initial
   });
   const [imageBlob, setImageBlob] = useState(null);
@@ -701,6 +701,11 @@ function RecipeForm({
             } style={{width:"100%",padding:"10px 14px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,background:G.sand,color:G.muted}}/>
           </div>
         )}
+        <div>
+          <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Expiry (hours)</label>
+          <input type="number" min="0" step="any" value={form.expiry_hours??""} onChange={e=>set("expiry_hours",e.target.value)} placeholder="h"
+            style={{width:"100%",padding:"10px 14px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}/>
+        </div>
       </div>
 
       <div>
@@ -1921,6 +1926,16 @@ function RecipesPage({
   const [recipeStock,   setRecipeStock]   = useState({}); // rid → qty
   const [wastageMode,   setWastageMode]   = useState(false);
   const [wastageDeltas, setWastageDeltas] = useState({}); // rid → negative delta
+  const [editMinRid, setEditMinRid] = useState(null);
+  const [editMinVal, setEditMinVal] = useState("");
+  const saveMinInv = async (rid) => {
+    const n = Math.max(0, Number(editMinVal) || 0);
+    try {
+      await api.setMinInventory({rid, min_inventory:n});
+      setRecipes(p=>p.map(x=>x.rid===rid?{...x,min_inventory:n}:x));
+      setEditMinRid(null); toast("Minimum saved");
+    } catch(e){ toast(e.message,"error"); }
+  };
   const [wastageConfirm,setWastageConfirm]= useState(false);
   const [applyingWastage,setApplyingWastage]= useState(false);
 
@@ -1958,11 +1973,11 @@ function RecipesPage({
         image_url = null; image_thumb_url = null; cloudinary_id = null;
       }
 
-      const payload = { name:form.name, description:form.description||null, unid:form.unid||null, caid:form.caid||null, price:Number(form.price)||0, currency:form.currency||"AMD", available:form.available!==false, deliverable:form.deliverable!==false, image_url, image_thumb_url, cloudinary_id, allow_submultiples:!!form.allow_submultiples, moq:form.moq?Number(form.moq):null, procid:form.procid||null, contents:(contents||[]).filter(c=>c.pid) };
+      const payload = { name:form.name, description:form.description||null, unid:form.unid||null, caid:form.caid||null, price:Number(form.price)||0, currency:form.currency||"AMD", available:form.available!==false, deliverable:form.deliverable!==false, image_url, image_thumb_url, cloudinary_id, allow_submultiples:!!form.allow_submultiples, moq:form.moq?Number(form.moq):null, expiry_hours:form.expiry_hours===""||form.expiry_hours==null?null:Number(form.expiry_hours), procid:form.procid||null, contents:(contents||[]).filter(c=>c.pid) };
 
       if (existingRid) {
         const updated = await api.updateRecipe(existingRid, payload);
-        setRecipes(prev=>prev.map(r=>r.rid===existingRid?updated:r));
+        setRecipes(prev=>prev.map(r=>r.rid===existingRid?{...r,...updated}:r));
         toast(`"${updated.name}" saved`); setEditRecipe(null);
       } else {
         const r = await api.createRecipe(payload);
@@ -1992,10 +2007,10 @@ function RecipesPage({
     {key:"description",label:tl("Description"),sortable:true,render:r=>r.description||<span style={{color:G.muted}}>—</span>},
     {key:"stock",label:tl("Stock"),sortable:false,render:r=>{
       const qty   = recipeStock[r.rid] ?? 0;
-      const min   = r.min_inventory ?? null;
+      const min   = r.min_inventory ?? 0;
       const delta = wastageDeltas[r.rid] ?? 0;
       const shown = qty + delta;
-      const atMin = min !== null && shown <= min;
+      const atMin = Number(min) > 0 && shown <= Number(min);
       if (wastageMode) return (
         <div style={{display:"flex",alignItems:"center",gap:5}}>
           <button onClick={()=>setWastageDeltas(p=>{
@@ -2019,34 +2034,21 @@ function RecipesPage({
         </span>
       );
     }},
-    {key:"min_inv",label:tl("Min. inventory"),sortable:false,render:r=>{
-      const min = r.min_inventory;
-      const [editing, setEditing] = useState(false);
-      const [val, setVal] = useState(min??'');
-      if (editing) return (
-        <div style={{display:"flex",alignItems:"center",gap:4}}>
-          <button onClick={()=>{ const n=Math.max(0,(Number(val)||0)-1); setVal(n); }}
-            style={{width:20,height:20,borderRadius:4,border:`1px solid ${G.border}`,background:G.sand,cursor:"pointer",fontSize:12,lineHeight:1}}>−</button>
-          <input type="number" value={val} onChange={e=>setVal(e.target.value)} min="0"
-            style={{width:48,padding:"2px 4px",border:`1px solid ${G.border}`,borderRadius:5,fontSize:12,fontFamily:G.mono,textAlign:"center",outline:"none"}}/>
-          <button onClick={()=>{ const n=Math.max(0,(Number(val)||0)+1); setVal(n); }}
-            style={{width:20,height:20,borderRadius:4,border:`1px solid ${G.border}`,background:G.sand,cursor:"pointer",fontSize:12,lineHeight:1}}>+</button>
-          <button onClick={async()=>{
-            await api.setMinInventory({rid:r.rid, min_inventory:Number(val)||null});
-            setRecipes(p=>p.map(x=>x.rid===r.rid?{...x,min_inventory:Number(val)||null}:x));
-            setEditing(false);
-          }} style={{fontSize:11,color:G.green,background:"none",border:"none",cursor:"pointer",fontWeight:700}}>✓</button>
-          <button onClick={()=>setEditing(false)} style={{fontSize:11,color:G.muted,background:"none",border:"none",cursor:"pointer"}}>✕</button>
+    {key:"min_inv",label:tl("Min. inventory"),sortable:false,render:r=>(
+      editMinRid===r.rid ? (
+        <div style={{ display:"flex", gap:4, alignItems:"center" }}>
+          <input type="number" min="0" value={editMinVal} onChange={e=>setEditMinVal(e.target.value)}
+            style={{ width:60, padding:"3px 6px", borderRadius:6, border:`1px solid ${G.border}`, fontSize:12, fontFamily:G.mono, outline:"none" }} />
+          <Btn size="sm" onClick={()=>saveMinInv(r.rid)}>✓</Btn>
+          <button onClick={()=>setEditMinRid(null)} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:14}}>×</button>
         </div>
-      );
-      return (
-        <button onClick={()=>{setVal(min??'');setEditing(true);}}
-          style={{background:"none",border:"none",cursor:"pointer",fontSize:13,fontFamily:G.mono,
-            color:min!=null?G.dark:G.muted,textDecoration:"underline dotted",textUnderlineOffset:3}}>
-          {min!=null?min:"Set"}
+      ) : (
+        <button onClick={()=>{setEditMinRid(r.rid);setEditMinVal(String(r.min_inventory??0));}}
+          style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:G.dark,fontFamily:G.mono}}>
+          {r.min_inventory??0}
         </button>
-      );
-    }},
+      )
+    )},
     {key:"units",label:tl("Units"),sortable:false,render:r=>r.units||"—"},
     {key:"available",label:tl("Avail."),sortable:false,render:r=><span>{r.available?"✅":"❌"}</span>},
     {key:"deliverable",label:tl("Deliv."),sortable:false,render:r=><span>{r.deliverable!==false?"✅":"❌"}</span>},
@@ -4031,8 +4033,8 @@ function ProcurementPage({
   const [loading, setLoading]     = useState(true);
   const [showNew, setShowNew]     = useState(false);
   const [viewOrder, setViewOrder] = useState(null);  // order being viewed/accepted
-  const [sortKey, setSortKey]     = useState("order_id");
-  const [sortDir, setSortDir]     = useState("asc");
+  const [sortKey, setSortKey]     = useState("created_at");   // newest orders first
+  const [sortDir, setSortDir]     = useState("desc");
   const [page, setPage]           = useState(0);
   const [pageSize, setPageSize]   = useState(25);
   const [saving, setSaving]       = useState(false);
@@ -4140,7 +4142,8 @@ function ProcurementPage({
       if (result.has_discrepancy && result.recon_pdf_url) {
         downloadPDF(result.recon_pdf_url, viewOrder.order_id, "reconciliation");
       }
-      setOrders(o=>o.map(x=>x.soid===viewOrder.soid?{...x,status:"Accepted"}:x));
+      // Keep the reconciliation PDF on the row so its "PDF" link shows without a reload
+      setOrders(o=>o.map(x=>x.soid===viewOrder.soid?{...x,status:"Accepted",recon_pdf_url:result.recon_pdf_url||x.recon_pdf_url||null}:x));
       setViewOrder(null); setAcceptDialog(false); setAcceptComments("");
     } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
   };
@@ -4276,7 +4279,7 @@ function ProcurementPage({
             <table style={{ width:"100%", borderCollapse:"collapse" }}>
               <thead>
                 <tr style={{ background:G.sand, borderBottom:`1px solid ${G.border}` }}>
-                  {[["order_id","ID"],["created_at","Placed on"],["status","Status"],["etd","ETD"],["supplier_name","Supplier"],["total","Total"],["po","PO"],["recon","Reconciliation"]].map(([k,h])=>(
+                  {[["order_id","ID"],["created_at","Placed on"],["status","Status"],["etd","ETD"],["supplier_name","Supplier"],["po","PO"],["recon","Reconciliation"]].map(([k,h])=>(
                     <th key={k} onClick={k!=="po"&&k!=="recon"?()=>toggleSort(k):undefined}
                       style={{ padding:"11px 14px", textAlign:"left", fontSize:11, fontWeight:700, letterSpacing:"0.05em", textTransform:"uppercase", color:G.muted, cursor:k!=="po"&&k!=="recon"?"pointer":"default", userSelect:"none", whiteSpace:"nowrap" }}>
                       {h}{sortKey===k&&<span style={{marginLeft:3}}>{sortDir==="asc"?"↑":"↓"}</span>}
@@ -4286,7 +4289,7 @@ function ProcurementPage({
               </thead>
               <tbody>
                 {paged.length===0?(
-                  <tr><td colSpan={8} style={{padding:40,textAlign:"center",color:G.muted}}>No supplier orders yet.</td></tr>
+                  <tr><td colSpan={7} style={{padding:40,textAlign:"center",color:G.muted}}>No supplier orders yet.</td></tr>
                 ):paged.map((o,i)=>{
                   const d = new Date(o.created_at);
                   const dateStr = `${String(d.getDate()).padStart(2,"0")}-${String(d.getMonth()+1).padStart(2,"0")}-${d.getFullYear()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
@@ -4302,7 +4305,6 @@ function ProcurementPage({
                       <td style={{padding:"10px 14px"}}><span style={{fontSize:12,fontWeight:700,color:STATUS_COLORS[o.status]||G.muted}}>{o.status}</span></td>
                       <td style={{padding:"10px 14px",fontSize:13,color:G.muted}}>{etdStr}</td>
                       <td style={{padding:"10px 14px",fontSize:14}}>{o.supplier_name}</td>
-                      <td style={{padding:"10px 14px",fontSize:14,fontWeight:600,color:G.caramel}}>—</td>
                       <td style={{padding:"10px 14px"}}>
                         {o.po_pdf_url&&o.status!=="New"?(
                           <button onClick={async()=>{ const r=await api.getSupplierOrderPDF(o.soid); downloadPDF(r.pdf,o.order_id,"purchase_order"); }}
@@ -6086,6 +6088,65 @@ const DUR_UNITS = [
 ];
 const durAbbr = u => DUR_UNITS.find(d=>d.value===u)?.label || (u||'min');
 
+
+// ─── STOP PROCESS DIALOG ──────────────────────────────────────────────────────
+function StopRunDialog({ run, onClose, onStopped, toast }) {
+  const [full, setFull] = useState(null);
+  const [vals, setVals] = useState({});
+  const [busy, setBusy] = useState(false);
+  const dec = q => { const m = String(q).match(/\.(\d+)/); return m ? m[1].replace(/0+$/,"").length : 0; };
+  const fmt = (q, d) => Number(q).toFixed(d);
+  useEffect(()=>{
+    api.getProcessRun(run.prid).then(f=>{
+      setFull(f);
+      setVals(Object.fromEntries((f.items||[]).map(it=>[it.rid, Number(it.qty)])));
+    }).catch(e=>{ toast(e.message,"error"); onClose(); });
+  },[]);
+  const clamp = (it, v) => Math.min(Number(it.qty), Math.max(0, v));
+  const bump = (it, d) => setVals(p=>({...p,[it.rid]:clamp(it, Math.round((p[it.rid]+d)*1e6)/1e6)}));
+  const reset = () => setVals(Object.fromEntries((full.items||[]).map(it=>[it.rid, Number(it.qty)])));
+  const stop = async () => {
+    setBusy(true);
+    try {
+      const updated = await api.stopRun(run.prid, { accepted:(full.items||[]).map(it=>({rid:it.rid, qty:vals[it.rid]})) });
+      onStopped(updated);
+    } catch(e){ toast(e.message,"error"); } finally{ setBusy(false); }
+  };
+  const bs = {width:24,height:24,borderRadius:5,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",fontWeight:700,fontSize:14,lineHeight:1};
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.45)",zIndex:1300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:G.white,borderRadius:16,maxWidth:520,width:"100%",boxShadow:"0 20px 60px rgba(44,24,16,0.2)",overflow:"hidden"}}>
+        <div style={{padding:"20px 24px",borderBottom:`1px solid ${G.border}`}}>
+          <h3 style={{fontFamily:G.font,fontSize:18}}>Stopping {run.process_name}...</h3>
+        </div>
+        <div style={{padding:"20px 24px",maxHeight:420,overflowY:"auto"}}>
+          <p style={{fontSize:14,color:G.dark,lineHeight:1.6,marginBottom:14}}>
+            {run.process_name} will terminate, and you will not be able to resume it. Click "Stop" to accept the quantities below:
+          </p>
+          {!full ? <Spinner/> : (full.items||[]).map(it=>{
+            const d = dec(it.qty); const low = vals[it.rid] < Number(it.qty);
+            return (
+              <div key={it.rid} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                <span style={{flex:1,fontSize:14,fontWeight:600,color:low?G.red:G.dark}}>{it.name}</span>
+                <button onClick={()=>bump(it,1)} disabled={vals[it.rid]>=Number(it.qty)} style={{...bs,opacity:vals[it.rid]>=Number(it.qty)?0.4:1}}>+</button>
+                <span style={{minWidth:56,textAlign:"center",fontFamily:G.mono,fontSize:14,fontWeight:600,color:low?G.red:G.dark}}>{fmt(vals[it.rid]??it.qty,d)}</span>
+                <button onClick={()=>bump(it,-1)} disabled={vals[it.rid]<=0} style={{...bs,opacity:vals[it.rid]<=0?0.4:1}}>−</button>
+                <span style={{fontSize:12,color:G.muted,minWidth:36}}>{it.units||"pcs"}</span>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{padding:"16px 24px",borderTop:`1px solid ${G.border}`,display:"flex",gap:10,justifyContent:"flex-end"}}>
+          <Btn variant="ghost" size="sm" onClick={reset} disabled={!full}>Reset</Btn>
+          <Btn variant="ghost" size="sm" onClick={onClose}>Cancel</Btn>
+          <Btn variant="danger" size="sm" loading={busy} disabled={!full} onClick={stop}>Stop</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 // ─── SKILL COMBO ──────────────────────────────────────────────────────────────
 function SkillCombo({ allSkills, selected, excluded=[], onChange, onCreateSkill, onClickPill, pillColor }) {
   const [input, setInput] = useState("");
@@ -7238,7 +7299,9 @@ function ProcessesPage({ user, setPage, toast }) {
     finally{ setStartSaving(false); }
   };
 
+  const [stopRun, setStopRun] = useState(null);
   const handleRunAction = async (prid, action) => {
+    if (action==='stop') { setStopRun(runs.find(r=>r.prid===prid)||{prid}); return; }
     try {
       const fns = { pause:api.pauseRun, resume:api.resumeRun, stop:api.stopRun };
       const updated = await fns[action](prid);
@@ -7748,6 +7811,8 @@ function ProcessesPage({ user, setPage, toast }) {
         />
       )}
 
+      {stopRun&&<StopRunDialog run={stopRun} toast={toast} onClose={()=>setStopRun(null)}
+        onStopped={u=>{ setRuns(p=>p.map(r=>r.prid===u.prid?u:r)); if(selectedRun?.prid===u.prid) setSelectedRun(u); setStopRun(null); toast("Process stopped"); }}/>}
       {/* ── Start validation dialog ───────────────────────────────────────────── */}
       {startDialog&&(
         <div style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.45)",zIndex:1200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
@@ -7782,17 +7847,29 @@ function ProcessesPage({ user, setPage, toast }) {
                   {/* Add more items */}
                   <div style={{marginTop:12}}>
                     <label style={{fontSize:12,fontWeight:600,color:G.muted,display:"block",marginBottom:6}}>Add item</label>
-                    <SkillCombo
-                      allSkills={recipes.filter(r=>!startDialog.selectedItems.find(s=>s.rid===r.rid)).map(r=>({skid:r.rid,name:r.name,color:G.caramel}))}
-                      selected={[]}
-                      onChange={newSel=>{
-                        if (!newSel.length) return;
-                        const r = recipes.find(x=>x.rid===newSel[newSel.length-1].skid);
-                        if (!r) return;
-                        setStartDialog(d=>({...d,selectedItems:[...d.selectedItems,{rid:r.rid,name:r.name,qty:1,units:r.units,equipment_name:null}]}));
-                      }}
-                      pillColor={G.caramel}
-                    />
+                    {(()=>{
+                      const q=(startDialog.addFilter||"").toLowerCase();
+                      const pid=startDialog.proc.procid;
+                      const avail=recipes
+                        .filter(r=>!startDialog.selectedItems.find(s=>s.rid===r.rid) && r.name.toLowerCase().includes(q))
+                        .sort((x,y)=>(String(y.procid)===String(pid))-(String(x.procid)===String(pid)) || x.name.localeCompare(y.name));
+                      return (<>
+                        <input value={startDialog.addFilter||""} placeholder="Filter items…"
+                          onChange={e=>setStartDialog(d=>({...d,addFilter:e.target.value}))}
+                          style={{width:"100%",padding:"7px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",marginBottom:8}}/>
+                        {avail.length===0
+                          ? <p style={{fontSize:12,color:G.muted,fontStyle:"italic"}}>No more items to add.</p>
+                          : <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                              {avail.map(r=>(
+                                <button key={r.rid}
+                                  onClick={()=>setStartDialog(d=>({...d,selectedItems:[...d.selectedItems,{rid:r.rid,name:r.name,qty:1,units:r.units,equipment_name:null}]}))}
+                                  style={{padding:"4px 10px",borderRadius:20,border:`1px solid ${G.caramel}60`,background:`${G.caramel}12`,color:G.caramel,fontSize:12,fontFamily:G.mono,cursor:"pointer"}}>
+                                  + {r.name}
+                                </button>
+                              ))}
+                            </div>}
+                      </>);
+                    })()}
                   </div>
                 </div>
                 <div style={{padding:"16px 24px",borderTop:`1px solid ${G.border}`,display:"flex",gap:10,justifyContent:"flex-end"}}>
@@ -8378,7 +8455,9 @@ function EmployeeProcessesPage({ user, toast, setPage }) {
       .then(r=>r.json()).then(s=>setSkills(s||[])).catch(()=>{});
   },[]);
 
+  const [stopRunD, setStopRunD] = useState(null);
   const runAction = async (prid, action, psrid=null) => {
+    if (action==='stop') { setStopRunD(runs.find(r=>r.prid===prid)||{prid}); return; }
     setSaving(p=>({...p,[`${prid}-${action}-${psrid}`]:true}));
     try {
       let updated;
@@ -8442,6 +8521,8 @@ function EmployeeProcessesPage({ user, toast, setPage }) {
         <Btn size="sm" variant="secondary" onClick={()=>setPage("processes")}>← Process design</Btn>
       )
     }>
+      {stopRunD&&<StopRunDialog run={stopRunD} toast={toast} onClose={()=>setStopRunD(null)}
+        onStopped={u=>{ setRuns(p=>p.map(r=>r.prid===u.prid?u:r)); setStopRunD(null); toast("Process stopped"); }}/>}
       {loading ? <Spinner/> : sorted.length===0 ? (
         <p style={{color:G.muted,textAlign:"center",padding:60,fontStyle:"italic"}}>No active processes. Processes will appear here when started by your restaurant.</p>
       ) : sorted.map(run=>{
