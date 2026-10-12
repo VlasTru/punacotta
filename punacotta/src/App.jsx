@@ -6580,7 +6580,7 @@ function StopRunDialog({ run, mode="stop", psrid=null, onClose, onStopped, toast
   };
   const bs = {width:24,height:24,borderRadius:5,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",fontWeight:700,fontSize:14,lineHeight:1};
   return (
-    <div style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.45)",zIndex:1300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.45)",zIndex:1500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:G.white,borderRadius:16,maxWidth:520,width:"100%",boxShadow:"0 20px 60px rgba(44,24,16,0.2)",overflow:"hidden"}}>
         <div style={{padding:"20px 24px",borderBottom:`1px solid ${G.border}`}}>
           <h3 style={{fontFamily:G.font,fontSize:18}}>{mode==="complete"?"Completing":"Stopping"} {run.process_name}...</h3>
@@ -7398,12 +7398,13 @@ function RunDetailSidebar({ run, user, onClose, onRunUpdated, toast }) {
       {completeFor&&<StopRunDialog run={run} mode="complete" psrid={completeFor} toast={toast} onClose={()=>setCompleteFor(null)}
         onStopped={u=>{ setCompleteFor(null); onRunUpdated(u); }}/>}
       {/* Backdrop */}
-      <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.35)",zIndex:1400}}/>
+      <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.35)",zIndex:1400,opacity:completeFor?0:1,pointerEvents:completeFor?"none":"auto",transition:"opacity 0.25s ease"}}/>
       {/* Panel */}
       <div style={{
         position:"fixed",top:0,right:0,bottom:0,width:420,maxWidth:"100vw",
         background:G.cream,boxShadow:"-4px 0 32px rgba(44,24,16,0.18)",
         zIndex:1401,display:"flex",flexDirection:"column",overflowY:"hidden",
+        transform:completeFor?"translateX(105%)":"translateX(0)",transition:"transform 0.25s ease",
       }}>
         {/* Header */}
         <div style={{padding:"20px 24px 16px",borderBottom:`1px solid ${G.border}`,flexShrink:0}}>
