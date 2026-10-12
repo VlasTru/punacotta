@@ -5830,7 +5830,6 @@ function BoardOfArrivals({ toast }) {
       setGuest(g => g.email.trim()!==em ? g : {
         ...g,
         name:  g.name.trim()  ? g.name  : (f.name||''),
-        phone: (!g.phone.trim() || g.phone.trim()==='+374') ? (f.phone||g.phone) : g.phone,
       });
     } catch(e){ /* lookup is best-effort */ }
   };
