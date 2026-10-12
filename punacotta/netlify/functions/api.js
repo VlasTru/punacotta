@@ -352,6 +352,20 @@ async function stockOnHand(ownerUid, rid, exclSource, exclId) {
   return Math.max(0, Number(row.qty))
 }
 
+async function applyRunAcceptance(prid, accepted) {
+  // Accepted quantities (default: as declared), clamped to [0, declared]. Shortfall counts as wasted.
+  const runItems = await dbq('SELECT rid, qty FROM process_run_item WHERE prid=$1', [prid])
+  const acc = new Map((Array.isArray(accepted) ? accepted : []).map(a => [Number(a.rid), Number(a.qty)]))
+  for (const it of runItems) {
+    const declared = Number(it.qty)
+    let q = acc.has(Number(it.rid)) ? acc.get(Number(it.rid)) : declared
+    if (!Number.isFinite(q)) q = declared
+    q = Math.min(declared, Math.max(0, q))
+    await dbr('UPDATE process_run_item SET accepted_qty=$3, wasted_qty=$4 WHERE prid=$1 AND rid=$2',
+      [prid, it.rid, q, Math.max(0, declared - q)])
+  }
+}
+
 async function creditRunStock(prid) {
   const [run] = await dbq('SELECT owner_uid FROM process_run WHERE prid=$1', [prid])
   if (!run) return
@@ -736,6 +750,18 @@ async function route(method, segments, body, headers, event) {
       ])
       return [200, { units, categories }]
     }
+    // POST /recipes/usage — which processes use these items
+    if (r1 === 'usage' && method === 'POST') {
+      if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+      const ids = (Array.isArray(body?.ids) ? body.ids : []).map(Number).filter(Number.isFinite)
+      const rows = ids.length ? await dbq(
+        `SELECT x.rid, x.procid, p.name AS process_name FROM (
+           SELECT pi.rid, pi.procid FROM process_item pi WHERE pi.rid = ANY($1::int[])
+           UNION
+           SELECT r.rid, r.procid FROM recipe r WHERE r.rid = ANY($1::int[]) AND r.procid IS NOT NULL
+         ) x JOIN process p ON p.procid = x.procid ORDER BY p.name`, [ids]) : []
+      return [200, rows]
+    }
     // PUT /recipes/:rid — full update
     if (r1 && method === 'PUT') {
       if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
@@ -796,6 +822,8 @@ async function route(method, segments, body, headers, event) {
         const [r] = await dbq('SELECT cloudinary_id FROM recipe WHERE rid=$1', [rid])
         if (r?.cloudinary_id) await cloudinaryDelete(r.cloudinary_id)
         await dbr('DELETE FROM recipe_product WHERE rid=$1', [rid])
+        await dbr('DELETE FROM process_item WHERE rid=$1', [rid])
+        await dbr('UPDATE recipe SET procid=NULL WHERE rid=$1', [rid])
       }
       await dbr('UPDATE recipe SET deleted=true WHERE rid=ANY($1::int[])', [ids])
       return [200, { deleted: ids }]
@@ -1927,7 +1955,7 @@ async function route(method, segments, body, headers, event) {
         `SELECT pi.piid, pi.rid, r.name AS item_name, r.price, r.currency,
                 u.name AS units
          FROM process_item pi
-         JOIN recipe r ON r.rid=pi.rid
+         JOIN recipe r ON r.rid=pi.rid AND r.deleted=false
          LEFT JOIN units u ON u.unid=r.unid
          WHERE pi.procid=$1 ORDER BY r.name`, [procid])
       return { ...proc, skills, items }
@@ -1999,12 +2027,12 @@ async function route(method, segments, body, headers, event) {
       const byProcid = await dbq(
         `SELECT r.rid, r.name, r.price, r.currency, u.name AS units, NULL AS volume, NULL AS equipment_name
          FROM recipe r LEFT JOIN units u ON u.unid=r.unid
-         WHERE r.procid=$1 ORDER BY r.name`, [r1])
+         WHERE r.procid=$1 AND r.deleted=false ORDER BY r.name`, [r1])
       const byEquipment = await dbq(
         `SELECT DISTINCT r.rid, r.name, r.price, r.currency, u.name AS units,
                 ei.volume, eq.name AS equipment_name
          FROM equipment_item ei
-         JOIN recipe r ON r.rid=ei.rid
+         JOIN recipe r ON r.rid=ei.rid AND r.deleted=false
          JOIN equipment eq ON eq.eid=ei.eid
          LEFT JOIN units u ON u.unid=r.unid
          WHERE eq.owner_uid=$1 ORDER BY r.name`, [ownerUid])
@@ -2483,17 +2511,7 @@ async function route(method, segments, body, headers, event) {
       const [run] = await dbq('SELECT * FROM process_run WHERE prid=$1 AND owner_uid=$2', [r1, ownerUid])
       if (!run) return [404, { error: 'Not found' }]
       if (['cancelled','completed'].includes(run.status)) return [400, { error: 'Already finished' }]
-      // Accepted quantities (default: as declared); clamp to [0, declared]. Shortfall counts as wasted.
-      const runItems = await dbq('SELECT rid, qty FROM process_run_item WHERE prid=$1', [r1])
-      const acc = new Map((Array.isArray(body?.accepted) ? body.accepted : []).map(a => [Number(a.rid), Number(a.qty)]))
-      for (const it of runItems) {
-        const declared = Number(it.qty)
-        let q = acc.has(Number(it.rid)) ? acc.get(Number(it.rid)) : declared
-        if (!Number.isFinite(q)) q = declared
-        q = Math.min(declared, Math.max(0, q))
-        await dbr('UPDATE process_run_item SET accepted_qty=$3, wasted_qty=$4 WHERE prid=$1 AND rid=$2',
-          [r1, it.rid, q, Math.max(0, declared - q)])
-      }
+      await applyRunAcceptance(r1, body?.accepted)
       await dbr('UPDATE process_run SET status=$1, completed_at=NOW() WHERE prid=$2', ['cancelled', r1])
       await creditRunStock(r1)
       await dbr(`UPDATE process_run_step SET status='skipped' WHERE prid=$1 AND status IN ('pending','in_progress','on_hold')`, [r1])
@@ -2583,6 +2601,7 @@ async function route(method, segments, body, headers, event) {
       const remaining = await dbq(
         `SELECT psrid FROM process_run_step WHERE prid=$1 AND status NOT IN ('completed','skipped')`, [r1])
       if (!remaining.length) {
+        await applyRunAcceptance(r1, body?.accepted)
         await dbr('UPDATE process_run SET status=$1, completed_at=NOW() WHERE prid=$2', ['completed', r1])
         await syncOrderStatus(r1, 'completed')
       } else {

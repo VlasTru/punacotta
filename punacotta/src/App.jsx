@@ -1986,6 +1986,11 @@ function RecipesPage({
     } catch(e){toast(e.message,"error");} finally{setSaving(false);}
   };
 
+  const [delUsage, setDelUsage] = useState([]);
+  const askDelete = async () => {
+    try { setDelUsage(await api.getRecipeUsage(selected)); } catch(e){ setDelUsage([]); }
+    setDialog("del");
+  };
   const doDelete=async()=>{ const names=selected.map(id=>recipes.find(r=>r.rid===id)?.name).filter(Boolean).join(", "); try{ await api.deleteRecipes(selected); setRecipes(prev=>prev.filter(r=>!selected.includes(r.rid))); toast(`${names} deleted`); setSelected([]); setDialog(null); } catch(e){toast(e.message,"error");} };
 
   const ImgCell = ({r}) => {
@@ -2007,7 +2012,7 @@ function RecipesPage({
     {key:"description",label:tl("Description"),sortable:true,render:r=>r.description||<span style={{color:G.muted}}>—</span>},
     {key:"stock",label:tl("Stock"),sortable:false,render:r=>{
       const qty   = recipeStock[r.rid] ?? 0;
-      const min   = r.min_inventory ?? 0;
+      const min   = parseFloat(r.min_inventory ?? 0);
       const delta = wastageDeltas[r.rid] ?? 0;
       const shown = qty + delta;
       const atMin = Number(min) > 0 && shown <= Number(min);
@@ -2043,9 +2048,9 @@ function RecipesPage({
           <button onClick={()=>setEditMinRid(null)} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:14}}>×</button>
         </div>
       ) : (
-        <button onClick={()=>{setEditMinRid(r.rid);setEditMinVal(String(r.min_inventory??0));}}
+        <button onClick={()=>{setEditMinRid(r.rid);setEditMinVal(String(parseFloat(r.min_inventory??0)));}}
           style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:G.dark,fontFamily:G.mono}}>
-          {r.min_inventory??0}
+          {parseFloat(r.min_inventory??0)}
         </button>
       )
     )},
@@ -2059,7 +2064,7 @@ function RecipesPage({
   return (
     <Page title={tl("Items")} actions={
       <div style={{display:"flex",gap:8}}>
-        {selected.length>0&&!wastageMode&&<Btn variant="danger" size="sm" onClick={()=>setDialog("del")}>{tl("Delete")} ({selected.length})</Btn>}
+        {selected.length>0&&!wastageMode&&<Btn variant="danger" size="sm" onClick={askDelete}>{tl("Delete")} ({selected.length})</Btn>}
         {wastageMode&&Object.keys(wastageDeltas).length>0&&(
           <Btn size="sm" onClick={()=>setWastageConfirm(true)}>Confirm</Btn>
         )}
@@ -2090,6 +2095,16 @@ function RecipesPage({
 
       <Dialog open={dialog==="del"} title="Delete recipes?" onConfirm={doDelete} onCancel={()=>setDialog(null)}>
         Are you sure you wish to delete <b>{selected.map(id=>recipes.find(r=>r.rid===id)?.name).filter(Boolean).join(", ")}</b>?
+        {delUsage.length>0&&(
+          <div style={{marginTop:12,padding:"10px 12px",background:"#fef3c7",border:"1px solid #fcd34d",borderRadius:8,fontSize:13,color:"#92400e"}}>
+            {[...new Set(delUsage.map(u=>u.rid))].map(rid=>{
+              const nm=recipes.find(r=>r.rid===rid)?.name;
+              const procs=[...new Set(delUsage.filter(u=>u.rid===rid).map(u=>u.process_name))];
+              return <div key={rid}><b>{nm}</b> is used in {procs.join(", ")}.</div>;
+            })}
+            <div style={{marginTop:6}}>Deleting will also remove {delUsage.length>1||new Set(delUsage.map(u=>u.rid)).size>1?"these items":"this item"} from the process{new Set(delUsage.map(u=>u.process_name)).size>1?"es":""} listed above.</div>
+          </div>
+        )}
       </Dialog>
       <Lightbox src={lightbox?.src} description={lightbox?.description} onClose={()=>setLightbox(null)} />
 
@@ -6089,8 +6104,10 @@ const DUR_UNITS = [
 const durAbbr = u => DUR_UNITS.find(d=>d.value===u)?.label || (u||'min');
 
 
+const isLastStep = (run, step) => !step.recur_every && (run.steps||[]).every(x=>x.psrid===step.psrid || ['completed','skipped'].includes(x.status));
+
 // ─── STOP PROCESS DIALOG ──────────────────────────────────────────────────────
-function StopRunDialog({ run, onClose, onStopped, toast }) {
+function StopRunDialog({ run, mode="stop", psrid=null, onClose, onStopped, toast }) {
   const [full, setFull] = useState(null);
   const [vals, setVals] = useState({});
   const [busy, setBusy] = useState(false);
@@ -6108,7 +6125,8 @@ function StopRunDialog({ run, onClose, onStopped, toast }) {
   const stop = async () => {
     setBusy(true);
     try {
-      const updated = await api.stopRun(run.prid, { accepted:(full.items||[]).map(it=>({rid:it.rid, qty:vals[it.rid]})) });
+      const accepted = (full.items||[]).map(it=>({rid:it.rid, qty:vals[it.rid]}));
+      const updated = mode==="complete" ? await api.completeStep(run.prid, psrid, { accepted }) : await api.stopRun(run.prid, { accepted });
       onStopped(updated);
     } catch(e){ toast(e.message,"error"); } finally{ setBusy(false); }
   };
@@ -6117,11 +6135,13 @@ function StopRunDialog({ run, onClose, onStopped, toast }) {
     <div style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.45)",zIndex:1300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:G.white,borderRadius:16,maxWidth:520,width:"100%",boxShadow:"0 20px 60px rgba(44,24,16,0.2)",overflow:"hidden"}}>
         <div style={{padding:"20px 24px",borderBottom:`1px solid ${G.border}`}}>
-          <h3 style={{fontFamily:G.font,fontSize:18}}>Stopping {run.process_name}...</h3>
+          <h3 style={{fontFamily:G.font,fontSize:18}}>{mode==="complete"?"Completing":"Stopping"} {run.process_name}...</h3>
         </div>
         <div style={{padding:"20px 24px",maxHeight:420,overflowY:"auto"}}>
           <p style={{fontSize:14,color:G.dark,lineHeight:1.6,marginBottom:14}}>
-            {run.process_name} will terminate, and you will not be able to resume it. Click "Stop" to accept the quantities below:
+            {mode==="complete"
+              ? <>This is the last step of {run.process_name}. Click "Complete" to accept the quantities below:</>
+              : <>{run.process_name} will terminate, and you will not be able to resume it. Click "Stop" to accept the quantities below:</>}
           </p>
           {!full ? <Spinner/> : (full.items||[]).map(it=>{
             const d = dec(it.qty); const low = vals[it.rid] < Number(it.qty);
@@ -6139,7 +6159,7 @@ function StopRunDialog({ run, onClose, onStopped, toast }) {
         <div style={{padding:"16px 24px",borderTop:`1px solid ${G.border}`,display:"flex",gap:10,justifyContent:"flex-end"}}>
           <Btn variant="ghost" size="sm" onClick={reset} disabled={!full}>Reset</Btn>
           <Btn variant="ghost" size="sm" onClick={onClose}>Cancel</Btn>
-          <Btn variant="danger" size="sm" loading={busy} disabled={!full} onClick={stop}>Stop</Btn>
+          <Btn variant={mode==="complete"?"primary":"danger"} size="sm" loading={busy} disabled={!full} onClick={stop}>{mode==="complete"?"Complete":"Stop"}</Btn>
         </div>
       </div>
     </div>
@@ -6899,7 +6919,12 @@ function RunDetailSidebar({ run, user, onClose, onRunUpdated, toast }) {
     return step.uid === user?.uid;
   };
 
+  const [completeFor, setCompleteFor] = useState(null);
   const doStepAction = async (psrid, action, extra) => {
+    if (action==="complete") {
+      const st = (run.steps||[]).find(x=>x.psrid===psrid);
+      if (st && isLastStep(run, st) && !extra?.confirmed) { setCompleteFor(psrid); return; }
+    }
     setStepAction({psrid, action});
     try {
       let updated;
@@ -6922,6 +6947,8 @@ function RunDetailSidebar({ run, user, onClose, onRunUpdated, toast }) {
 
   return (
     <>
+      {completeFor&&<StopRunDialog run={run} mode="complete" psrid={completeFor} toast={toast} onClose={()=>setCompleteFor(null)}
+        onStopped={u=>{ setCompleteFor(null); onRunUpdated(u); }}/>}
       {/* Backdrop */}
       <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.35)",zIndex:1400}}/>
       {/* Panel */}
@@ -8456,8 +8483,13 @@ function EmployeeProcessesPage({ user, toast, setPage }) {
   },[]);
 
   const [stopRunD, setStopRunD] = useState(null);
+  const [completeD, setCompleteD] = useState(null);
   const runAction = async (prid, action, psrid=null) => {
     if (action==='stop') { setStopRunD(runs.find(r=>r.prid===prid)||{prid}); return; }
+    if (action==='complete-step') {
+      const rn = runs.find(r=>r.prid===prid); const st = (rn?.steps||[]).find(x=>x.psrid===psrid);
+      if (rn && st && isLastStep(rn, st)) { setCompleteD({run:rn, psrid}); return; }
+    }
     setSaving(p=>({...p,[`${prid}-${action}-${psrid}`]:true}));
     try {
       let updated;
@@ -8521,6 +8553,8 @@ function EmployeeProcessesPage({ user, toast, setPage }) {
         <Btn size="sm" variant="secondary" onClick={()=>setPage("processes")}>← Process design</Btn>
       )
     }>
+      {completeD&&<StopRunDialog run={completeD.run} mode="complete" psrid={completeD.psrid} toast={toast} onClose={()=>setCompleteD(null)}
+        onStopped={u=>{ setRuns(p=>p.map(r=>r.prid===u.prid?u:r)); setCompleteD(null); }}/>}
       {stopRunD&&<StopRunDialog run={stopRunD} toast={toast} onClose={()=>setStopRunD(null)}
         onStopped={u=>{ setRuns(p=>p.map(r=>r.prid===u.prid?u:r)); setStopRunD(null); toast("Process stopped"); }}/>}
       {loading ? <Spinner/> : sorted.length===0 ? (

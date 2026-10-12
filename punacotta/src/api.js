@@ -109,7 +109,8 @@ export const api = {
   startStep:          (prid,psrid)  => req('POST', `/process-runs/${prid}/steps/${psrid}/start`),
   pauseStep:          (prid,psrid)  => req('POST', `/process-runs/${prid}/steps/${psrid}/pause`),
   resumeStep:         (prid,psrid)  => req('POST', `/process-runs/${prid}/steps/${psrid}/resume`),
-  completeStep:       (prid,psrid)  => req('POST', `/process-runs/${prid}/steps/${psrid}/complete`),
+  completeStep:       (prid,psrid,data={}) => req('POST', `/process-runs/${prid}/steps/${psrid}/complete`, data),
+  getRecipeUsage:     (ids)       => req('POST',   '/recipes/usage', { ids }),
   skipStep:           (prid,psrid,data) => req('POST', `/process-runs/${prid}/steps/${psrid}/skip`, data),
   // Processes
   getProcesses:   ()          => req('GET',    '/processes'),
