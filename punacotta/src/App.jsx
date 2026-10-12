@@ -2612,13 +2612,13 @@ function MenusPage({
         </Dialog>
         <Dialog open={dialog==="delete-menu"} title={`Delete "${menu.name}"?`} onConfirm={async()=>{
           try {
-            await api.deleteMenu(viewMid);
+            const res = await api.deleteMenu(viewMid);
             setMenus(prev=>prev.filter(m=>m.mid!==viewMid));
-            toast(`"${menu.name}" deleted`);
+            toast(res?.archived?`"${menu.name}" archived — past orders keep their history`:`"${menu.name}" deleted`);
             setDialog(null); setViewMid(null);
           } catch(e){ toast(e.message,"error"); setDialog(null); }
         }} onCancel={()=>setDialog(null)}>
-          This will permanently delete the menu and remove all items from it. Orders are not affected. This cannot be undone.
+          This will remove the menu and all items from it, and it cannot be undone. If customers have already ordered from it, the menu is archived instead: it disappears from your list and from customers, while past orders and reports are kept as they are.
         </Dialog>
       {showSidebar&&(
         <div style={{ position:"fixed", inset:0, zIndex:200 }} onClick={()=>setShowSidebar(false)}>
