@@ -3,6 +3,7 @@ import React from "react";
 import ReactCrop from "react-image-crop";
 import "react-image-crop/dist/ReactCrop.css";
 import { api } from "./api.js";
+import "./tanelu-logo.css";
 
 // ─── DESIGN TOKENS ────────────────────────────────────────────────────────────
 const G = {
@@ -1435,8 +1436,12 @@ function AuthLayout({ children }) {
     <div style={{ minHeight:"100vh", background:G.cream, display:"flex", alignItems:"center", justifyContent:"center", padding:24, backgroundImage:`radial-gradient(circle at 20% 20%, rgba(200,135,58,0.08) 0%, transparent 60%)` }}>
       <div style={{ width:"100%", maxWidth:480 }}>
         <div style={{ textAlign:"center", marginBottom:32 }}>
-          <h1 style={{ fontFamily:G.font, fontSize:40, color:G.caramel, fontStyle:"italic", marginBottom:4 }}>Pun&Cotta</h1>
-          <p style={{ color:G.muted, fontSize:14 }}>Artisan pastry delivery</p>
+          <div style={{ width:120, height:120, margin:"0 auto" }}>
+            <svg className="tn-logo" viewBox="190 200 700 700" role="img" aria-label="Tanelu">
+              <g className="tn-board"><circle cx="540" cy="673" r="208"/><rect className="tn-bar" x="288.75" y="224.75" width="502.5" height="232.5"/></g>
+              <g className="tn-wink" style={{ opacity:0 }}><ellipse className="tn-eye" cx="541.25" cy="671.25" rx="206.25" ry="210"/><rect className="tn-brow" x="292.5" y="225" width="502.5" height="232.5"/></g>
+            </svg>
+          </div>
         </div>
         <div style={{ background:G.white, borderRadius:20, padding:36, boxShadow:"0 4px 40px rgba(44,24,16,0.1)", border:`1px solid ${G.border}`, animation:"fadeIn 0.4s ease" }}>
           {children}
