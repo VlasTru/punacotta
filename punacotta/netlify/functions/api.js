@@ -3282,7 +3282,7 @@ async function route(method, segments, body, headers, event) {
 
   // ── BOARD OF ARRIVALS (public) ────────────────────────────────────────────────
   // GET /arrivals — list items currently in production or recently completed
-  if (r0 === 'arrivals' && method === 'GET') {
+  if (r0 === 'arrivals' && !r1 && method === 'GET') {
     const now = new Date();
     const oneHourAgo = new Date(now.getTime() - 3600000);
 
