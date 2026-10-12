@@ -3444,6 +3444,21 @@ async function route(method, segments, body, headers, event) {
     return [200, { ok: true }]
   }
 
+  // GET /arrivals/lookup?email=... — prefill the guest checkout form. Public, so it returns only
+  // what the form needs (name, phone) — never address — from a registered account, else the
+  // most recent guest order with that email.
+  if (r0 === 'arrivals' && r1 === 'lookup' && method === 'GET') {
+    const email = String(event?.queryStringParameters?.email || '').trim().toLowerCase()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return [200, null]
+    const [u] = await dbq(
+      `SELECT first_name, last_name, phone FROM "user" WHERE lower(email)=$1 LIMIT 1`, [email])
+    if (u) return [200, { name: `${u.first_name || ''} ${u.last_name || ''}`.trim(), phone: u.phone || '' }]
+    const [g] = await dbq(
+      `SELECT guest_name, guest_phone FROM "order"
+       WHERE lower(guest_email)=$1 AND guest_name IS NOT NULL ORDER BY created_at DESC LIMIT 1`, [email])
+    return [200, g ? { name: g.guest_name, phone: g.guest_phone || '' } : null]
+  }
+
   // ── BOARD OF ARRIVALS — PLACE ORDER ──────────────────────────────────────────
   if (r0 === 'arrivals' && r1 === 'order' && method === 'POST') {
     const { items, guest_name, guest_email, guest_phone, fulfillment, delivery_address } = body

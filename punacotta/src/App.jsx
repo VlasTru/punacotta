@@ -5821,6 +5821,19 @@ function BoardOfArrivals({ toast }) {
   const [cart,     setCart]     = useState({}); // rid+prid key → {rid,prid,qty,owner_uid,item}
   const [checkout, setCheckout] = useState(false);
   const [guest,    setGuest]    = useState({ name:'', email:'', phone:'+374 ' });
+  const lookupGuest = async (email) => {
+    const em = (email||'').trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) return;
+    try {
+      const f = await api.lookupGuestByEmail(em);
+      if (!f) return;
+      setGuest(g => g.email.trim()!==em ? g : {
+        ...g,
+        name:  g.name.trim()  ? g.name  : (f.name||''),
+        phone: (!g.phone.trim() || g.phone.trim()==='+374') ? (f.phone||g.phone) : g.phone,
+      });
+    } catch(e){ /* lookup is best-effort */ }
+  };
   const [fulfillment, setFulfillment] = useState('pickup');
   const [deliveryAddr, setDeliveryAddr] = useState('');
   const [placing,  setPlacing]  = useState(false);
@@ -6262,15 +6275,16 @@ function BoardOfArrivals({ toast }) {
               /* Guest checkout form */
               <>
                 <div style={{marginBottom:12}}>
-                  <label style={{fontSize:12,fontWeight:600,color:G.muted,display:"block",marginBottom:4}}>Name *</label>
-                  <input value={guest.name} onChange={e=>setGuest(g=>({...g,name:e.target.value}))}
-                    placeholder="Your name"
+                  <label style={{fontSize:12,fontWeight:600,color:G.muted,display:"block",marginBottom:4}}>Email *</label>
+                  <input value={guest.email} onChange={e=>setGuest(g=>({...g,email:e.target.value}))}
+                    onBlur={e=>lookupGuest(e.target.value)}
+                    type="email" placeholder="your@email.com"
                     style={{width:"100%",padding:"8px 10px",borderRadius:7,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",boxSizing:"border-box"}}/>
                 </div>
                 <div style={{marginBottom:12}}>
-                  <label style={{fontSize:12,fontWeight:600,color:G.muted,display:"block",marginBottom:4}}>Email *</label>
-                  <input value={guest.email} onChange={e=>setGuest(g=>({...g,email:e.target.value}))}
-                    type="email" placeholder="your@email.com"
+                  <label style={{fontSize:12,fontWeight:600,color:G.muted,display:"block",marginBottom:4}}>Name *</label>
+                  <input value={guest.name} onChange={e=>setGuest(g=>({...g,name:e.target.value}))}
+                    placeholder="Your name"
                     style={{width:"100%",padding:"8px 10px",borderRadius:7,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",boxSizing:"border-box"}}/>
                 </div>
                 <div style={{marginBottom:14}}>
