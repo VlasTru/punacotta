@@ -668,9 +668,33 @@ async function upsertNotification(ownerUid, kind, pid, period, text, payload) {
   return true
 }
 
+// One notification per owner listing the items that sit on no menu (they can't sell from stock).
+// The text changes with the list, so a changed list is a new notification (old one is closed).
+async function refreshUnlistedNotification(ownerUid) {
+  try {
+    if (!ownerUid) return
+    const rows = await dbq(
+      `SELECT r.name FROM recipe r
+       WHERE r.deleted=false
+         AND NOT EXISTS (SELECT 1 FROM menu_recipe mr JOIN menu m ON m.mid=mr.mid AND m.deleted=false AND m.owner_uid=$1 WHERE mr.rid=r.rid)
+       ORDER BY lower(r.name)`, [ownerUid])
+    const [cur] = await dbq(
+      `SELECT nid, text FROM stock_notification WHERE owner_uid=$1 AND kind='unlisted' AND pid=0 AND period='auto:unlisted' AND resolved_at IS NULL`, [ownerUid])
+    if (!rows.length) {
+      if (cur) await dbr(`UPDATE stock_notification SET resolved_at=NOW() WHERE nid=$1`, [cur.nid])
+      return
+    }
+    const text = `💔 The following items won't sell from stock unless they are included in a menu (for stock orders) or a process (for pre-orders): ${rows.map(r => r.name).join(', ')}`
+    if (cur && cur.text === text) return
+    if (cur) await dbr(`UPDATE stock_notification SET resolved_at=NOW() WHERE nid=$1`, [cur.nid])
+    await upsertNotification(ownerUid, 'unlisted', 0, 'auto:unlisted', text, { count: rows.length })
+  } catch (e) { console.error('refreshUnlistedNotification failed', e.message) }
+}
+
 async function refreshStockNotifications(ownerUid) {
   try {
     if (!ownerUid) return
+    await refreshUnlistedNotification(ownerUid)
     for (const period of Object.keys(PERIOD_DAYS)) {
       const pic = await computeStockPicture(ownerUid, period)
       const keep = { shortage: new Set(), wastage: new Set() }
@@ -767,13 +791,15 @@ async function route(method, segments, body, headers, event) {
       if (!r2 && method === 'GET') {
         const [calc] = await dbq('SELECT computed_at FROM stock_notif_calc WHERE owner_uid=$1', [ownerUid])
         if (!calc || Date.now() - new Date(calc.computed_at).getTime() > 15 * 60000) await refreshStockNotifications(ownerUid)
+        else await refreshUnlistedNotification(ownerUid)
         const rows = await dbq(
           `SELECT n.nid, n.kind, n.pid, n.text, n.created_at, s.seen_at
            FROM stock_notification n
            LEFT JOIN stock_notification_state s ON s.nid=n.nid AND s.uid=$2
            WHERE n.owner_uid=$1 AND s.dismissed_at IS NULL
              AND ((n.kind IN ('shortage','wastage') AND n.period=$3 AND n.resolved_at IS NULL)
-               OR (n.kind='auto_wastage' AND n.created_at >= NOW() - INTERVAL '3 days'))
+               OR (n.kind='auto_wastage' AND n.created_at >= NOW() - INTERVAL '3 days')
+               OR (n.kind='unlisted' AND n.resolved_at IS NULL))
            ORDER BY n.created_at DESC`, [ownerUid, user.uid, period])
         return [200, { period, items: rows }]
       }
