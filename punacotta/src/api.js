@@ -114,6 +114,7 @@ export const api = {
   markStockSeen:      (nids)      => req('POST', '/notifications/stock/seen', { nids }),
   dismissStockNotifs: (nids)      => req('POST', '/notifications/stock/dismiss', { nids }),
   setNotifPeriod:     (period)    => req('PATCH','/notifications/period', { period }),
+  getPnlReport:       (period)    => req('GET',  `/reports/pnl/${period}`),
   getRecipeUsage:     (ids)       => req('POST',   '/recipes/usage', { ids }),
   skipStep:           (prid,psrid,data) => req('POST', `/process-runs/${prid}/steps/${psrid}/skip`, data),
   // Processes

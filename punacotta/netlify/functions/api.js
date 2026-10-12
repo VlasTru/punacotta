@@ -3724,6 +3724,78 @@ async function route(method, segments, body, headers, event) {
       return [200, rows]
     }
 
+    // GET /reports/pnl/:period — revenue by category/item and expenses (delivery, product wastage, item wastage)
+    if (r1 === 'pnl' && method === 'GET') {
+      const period = segments[2] || 'week'
+      const interval = ({ week:'7 days', month:'30 days', year:'365 days' })[period] || '7 days'
+      const uid = user.uid
+      const revenue = await dbq(`
+        SELECT r.rid, r.name AS item, COALESCE(c.name,'Uncategorized') AS category, COALESCE(c.caid,0) AS caid,
+               SUM(oi.price * oi.qty) AS revenue
+        FROM order_item oi
+        JOIN "order" o ON o.oid = oi.oid
+        LEFT JOIN menu m ON m.mid = o.mid
+        JOIN recipe r ON r.rid = oi.rid
+        LEFT JOIN recipe_category c ON c.caid = r.caid
+        WHERE (m.owner_uid = $1 OR (o.mid IS NULL AND o.prid IS NOT NULL AND o.guest_email IS NOT NULL AND o.owner_uid = $1))
+          AND COALESCE(o.fulfillment,'pickup') <> 'stock'
+          AND o.status NOT IN ('Declined','Cancelled')
+          AND o.created_at >= NOW() - INTERVAL '${interval}'
+        GROUP BY r.rid, r.name, c.caid, c.name
+        HAVING SUM(oi.price * oi.qty) > 0
+        ORDER BY revenue DESC`, [uid])
+
+      // Supplier orders accepted in the period: goods + delivery fees
+      const [goods] = await dbq(`
+        SELECT COALESCE(SUM(COALESCE(soi.qty_actual, soi.qty_ordered) * soi.unit_price),0) AS v
+        FROM supplier_order_item soi JOIN supplier_order so ON so.soid = soi.soid
+        WHERE so.owner_uid=$1 AND so.status='Accepted' AND so.accepted_at >= NOW() - INTERVAL '${interval}'`, [uid])
+      const [fees] = await dbq(`
+        SELECT COALESCE(SUM(delivery_fee),0) AS v FROM supplier_order
+        WHERE owner_uid=$1 AND status='Accepted' AND accepted_at >= NOW() - INTERVAL '${interval}'`, [uid])
+
+      // Unit cost per product = weighted average of accepted deliveries, else cheapest supplier price
+      const COST = `WITH cost AS (
+          SELECT soi.pid, SUM(COALESCE(soi.qty_actual, soi.qty_ordered) * soi.unit_price)
+                          / NULLIF(SUM(COALESCE(soi.qty_actual, soi.qty_ordered)),0) AS unit_cost
+          FROM supplier_order_item soi JOIN supplier_order so ON so.soid = soi.soid
+          WHERE so.owner_uid=$1 AND so.status='Accepted' GROUP BY soi.pid)`
+      // Wasted products only (manual wastage + expiry); products consumed by processes are not counted
+      const productWaste = await dbq(`${COST}
+        SELECT ps.pid, p.name, -SUM(ps.qty) AS qty,
+               COALESCE(c.unit_cost, (SELECT MIN(x.price) FROM product_supplier x WHERE x.pid = ps.pid), 0) AS unit_cost
+        FROM product_stock ps JOIN product p ON p.pid = ps.pid LEFT JOIN cost c ON c.pid = ps.pid
+        WHERE ps.owner_uid=$1 AND ps.source IN ('wastage','expiry') AND ps.qty < 0
+          AND ps.created_at >= NOW() - INTERVAL '${interval}'
+        GROUP BY ps.pid, p.name, c.unit_cost ORDER BY p.name`, [uid])
+      // Wasted items valued at their material cost
+      const itemWaste = await dbq(`${COST},
+        mat AS (SELECT rp.rid, SUM(rp.qty * COALESCE(c.unit_cost, (SELECT MIN(x.price) FROM product_supplier x WHERE x.pid = rp.pid), 0)) AS m
+                FROM recipe_product rp LEFT JOIN cost c ON c.pid = rp.pid GROUP BY rp.rid)
+        SELECT w.rid, r.name, SUM(w.q) AS qty, COALESCE(mat.m,0) AS unit_cost
+        FROM (
+          SELECT rid, -qty AS q FROM recipe_stock
+            WHERE owner_uid=$1 AND source IN ('wastage','unsold') AND qty < 0
+              AND created_at >= NOW() - INTERVAL '${interval}'
+          UNION ALL
+          SELECT pri.rid, pri.wasted_qty FROM process_run_item pri JOIN process_run pr ON pr.prid = pri.prid
+            WHERE pr.owner_uid=$1 AND pri.accepted_qty IS NOT NULL AND pri.wasted_qty > 0
+              AND pr.completed_at >= NOW() - INTERVAL '${interval}'
+        ) w JOIN recipe r ON r.rid = w.rid LEFT JOIN mat ON mat.rid = w.rid
+        GROUP BY w.rid, r.name, mat.m ORDER BY r.name`, [uid])
+      const money = rows => rows.map(r => ({ ...r, qty: Number(r.qty), unit_cost: Number(r.unit_cost), cost: Number(r.qty) * Number(r.unit_cost) }))
+      const pw = money(productWaste), iw = money(itemWaste)
+      return [200, {
+        period,
+        revenue: revenue.map(r => ({ ...r, revenue: Number(r.revenue) })),
+        expenses: {
+          delivery: Number(goods?.v || 0) + Number(fees?.v || 0),
+          product_waste: { total: pw.reduce((a, r) => a + r.cost, 0), rows: pw },
+          item_waste:    { total: iw.reduce((a, r) => a + r.cost, 0), rows: iw },
+        },
+      }]
+    }
+
     // GET /reports/abc
     if (r1 === 'abc' && method === 'GET') {
       // ABC by revenue contribution

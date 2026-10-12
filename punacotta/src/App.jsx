@@ -79,7 +79,7 @@ const RU = {
   "Deliverable (uncheck for pickup-only items)":"Доставляется (снимите галочку, если блюдо доступно только в заведении)",
   "Schedule":"График","Time zone":"Часовой пояс","Save":"Сохранить","Cancel":"Отмена",
   "Yes":"Да","No":"Нет","Delete":"Удалить","Edit":"Редактировать",
-  "Expiry (hours)":"Срок хранения (часов)","Expiry":"Срок хранения","Street address":"Улица, район, дом",
+  "Expiry (hours)":"Срок хранения (часов)","Expiry":"Срок хранения","Profit & Loss":"Доходы и расходы","Expenses":"Расходы","Products delivery":"Доставка продуктов","Products wastage":"Списание продуктов","Items wastage":"Списание блюд","Profit":"Прибыль","Loss":"Убыток","Deficit":"Дефицит","Other":"Прочее","Collapse all":"Свернуть всё","Table view":"Таблица","Chart view":"Диаграмма","Click a revenue category to drill down into items.":"Нажмите на категорию дохода, чтобы увидеть блюда.","Street address":"Улица, район, дом",
   "City":"Город","ZIP":"Почтовый индекс","Email":"Электронная почта","Phone":"Телефон",
   "Contact first name":"Имя представителя","Contact last name":"Фамилия представителя",
   "Contact title":"Должность представителя",
@@ -5271,6 +5271,257 @@ function BoaImpactSection({ toast }) {
   );
 }
 
+// ─── PROFIT & LOSS (Sankey) ───────────────────────────────────────────────────
+// Revenue categories (click to drill down into items) → Revenue → Expenses/Profit → expense types.
+// Hand-built SVG layout: no extra dependency, and it rebuilds whenever the period changes.
+const PNL_LIGHT = ["#2a78d6","#eb6834","#1baf7a","#eda100","#e87ba4","#008300","#6250d6","#e34948"];
+const PNL_DARK  = ["#3987e5","#d95926","#199e70","#c98500","#d55181","#008300","#9085e9","#e66767"];
+const isDarkTheme = () => G.white === THEME_DARK.white;
+
+function buildPnl(data, expanded, tl) {
+  const pal = isDarkTheme() ? PNL_DARK : PNL_LIGHT;
+  const rev = data?.revenue || [];
+  const R = rev.reduce((s, r) => s + r.revenue, 0);
+  const ex = data?.expenses || {};
+  const expTypes = [
+    { id: "e-del",  label: tl("Products delivery"), value: Number(ex.delivery || 0), color: pal[0] },
+    { id: "e-pw",   label: tl("Products wastage"),  value: Number(ex.product_waste?.total || 0), color: pal[1] },
+    { id: "e-iw",   label: tl("Items wastage"),     value: Number(ex.item_waste?.total || 0), color: pal[2] },
+  ].filter(e => e.value > 0.005);
+  const E = expTypes.reduce((s, e) => s + e.value, 0);
+
+  // revenue categories, biggest first; beyond the 8th colour they fold into "Other"
+  const cats = new Map();
+  for (const r of rev) {
+    const c = cats.get(r.caid) || { caid: r.caid, name: r.category, value: 0, items: [] };
+    c.value += r.revenue; c.items.push(r); cats.set(r.caid, c);
+  }
+  let list = [...cats.values()].sort((a, b) => b.value - a.value);
+  if (list.length > 8) {
+    const rest = list.slice(7);
+    list = [...list.slice(0, 7), { caid: "other", name: tl("Other"), value: rest.reduce((s, c) => s + c.value, 0), items: rest.flatMap(c => c.items.map(i => ({ ...i, category: c.name }))), other: true }];
+  }
+  const nodes = [], links = [];
+  const add = n => { nodes.push({ ...n }); return n.id; };
+  list.forEach((c, ci) => {
+    const color = c.other ? G.muted : pal[ci];
+    if (expanded.has(c.caid)) {
+      c.items.sort((a, b) => b.revenue - a.revenue).forEach((it, ii) => {
+        const id = add({ id: `i-${it.rid}`, col: 0, kind: "item", label: it.item, value: it.revenue, color, shade: ii % 2 ? 0.62 : 0.88, caid: c.caid, category: c.name });
+        links.push({ s: id, t: "rev", v: it.revenue, color });
+      });
+    } else {
+      const id = add({ id: `c-${c.caid}`, col: 0, kind: "cat", label: c.name, value: c.value, color, shade: 1, caid: c.caid, count: c.items.length });
+      links.push({ s: id, t: "rev", v: c.value, color });
+    }
+  });
+  const ink = G.muted;
+  if (R > 0 || E > 0) {
+    add({ id: "rev", col: 1, kind: "total", label: tl("Revenue"), value: Math.max(R, 0), color: ink });
+    if (E > R) add({ id: "def", col: 1, kind: "total", label: tl("Deficit"), value: E - R, color: ink });
+    if (E > 0) add({ id: "exp", col: 2, kind: "total", label: tl("Expenses"), value: E, color: ink });
+    if (R > E) add({ id: "pro", col: 2, kind: "total", label: tl("Profit"), value: R - E, color: ink });
+    if (E > 0 && R > 0) links.push({ s: "rev", t: "exp", v: Math.min(R, E), color: ink });
+    if (E > R) links.push({ s: "def", t: "exp", v: E - R, color: ink });
+    if (R > E) links.push({ s: "rev", t: "pro", v: R - E, color: ink });
+    expTypes.forEach(e => { add({ id: e.id, col: 3, kind: "exp", label: e.label, value: e.value, color: e.color }); links.push({ s: "exp", t: e.id, v: e.value, color: e.color }); });
+  }
+  return { nodes, links, R, E };
+}
+
+function layoutPnl(nodes, links, W, H, PL, PR) {
+  const NW = 14, GAP = 8, PT = 26, PB = 10, innerW = W - PL - PR, innerH = H - PT - PB;
+  const cols = [0, 1, 2, 3].map(c => nodes.filter(n => n.col === c));
+  let k = Infinity;
+  cols.forEach(col => {
+    const tot = col.reduce((s, n) => s + n.value, 0);
+    if (tot > 0) k = Math.min(k, (innerH - GAP * Math.max(0, col.length - 1)) / tot);
+  });
+  if (!isFinite(k)) k = 1;
+  const byId = {};
+  cols.forEach((col, ci) => {
+    let y = PT;
+    col.forEach(n => {
+      n.x = PL + ci * (innerW - NW) / 3; n.w = NW; n.y = y; n.h = Math.max(2, n.value * k);
+      y += n.h + GAP; byId[n.id] = n;
+    });
+  });
+  const outC = {}, inC = {};
+  const order = id => nodes.findIndex(n => n.id === id);
+  [...links].sort((a, b) => order(a.t) - order(b.t)).forEach(l => {
+    const s = byId[l.s], t = byId[l.t]; if (!s || !t) return;
+    l.h = Math.max(0.5, l.v * k);
+    l.y0 = s.y + (outC[s.id] || 0); outC[s.id] = (outC[s.id] || 0) + l.h;
+    l.x0 = s.x + s.w; l.x1 = t.x; l.sn = s; l.tn = t;
+  });
+  [...links].sort((a, b) => order(a.s) - order(b.s)).forEach(l => {
+    if (!l.tn) return;
+    l.y1 = l.tn.y + (inC[l.tn.id] || 0); inC[l.tn.id] = (inC[l.tn.id] || 0) + l.h;
+  });
+  // keep side labels at least 13px apart
+  [0, 3].forEach(ci => {
+    let last = -Infinity;
+    cols[ci].forEach(n => { const want = n.y + n.h / 2; n.ly = Math.max(want, last + 13); last = n.ly; });
+  });
+  const bottom = Math.max(H, ...nodes.map(n => (n.ly ?? n.y + n.h) + 12));
+  return { byId, W, H: bottom, NW };
+}
+
+function PnlSection({ toast }) {
+  const lang = useLangContext();
+  const tl = k => lang === 'ru' ? (RU[k] || k) : k;
+  const [period, setPeriod] = useState('week');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(() => new Set());
+  const [tip, setTip] = useState(null);
+  const [view, setView] = useState('chart');
+
+  const load = useCallback(async p => {
+    setLoading(true);
+    try { setData(await api.getPnlReport(p)); setExpanded(new Set()); }
+    catch (e) { toast(e.message, 'error'); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { load('week'); }, []);
+  const changePeriod = p => { setPeriod(p); load(p); };
+
+  const { nodes, links, R, E } = useMemo(() => buildPnl(data, expanded, tl), [data, expanded, lang, G.white]);
+  const W = 860, PL = 175, PR = 175;
+  const nCol0 = nodes.filter(n => n.col === 0).length;
+  const H = Math.max(360, nCol0 * 22 + 40);
+  const lay = useMemo(() => layoutPnl(nodes, links, W, H, PL, PR), [nodes, links, H]);
+  const fmt = v => Math.round(v).toLocaleString();
+  const net = R - E;
+  const pct = (v, base) => base > 0 ? `${(v / base * 100).toFixed(1)}%` : '';
+  const toggleCat = n => {
+    if (n.kind === 'total' || n.kind === 'exp') return;
+    setExpanded(prev => { const nx = new Set(prev); nx.has(n.caid) ? nx.delete(n.caid) : nx.add(n.caid); return nx; });
+    setTip(null);
+  };
+  const showTip = (e, lines) => {
+    const box = e.currentTarget.ownerSVGElement.parentNode.getBoundingClientRect();
+    setTip({ x: e.clientX - box.left, y: e.clientY - box.top, lines });
+  };
+  const ribbon = l => {
+    const xm = (l.x0 + l.x1) / 2;
+    return `M${l.x0},${l.y0} C${xm},${l.y0} ${xm},${l.y1} ${l.x1},${l.y1} L${l.x1},${l.y1 + l.h} C${xm},${l.y1 + l.h} ${xm},${l.y0 + l.h} ${l.x0},${l.y0 + l.h} Z`;
+  };
+
+  const tile = (label, value, color) => (
+    <div style={{ background: G.sand, borderRadius: 10, padding: "12px 20px" }}>
+      <p style={{ fontSize: 11, color: G.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>{label}</p>
+      <p style={{ fontFamily: G.font, fontSize: 22, fontWeight: 700, color: color || G.dark }}>{value}</p>
+    </div>
+  );
+  const ex = data?.expenses;
+  const tableRows = [];
+  if (data) {
+    const byCat = {};
+    (data.revenue || []).forEach(r => { (byCat[r.category] = byCat[r.category] || []).push(r); });
+    Object.entries(byCat).forEach(([c, items]) => {
+      tableRows.push({ kind: 'h', a: `${tl("Revenue")} · ${c}`, v: items.reduce((s, i) => s + i.revenue, 0) });
+      items.forEach(i => tableRows.push({ kind: 'r', a: i.item, v: i.revenue }));
+    });
+    tableRows.push({ kind: 'h', a: tl("Products delivery"), v: Number(ex.delivery || 0) });
+    tableRows.push({ kind: 'h', a: tl("Products wastage"), v: Number(ex.product_waste.total) });
+    ex.product_waste.rows.forEach(r => tableRows.push({ kind: 'r', a: `${r.name} × ${parseFloat(r.qty.toFixed(2))}`, v: r.cost }));
+    tableRows.push({ kind: 'h', a: tl("Items wastage"), v: Number(ex.item_waste.total) });
+    ex.item_waste.rows.forEach(r => tableRows.push({ kind: 'r', a: `${r.name} × ${parseFloat(r.qty.toFixed(2))}`, v: r.cost }));
+  }
+
+  return (
+    <div style={{ background: G.white, border: `1px solid ${G.border}`, borderRadius: 14, padding: 24, marginBottom: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, gap: 12, flexWrap: "wrap" }}>
+        <h3 style={{ fontFamily: G.font, fontSize: 17 }}>{tl("Profit & Loss")}</h3>
+        <div style={{ display: "flex", borderRadius: 8, border: `1px solid ${G.border}`, overflow: "hidden" }}>
+          {[["week", "Week"], ["month", "Month"], ["year", "Year"]].map(([k, l]) => (
+            <button key={k} onClick={() => changePeriod(k)} style={{
+              padding: "6px 16px", border: "none", cursor: "pointer", fontSize: 13, fontFamily: G.mono,
+              background: period === k ? G.caramel : G.white, color: period === k ? G.white : G.muted, transition: "all 0.15s"
+            }}>{tl(l)}</button>
+          ))}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
+        {tile(tl("Revenue"), `${fmt(R)} AMD`, G.caramel)}
+        {tile(tl("Expenses"), `${fmt(E)} AMD`)}
+        {tile(net >= 0 ? tl("Profit") : tl("Loss"), `${net < 0 ? "−" : ""}${fmt(Math.abs(net))} AMD`, net >= 0 ? G.green : G.red)}
+      </div>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12, color: G.muted }}>{tl("Click a revenue category to drill down into items.")}</span>
+        {expanded.size > 0 && <button onClick={() => setExpanded(new Set())} style={{ background: "none", border: `1px solid ${G.border}`, borderRadius: 6, cursor: "pointer", fontSize: 12, fontFamily: G.mono, color: G.muted, padding: "3px 10px" }}>{tl("Collapse all")}</button>}
+        <button onClick={() => setView(v => v === 'chart' ? 'table' : 'chart')} style={{ marginLeft: "auto", background: "none", border: `1px solid ${G.border}`, borderRadius: 6, cursor: "pointer", fontSize: 12, fontFamily: G.mono, color: G.muted, padding: "3px 10px" }}>{view === 'chart' ? tl("Table view") : tl("Chart view")}</button>
+      </div>
+      {loading ? <Spinner /> : !nodes.length ? (
+        <div style={{ padding: 60, textAlign: "center", color: G.muted }}>{tl("No data yet.")}</div>
+      ) : view === 'table' ? (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <tbody>
+            {tableRows.map((r, i) => (
+              <tr key={i} style={{ borderBottom: `1px solid ${G.border}`, background: r.kind === 'h' ? G.sand : "transparent" }}>
+                <td style={{ padding: "7px 12px", paddingLeft: r.kind === 'h' ? 12 : 28, fontWeight: r.kind === 'h' ? 700 : 400, color: G.dark }}>{r.a}</td>
+                <td style={{ padding: "7px 12px", textAlign: "right", fontFamily: G.mono, color: G.dark }}>{fmt(r.v)} AMD</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <div key={period} style={{ position: "relative", animation: "fadeIn 0.3s ease" }}>
+          <svg width="100%" viewBox={`0 0 ${lay.W} ${lay.H}`} style={{ display: "block", maxWidth: lay.W, margin: "0 auto" }} role="img"
+            aria-label={`${tl("Profit & Loss")}: ${tl("Revenue")} ${fmt(R)}, ${tl("Expenses")} ${fmt(E)}`}>
+            {links.filter(l => l.sn && l.tn).map((l, i) => (
+              <path key={i} d={ribbon(l)} fill={l.color} opacity={0.32} stroke="none"
+                onMouseMove={e => showTip(e, [`${l.sn.label} → ${l.tn.label}`, `${fmt(l.v)} AMD`])} onMouseLeave={() => setTip(null)} />
+            ))}
+            {nodes.map(n => {
+              const clickable = n.kind === 'cat' || n.kind === 'item';
+              const share = n.col === 0 ? pct(n.value, R) : n.col === 3 ? pct(n.value, E) : '';
+              const lines = [n.label + (n.category && n.kind === 'item' ? ` · ${n.category}` : ''), `${fmt(n.value)} AMD${share ? ` · ${share}` : ''}`];
+              return (
+                <g key={n.id} style={{ cursor: clickable ? "pointer" : "default" }}
+                  role={clickable ? "button" : undefined} tabIndex={clickable ? 0 : undefined}
+                  aria-label={clickable ? `${n.label}: ${fmt(n.value)}` : undefined}
+                  onClick={() => clickable && toggleCat(n)}
+                  onKeyDown={e => { if (clickable && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggleCat(n); } }}
+                  onMouseMove={e => showTip(e, lines)} onMouseLeave={() => setTip(null)}>
+                  <rect x={n.x} y={n.y} width={n.w} height={n.h} rx={2} fill={n.color} opacity={n.shade ?? 1} stroke={G.white} strokeWidth={2} paintOrder="stroke" />
+                  {n.col === 0 && (
+                    <text x={n.x - 8} y={(n.ly ?? n.y + n.h / 2) + 4} textAnchor="end" fontSize={11} fill={G.dark}>
+                      {n.kind === 'cat' ? "▸ " : "· "}{n.label}<tspan fill={G.muted}> {fmtK(n.value)}</tspan>
+                    </text>
+                  )}
+                  {n.col === 3 && (
+                    <text x={n.x + n.w + 8} y={(n.ly ?? n.y + n.h / 2) + 4} fontSize={11} fill={G.dark}>
+                      {n.label}<tspan fill={G.muted}> {fmtK(n.value)}</tspan>
+                    </text>
+                  )}
+                  {(n.col === 1 || n.col === 2) && (() => {
+                    const second = nodes.filter(x => x.col === n.col)[0].id !== n.id;   // 2nd node in a column: label beside it
+                    const props = !second ? { x: n.x + n.w / 2, y: n.y - 8, textAnchor: "middle" }
+                      : n.col === 1 ? { x: n.x - 8, y: n.y + n.h / 2 + 4, textAnchor: "end" }
+                      : { x: n.x + n.w + 8, y: n.y + n.h / 2 + 4, textAnchor: "start" };
+                    return (
+                      <text {...props} fontSize={11} fontWeight={700} fill={G.dark}>
+                        {n.label}<tspan fill={G.muted} fontWeight={400}> {fmtK(n.value)}</tspan>
+                      </text>
+                    );
+                  })()}
+                </g>
+              );
+            })}
+          </svg>
+          {tip && (
+            <div style={{ position: "absolute", left: Math.min(tip.x + 12, 520), top: tip.y + 12, background: G.dark, color: G.white, borderRadius: 8, padding: "6px 10px", fontSize: 12, pointerEvents: "none", zIndex: 5, boxShadow: "0 4px 14px rgba(0,0,0,0.25)" }}>
+              {tip.lines.map((t, i) => <div key={i} style={{ fontWeight: i === 0 ? 700 : 400 }}>{t}</div>)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ReportsPage({ toast }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
@@ -5301,12 +5552,9 @@ function ReportsPage({ toast }) {
   const maxV = Math.max(...vals,1);
   const barW = Math.max(4, cW/Math.max(vals.length,1) - 4);
   const n = vals.length;
-  const xMean=(n-1)/2, yMean=n?vals.reduce((a,b)=>a+b,0)/n:0;
-  const num=vals.reduce((s,v,i)=>s+(i-xMean)*(v-yMean),0);
-  const den=vals.reduce((s,_,i)=>s+(i-xMean)**2,0);
-  const slope=den?num/den:0, intercept=yMean-slope*xMean;
-  const trendY0=PT+cH*(1-Math.max(0,intercept)/maxV);
-  const trendY1=PT+cH*(1-Math.max(0,intercept+slope*(n-1))/maxV);
+  const ptX = i => PL+i*(cW/n)+cW/(n*2);
+  const ptY = v => PT+cH*(1-v/maxV);
+  const trendPts = vals.map((v,i)=>[ptX(i),ptY(v)]);
   const fmtAMD = v => v>=1000?`${Math.round(v/1000)}k`:String(Math.round(v));
 
   // ── ABC scatter ─────────────────────────────────────────────────────────
@@ -5368,13 +5616,26 @@ function ReportsPage({ toast }) {
                 {i%(Math.ceil(n/8))===0&&<text x={x+barW/2} y={H-8} textAnchor="middle" fontSize={9} fill={G.muted}>{label}</text>}
               </g>;
             })}
-            {n>1&&<line x1={PL} y1={Math.min(H-PB,Math.max(PT,trendY0))} x2={PL+cW} y2={Math.min(H-PB,Math.max(PT,trendY1))} stroke={G.red} strokeWidth={1.5} strokeDasharray="4,3"/>}
+            {n>1&&<polyline points={trendPts.map(p=>p.join(",")).join(" ")} fill="none" stroke={G.dark} strokeWidth={1.5} strokeDasharray="1.5,4" strokeLinecap="round"/>}
+            {trendPts.map(([x,y],i)=>{
+              const prev=i>0?vals[i-1]:null;
+              const pct=prev&&prev>0?Math.round((vals[i]-prev)/prev*100):null;
+              return <g key={"t"+i}>
+                <circle cx={x} cy={y} r={4} fill={G.dark} stroke={G.white} strokeWidth={2}>
+                  <title>{`${String(new Date(salesData[i].day).getDate()).padStart(2,"0")}/${String(new Date(salesData[i].day).getMonth()+1).padStart(2,"0")}: ${vals[i].toLocaleString()} AMD${pct!==null?` (${pct>0?"+":""}${pct}%)`:""}`}</title>
+                </circle>
+                {n<=14&&pct!==null&&<text x={x} y={Math.max(10,y-9)} textAnchor="middle" fontSize={8} fill={G.muted}>{pct>0?"+":""}{pct}%</text>}
+              </g>;
+            })}
             <line x1={PL} y1={PT} x2={PL} y2={PT+cH} stroke={G.border} strokeWidth={1}/>
             <line x1={PL} y1={PT+cH} x2={PL+cW} y2={PT+cH} stroke={G.border} strokeWidth={1}/>
             <text x={PL-44} y={PT+cH/2} textAnchor="middle" fontSize={10} fill={G.muted} transform={`rotate(-90,${PL-44},${PT+cH/2})`}>AMD</text>
           </svg>
         )}
       </div>
+
+      {/* PROFIT & LOSS */}
+      <PnlSection toast={toast}/>
 
       {/* BOARD OF ARRIVALS IMPACT */}
       <BoaImpactSection toast={toast}/>
