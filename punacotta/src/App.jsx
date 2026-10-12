@@ -79,7 +79,7 @@ const RU = {
   "Deliverable (uncheck for pickup-only items)":"Доставляется (снимите галочку, если блюдо доступно только в заведении)",
   "Schedule":"График","Time zone":"Часовой пояс","Save":"Сохранить","Cancel":"Отмена",
   "Yes":"Да","No":"Нет","Delete":"Удалить","Edit":"Редактировать",
-  "Expiry (hours)":"Срок хранения (часов)","Street address":"Улица, район, дом",
+  "Expiry (hours)":"Срок хранения (часов)","Expiry":"Срок хранения","Street address":"Улица, район, дом",
   "City":"Город","ZIP":"Почтовый индекс","Email":"Электронная почта","Phone":"Телефон",
   "Contact first name":"Имя представителя","Contact last name":"Фамилия представителя",
   "Contact title":"Должность представителя",
@@ -722,9 +722,8 @@ function RecipeForm({
           </div>
         )}
         <div>
-          <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Expiry (hours)</label>
-          <input type="number" min="0" step="any" value={form.expiry_hours??""} onChange={e=>set("expiry_hours",e.target.value)} placeholder="h"
-            style={{width:"100%",padding:"10px 14px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}/>
+          <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Expiry</label>
+          <ShelfLifeInput value={form.expiry_hours} onChange={v=>set("expiry_hours",v)} />
         </div>
       </div>
 
@@ -1430,6 +1429,41 @@ function Page({ children, title, actions }) {
   );
 }
 
+// ─── SHELF LIFE (stored in hours, entered as hours / days / weeks) ─────────────
+const SHELF_UNITS = [["hours",1],["days",24],["weeks",168]];
+function fmtShelfLife(h) {
+  const n = Number(h);
+  if (!n) return "";
+  const w = Math.floor(n / 168), d = Math.floor((n % 168) / 24), hh = Math.round((n % 24) * 100) / 100;
+  const parts = [w && `${w} w`, d && `${d} d`, hh && `${hh} h`].filter(Boolean);
+  return parts.join(" ") || `${n} h`;
+}
+function ShelfLifeInput({ value, onChange, compact }) {
+  const init = () => {
+    const n = Number(value);
+    if (!n) return { amt: "", unit: "days" };
+    if (n % 168 === 0) return { amt: String(n / 168), unit: "weeks" };
+    if (n % 24 === 0) return { amt: String(n / 24), unit: "days" };
+    return { amt: String(n), unit: "hours" };
+  };
+  const [st, setSt] = useState(init);
+  const emit = (amt, unit) => {
+    setSt({ amt, unit });
+    const mult = SHELF_UNITS.find(u => u[0] === unit)[1];
+    onChange(amt === "" || isNaN(Number(amt)) ? "" : String(Math.round(Number(amt) * mult * 100) / 100));
+  };
+  const box = { padding: compact ? "3px 6px" : "10px 14px", borderRadius: compact ? 6 : 8, border: `1px solid ${G.border}`, fontSize: compact ? 12 : 14, fontFamily: G.mono, outline: "none", background: G.white, color: G.dark };
+  return (
+    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+      <input type="number" min="0" step="any" value={st.amt} placeholder="0" onChange={e => emit(e.target.value, st.unit)}
+        style={{ ...box, width: compact ? 56 : "100%" }} />
+      <select value={st.unit} onChange={e => emit(st.amt, e.target.value)} style={{ ...box, cursor: "pointer" }}>
+        {SHELF_UNITS.map(([u]) => <option key={u} value={u}>{u}</option>)}
+      </select>
+    </div>
+  );
+}
+
 // ─── AUTH PAGES ───────────────────────────────────────────────────────────────
 function AuthLayout({ children }) {
   return (
@@ -1791,18 +1825,17 @@ function ProductsPage({ toast }) {
     )},
     {key:"sku",      label:tl("SKU"),         sortable:true,  render:r=>r.sku||<span style={{color:G.muted}}>—</span>},
     {key:"category", label:tl("Category"),    sortable:true,  render:r=>r.category?<Badge>{r.category}</Badge>:<span style={{color:G.muted}}>—</span>},
-    {key:"expiry",   label:tl("Expiry (hours)"), sortable:false, render:r=>(
+    {key:"expiry",   label:tl("Expiry"), sortable:false, render:r=>(
       editPid===r.pid ? (
         <div style={{ display:"flex", gap:4, alignItems:"center" }}>
-          <input type="number" value={editExpiry} onChange={e=>setEditExpiry(e.target.value)} placeholder="h"
-            style={{ width:60, padding:"3px 6px", borderRadius:6, border:`1px solid ${G.border}`, fontSize:12, fontFamily:G.mono, outline:"none" }} />
+          <ShelfLifeInput key={r.pid} compact value={editExpiry} onChange={setEditExpiry} />
           <Btn size="sm" onClick={()=>saveExpiry(r.pid)}>✓</Btn>
           <button onClick={()=>setEditPid(null)} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:14}}>×</button>
         </div>
       ) : (
         <button onClick={()=>{setEditPid(r.pid);setEditExpiry(r.expiry_hours||"");}}
           style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:r.expiry_hours?G.dark:G.caramel,fontFamily:G.mono}}>
-          {r.expiry_hours?`${r.expiry_hours}h`:"+ Set"}
+          {r.expiry_hours?fmtShelfLife(r.expiry_hours):"+ Set"}
         </button>
       )
     )},
