@@ -152,9 +152,9 @@ function getUser(headers) {
 async function enrichUser(user) {
   if (!user) return null
   const [row] = await dbq(
-    'SELECT employer_uid, is_employee, is_manufacturer FROM "user" WHERE uid=$1', [user.uid])
+    'SELECT employer_uid, is_employee, is_manufacturer, email FROM "user" WHERE uid=$1', [user.uid])
   if (!row) return user
-  return { ...user, employer_uid: row.employer_uid, is_employee: row.is_employee, is_manufacturer: row.is_manufacturer }
+  return { ...user, employer_uid: row.employer_uid, is_employee: row.is_employee, is_manufacturer: row.is_manufacturer, email: row.email }
 }
 function safe(u) { const { password_hash, ...r } = u; return r }
 
@@ -299,7 +299,12 @@ async function fetchOrder(oid) {
   }
   const allNonDeliverable = items.length > 0 && items.every(i => i.deliverable === false)
   const doneIsTerminal = order.pickup || order.fulfillment === 'pickup' || allNonDeliverable
-  return { ...order, items, customer, allNonDeliverable: doneIsTerminal, is_boa: !!isBoa }
+  let seller_name = null
+  if (isBoa && order.owner_uid) {
+    const [sl] = await dbq('SELECT business_name FROM "user" WHERE uid=$1', [order.owner_uid])
+    seller_name = sl?.business_name || null
+  }
+  return { ...order, items, customer, allNonDeliverable: doneIsTerminal, is_boa: !!isBoa, seller_name }
 }
 
 // ─── MULTIPART PARSER ─────────────────────────────────────────────────────────
@@ -424,6 +429,19 @@ async function applyOrderDoneStock(oid) {
 
 async function reverseOrderStock(oid) {          // a Done order was declined or cancelled
   await dbr(`DELETE FROM recipe_stock WHERE source IN ('order','stock_order') AND source_id=$1`, [oid])
+}
+
+// A Board of Arrivals order is placed as a guest (owner_uid = seller). It belongs to the
+// customer whose verified account email matches the guest email.
+function isOwnBoaOrder(o, user) {
+  return !!(o && !o.mid && o.prid && o.guest_email && user?.email
+    && String(o.guest_email).trim().toLowerCase() === String(user.email).trim().toLowerCase())
+}
+
+// Cancelling / declining a BoA order frees its reservation and puts reserved units back in stock
+async function releaseBoaOrder(oid) {
+  await dbr(`UPDATE boa_reservation SET status='cancelled' WHERE oid=$1 AND status IN ('pending','confirmed')`, [oid])
+  await dbr(`DELETE FROM recipe_stock WHERE source='boa' AND source_id=$1`, [oid])
 }
 
 async function logUnsoldStock(ownerUid, prid, rid, wasted) {
@@ -1408,21 +1426,23 @@ async function route(method, segments, body, headers, event) {
         if (['Declined','Delivered'].includes(o.status)) return [400, { error: 'Cannot decline' }]
         await dbr("UPDATE \"order\" SET status='Declined' WHERE oid=$1", [r1])
         await reverseOrderStock(r1)
+        if (!o.mid && o.prid) await releaseBoaOrder(r1)
         await notifyStockChange(await orderSellerUid(r1))
         return [200, await fetchOrder(r1)]
       }
       if (r2 === 'cancel') {
-        const [o] = await dbq('SELECT * FROM "order" WHERE oid=$1 AND owner_uid=$2', [r1, user.uid])
-        if (!o) return [404, { error: 'Not found' }]
+        const [o] = await dbq('SELECT * FROM "order" WHERE oid=$1', [r1])
+        if (!o || !(o.owner_uid === user.uid || isOwnBoaOrder(o, user))) return [404, { error: 'Not found' }]
         if (['Declined','Delivered'].includes(o.status)) return [400, { error: 'Cannot cancel' }]
         await dbr("UPDATE \"order\" SET status='Declined' WHERE oid=$1", [r1])
         await reverseOrderStock(r1)
+        if (!o.mid && o.prid) await releaseBoaOrder(r1)
         await notifyStockChange(await orderSellerUid(r1))
         return [200, await fetchOrder(r1)]
       }
       if (r2 === 'confirm-delivery') {
-        const [o] = await dbq('SELECT * FROM "order" WHERE oid=$1 AND owner_uid=$2', [r1, user.uid])
-        if (!o) return [404, { error: 'Not found' }]
+        const [o] = await dbq('SELECT * FROM "order" WHERE oid=$1', [r1])
+        if (!o || !(o.owner_uid === user.uid || isOwnBoaOrder(o, user))) return [404, { error: 'Not found' }]
         if (!['Done','Dispatched'].includes(o.status)) return [400, { error: 'Cannot confirm' }]
         await dbr("UPDATE \"order\" SET status='Delivered', handed_over_at=COALESCE(handed_over_at,NOW()) WHERE oid=$1", [r1])
         return [200, await fetchOrder(r1)]
@@ -1434,7 +1454,10 @@ async function route(method, segments, body, headers, event) {
                      WHERE m.owner_uid=$1
                         OR (o.mid IS NULL AND o.prid IS NOT NULL AND o.guest_email IS NOT NULL AND o.owner_uid=$1)
                      ORDER BY o.created_at DESC`, [user.uid])
-        : await dbq('SELECT oid FROM "order" WHERE owner_uid=$1 ORDER BY created_at DESC', [user.uid])
+        : await dbq(`SELECT oid FROM "order"
+                     WHERE owner_uid=$1
+                        OR (mid IS NULL AND prid IS NOT NULL AND guest_email IS NOT NULL AND lower(guest_email)=lower($2))
+                     ORDER BY created_at DESC`, [user.uid, user.email || ''])
       return [200, await Promise.all(rows.map(r => fetchOrder(r.oid)))]
     }
     if (method === 'POST') {

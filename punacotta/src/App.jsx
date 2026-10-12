@@ -3729,7 +3729,7 @@ function OrdersCustPage({
             return (
               <div key={o.oid} style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, padding:20 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:12 }}>
-                  <div><span style={{ fontWeight:700, fontSize:15 }}>Order #{o.oid}</span><span style={{ marginLeft:10, fontSize:12, color:G.muted }}>{new Date(o.created_at).toLocaleString()}</span></div>
+                  <div><span style={{ fontWeight:700, fontSize:15 }}>Order #{o.oid}</span><span style={{ marginLeft:10, fontSize:12, color:G.muted }}>{new Date(o.created_at).toLocaleString()}</span>{o.is_boa&&<span style={{ marginLeft:10, fontSize:11, padding:"2px 8px", borderRadius:10, background:G.sand, color:G.muted }}>{o.seller_name?`Board of Arrivals · ${o.seller_name}`:"Board of Arrivals"}</span>}</div>
                   <span style={{ padding:"4px 12px", borderRadius:20, fontSize:12, fontWeight:700, background:cfg.bg, color:cfg.color }}>{tl(o.status)}</span>
                 </div>
                 <div style={{ marginBottom:12 }}>
