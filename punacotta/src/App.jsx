@@ -13,6 +13,25 @@ const G = {
   white: "#ffffff", red: "#d63031", green: "#00b894",
 };
 
+// ─── THEME ────────────────────────────────────────────────────────────────────
+// G is mutated in place when the theme changes; App re-renders so every style picks it up.
+const THEME_LIGHT = { cream:"#faf6f0", sand:"#f0e8d8", caramel:"#c8873a", dark:"#2c1810", muted:"#8b7355", border:"#e8dcc8", white:"#ffffff", red:"#d63031", green:"#00b894" };
+const THEME_DARK  = { cream:"#17120e", sand:"#261e16", caramel:"#dd9a4c", dark:"#f1e8da", muted:"#a99a82", border:"#3b2f23", white:"#1f1812", red:"#ff6b6b", green:"#2ed3a8" };
+function getThemePref() {
+  try { const v = localStorage.getItem('theme'); return ['light','dark','system'].includes(v) ? v : 'light'; } catch { return 'light'; }
+}
+function resolveTheme(pref) {
+  if (pref === 'dark') return 'dark';
+  if (pref === 'system') { try { return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; } catch { return 'light'; } }
+  return 'light';
+}
+function applyTheme(pref) {
+  const mode = resolveTheme(pref);
+  Object.assign(G, mode === 'dark' ? THEME_DARK : THEME_LIGHT);
+  try { document.documentElement.style.colorScheme = mode; document.documentElement.style.background = G.cream; } catch {}
+}
+applyTheme(getThemePref());
+
 // ─── LOCALIZATION ─────────────────────────────────────────────────────────────
 function getLang() {
   try { return document.cookie.split(';').map(c=>c.trim()).find(c=>c.startsWith('lang='))?.split('=')[1] || 'en'; } catch { return 'en'; }
@@ -295,7 +314,7 @@ const STATUS_CONFIG = {
   Delivered:  { color:"#0d9488", bg:"#f0fdfa", next:null,                   canDecline:false },
 };
 
-const css = `
+const makeCss = () => `
   @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=DM+Sans:wght@300;400;500;600&display=swap');
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: ${G.mono}; background: ${G.cream}; color: ${G.dark}; min-height: 100vh; }
@@ -312,7 +331,7 @@ const css = `
   .recipe-thumb:hover .zoom-icon { opacity:1 !important; }
   .recipe-link:hover { text-decoration:underline; }
   .drop-zone { border:2px dashed ${G.border}; border-radius:10px; padding:24px; text-align:center; cursor:pointer; transition:all 0.2s; }
-  .drop-zone:hover, .drop-zone.drag-over { border-color:${G.caramel}; background:#fef9f4; }
+  .drop-zone:hover, .drop-zone.drag-over { border-color:${G.caramel}; background:${G.sand}; }
 `;
 
 // ─── TOAST ────────────────────────────────────────────────────────────────────
@@ -1289,10 +1308,11 @@ function NotificationBell({ notifs, unseenCount, markSeen, dismiss, refresh, per
   );
 }
 
-function Nav({ user, page, setPage, logout, lang, setLang, notifProps }) {
+function Nav({ user, page, setPage, logout, lang, setLang, notifProps, themePref, setThemePref }) {
   const isM = user?.is_manufacturer;
   const [dropOpen,   setDropOpen]   = useState(false);
   const [cpOpen,     setCpOpen]     = useState(false);
+  const [themeOpen,  setThemeOpen]  = useState(false);
 
   useEffect(()=>{
     const handler = e => {
@@ -1336,6 +1356,27 @@ function Nav({ user, page, setPage, logout, lang, setLang, notifProps }) {
         style={{ display:"flex", alignItems:"center", gap:3, background:"none", border:`1px solid ${G.border}`, borderRadius:8, cursor:"pointer", fontFamily:G.mono, fontSize:12, color:G.muted, padding:"5px 9px", whiteSpace:"nowrap", marginRight:8, flexShrink:0 }}>
         🌐{lang==='en'?'RU':'EN'}
       </button>
+      {/* Theme switch */}
+      <div style={{ position:"relative", flexShrink:0, marginRight:8 }}>
+        <button onClick={()=>setThemeOpen(p=>!p)} title="Theme" aria-label="Theme" aria-haspopup="menu" aria-expanded={themeOpen}
+          style={{ display:"flex", alignItems:"center", justifyContent:"center", background:"none", border:`1px solid ${G.border}`, borderRadius:8, cursor:"pointer", color:G.muted, padding:"6px 9px", height:32 }}>
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.5"/><path d="M8 1.5a6.5 6.5 0 0 1 0 13z" fill="currentColor"/></svg>
+        </button>
+        {themeOpen&&(
+          <>
+            <div onClick={()=>setThemeOpen(false)} style={{ position:"fixed", inset:0, zIndex:298 }} />
+            <div role="menu" style={{ position:"absolute", right:0, top:"calc(100% + 6px)", background:G.white, border:`1px solid ${G.border}`, borderRadius:10, boxShadow:"0 8px 28px rgba(44,24,16,0.15)", minWidth:170, zIndex:299, overflow:"hidden" }}>
+              {[["light","Light"],["dark","Dark"],["system","System Default"]].map(([v,l])=>(
+                <button key={v} role="menuitemradio" aria-checked={themePref===v} onClick={()=>{ setThemePref(v); setThemeOpen(false); }}
+                  style={{ width:"100%", textAlign:"left", padding:"10px 16px", background:themePref===v?G.sand:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.dark, display:"flex", alignItems:"center", gap:8 }}
+                  onMouseEnter={e=>e.currentTarget.style.background=G.sand} onMouseLeave={e=>e.currentTarget.style.background=themePref===v?G.sand:"none"}>
+                  <span style={{ width:14, color:G.caramel }}>{themePref===v?"✓":""}</span>{l}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
       <div style={{ position:"relative", flexShrink:0 }}>
         <button onClick={()=>setDropOpen(p=>!p)} style={{ display:"flex", alignItems:"center", gap:7, background:G.sand, border:`1px solid ${G.border}`, borderRadius:8, cursor:"pointer", fontFamily:G.mono, fontSize:13, color:G.dark, padding:"7px 12px", whiteSpace:"nowrap", fontWeight:500 }}>
           👤 {user?.first_name} {user?.last_name}
@@ -1570,7 +1611,7 @@ function DataTable({ columns, rows, selected, onSelect, onSelectAll, sortKey, so
           {rows.length===0?(
             <tr><td colSpan={columns.length+1} style={{ padding:40, textAlign:"center", color:G.muted, fontSize:14 }}>No items yet.</td></tr>
           ):rows.map((r,i)=>(
-            <tr key={r._id} style={{ borderBottom:i<rows.length-1?`1px solid ${G.border}`:"none", background:selected.includes(r._id)?"#fef9f4":"transparent", transition:"background 0.1s" }}>
+            <tr key={r._id} style={{ borderBottom:i<rows.length-1?`1px solid ${G.border}`:"none", background:selected.includes(r._id)?G.sand:"transparent", transition:"background 0.1s" }}>
               <td style={{ padding:"12px 16px" }}><input type="checkbox" checked={selected.includes(r._id)} onChange={()=>onSelect(r._id)} style={{ cursor:"pointer", accentColor:G.caramel }} /></td>
               {columns.map(c=>(
                 <td key={c.key} style={{ padding:"12px 16px", fontSize:14, verticalAlign:"middle" }}>
@@ -2561,7 +2602,7 @@ function MenusPage({
                   } catch(e){ toast(e.message,"error"); }
                 };
                 return (
-                  <label key={r.rid} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:8, cursor:"pointer", background:inMenu?"#fef9f4":"transparent", border:`1px solid ${inMenu?G.caramel:"transparent"}` }}>
+                  <label key={r.rid} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:8, cursor:"pointer", background:inMenu?G.sand:"transparent", border:`1px solid ${inMenu?G.caramel:"transparent"}` }}>
                     <input type="checkbox" checked={inMenu} onChange={toggle} style={{accentColor:G.caramel}} />
                     <span style={{flex:1,fontSize:14}}>{r.name}</span>
                     <span style={{fontSize:12,color:G.muted}}>{r.price} {r.currency}</span>
@@ -2614,7 +2655,7 @@ function MenusPage({
             <Select label="Category" value={sidebarCat} onChange={setSidebarCat} options={sidebarCats} placeholder="All categories" />
             <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:6, marginTop:16 }}>
               {sidebarRecs.map(r=>(
-                <label key={r.rid} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:8, cursor:"pointer", background:form.recipe_ids.includes(r.rid)?"#fef9f4":"transparent", border:`1px solid ${form.recipe_ids.includes(r.rid)?G.caramel:"transparent"}` }}>
+                <label key={r.rid} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:8, cursor:"pointer", background:form.recipe_ids.includes(r.rid)?G.sand:"transparent", border:`1px solid ${form.recipe_ids.includes(r.rid)?G.caramel:"transparent"}` }}>
                   <input type="checkbox" checked={form.recipe_ids.includes(r.rid)}
                     onChange={()=>setForm(p=>({...p,recipe_ids:p.recipe_ids.includes(r.rid)?p.recipe_ids.filter(x=>x!==r.rid):[...p.recipe_ids,r.rid]}))}
                     style={{accentColor:G.caramel}} />
@@ -3292,7 +3333,7 @@ function OrdersManufPage({
                   const dateStr=`${String(d.getDate()).padStart(2,"0")}-${String(d.getMonth()+1).padStart(2,"0")}-${d.getFullYear()}`;
                   return (
                     <tr key={o.oid} style={{ borderBottom:i<paged.length-1?`1px solid ${G.border}`:"none", transition:"background 0.1s" }}
-                      onMouseEnter={e=>e.currentTarget.style.background="#fef9f4"}
+                      onMouseEnter={e=>e.currentTarget.style.background=G.sand}
                       onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                       <td style={{padding:"11px 16px",fontSize:14,fontWeight:700}}>#{o.oid}</td>
                       <td style={{padding:"11px 16px",fontSize:13,color:G.muted}}>{dateStr}</td>
@@ -3554,7 +3595,7 @@ function OrderPage({
           {delivery==="delivery"&&!hasUndeliverable&&(
             <div style={{ marginBottom:14, display:"flex", flexDirection:"column", gap:8 }}>
               {savedAddresses.map((addr,i)=>(
-                <label key={i} style={{ display:"flex", alignItems:"flex-start", gap:8, cursor:"pointer", padding:"10px 12px", borderRadius:8, border:`1px solid ${selectedAddr===i?G.caramel:G.border}`, background:selectedAddr===i?"#fef9f4":G.white }}>
+                <label key={i} style={{ display:"flex", alignItems:"flex-start", gap:8, cursor:"pointer", padding:"10px 12px", borderRadius:8, border:`1px solid ${selectedAddr===i?G.caramel:G.border}`, background:selectedAddr===i?G.sand:G.white }}>
                   <input type="radio" name="addr" checked={selectedAddr===i} onChange={()=>setSelectedAddr(i)} style={{accentColor:G.caramel,marginTop:2,flexShrink:0}} />
                   <div>
                     {addr.label&&<p style={{fontSize:12,fontWeight:700,color:G.muted,marginBottom:2}}>{addr.label}</p>}
@@ -8995,7 +9036,7 @@ function EmbedMenuPage({ toast }) {
                   {[["inline","Inline (complete order in widget)"],["redirect","Redirect to tanelu.com"]].map(([v,l])=>(
                     <label key={v} style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontSize:13,
                       padding:"10px 16px", borderRadius:8, border:`1px solid ${S.checkout_mode===v?G.caramel:G.border}`,
-                      background:S.checkout_mode===v?"#fef9f4":G.white }}>
+                      background:S.checkout_mode===v?G.sand:G.white }}>
                       <input type="radio" checked={S.checkout_mode===v} onChange={()=>save({checkout_mode:v})} style={{accentColor:G.caramel}}/>
                       {l}
                     </label>
@@ -9120,6 +9161,19 @@ export default function App() {
   const [activeMenu, setActiveMenu] = useState(null);
   const [storeSchedule, setStoreSchedule] = useState(DEFAULT_STORE);
   const [lang, setLang] = useLang();
+  const [themePref, setThemePrefState] = useState(getThemePref);
+  const [, bumpTheme] = useState(0);
+  const setThemePref = p => {
+    try { localStorage.setItem('theme', p); } catch {}
+    applyTheme(p); setThemePrefState(p); bumpTheme(n => n + 1);
+  };
+  useEffect(() => {
+    if (themePref !== 'system') return;
+    let mq; try { mq = window.matchMedia('(prefers-color-scheme: dark)'); } catch { return; }
+    const on = () => { applyTheme('system'); bumpTheme(n => n + 1); };
+    mq.addEventListener?.('change', on);
+    return () => mq.removeEventListener?.('change', on);
+  }, [themePref]);
   _currentLang = lang;
   const {toasts,toast,remove} = useToast();
   const logout=()=>{localStorage.removeItem("token");setUser(null);setPage("login");};
@@ -9141,35 +9195,35 @@ export default function App() {
   // If a hash token is present, show the appropriate page regardless of auth state
   if (hashPage?.type === "order") return (
     <LangContext.Provider value={lang}>
-      <style>{css}</style>
+      <style>{makeCss()}</style>
       <Toast toasts={toasts} remove={remove}/>
       <BoardOfArrivals toast={toast}/>
     </LangContext.Provider>
   );
   if (hashPage?.type === "invite") return (
     <LangContext.Provider value={lang}>
-      <style>{css}</style>
+      <style>{makeCss()}</style>
       <Toast toasts={toasts} remove={remove} />
       <InvitePage token={hashPage.token} setPage={p=>{setHashPage(null);setPage(p);}} toast={toast} onLogin={onLogin}/>
     </LangContext.Provider>
   );
   if (hashPage?.type === "reset") return (
     <LangContext.Provider value={lang}>
-      <style>{css}</style>
+      <style>{makeCss()}</style>
       <Toast toasts={toasts} remove={remove} />
       <ResetPage token={hashPage.token} setPage={p=>{setHashPage(null);setPage(p);}} toast={toast} onLogin={onLogin}/>
     </LangContext.Provider>
   );
   if (hashPage?.type === "verify") return (
     <LangContext.Provider value={lang}>
-      <style>{css}</style>
+      <style>{makeCss()}</style>
       <Toast toasts={toasts} remove={remove} />
       <VerifyPage token={hashPage.token} setPage={p=>{setHashPage(null);setPage(p);}} toast={toast} onLogin={onLogin}/>
     </LangContext.Provider>
   );
   return (
     <LangContext.Provider value={lang}>
-      <style>{css}</style>
+      <style>{makeCss()}</style>
       <Toast toasts={toasts} remove={remove} />
       {!user?(
         <>
@@ -9180,7 +9234,7 @@ export default function App() {
         </>
       ):(
         <>
-          <Nav user={user} page={page} setPage={setPage} logout={logout} lang={lang} setLang={setLang} notifProps={{ notifs, dismiss, markSeen, unseenCount, refresh: refreshNotifs, period: notifPeriod, setPeriod: setNotifPeriod, showPeriod }}/>
+          <Nav user={user} page={page} setPage={setPage} logout={logout} lang={lang} setLang={setLang} notifProps={{ notifs, dismiss, markSeen, unseenCount, refresh: refreshNotifs, period: notifPeriod, setPeriod: setNotifPeriod, showPeriod }} themePref={themePref} setThemePref={setThemePref}/>
           {/* Floating "Yours, tanelu" balloon */}
           <div style={{position:"fixed",bottom:20,right:20,zIndex:500,
             background:G.white,border:`1px solid ${G.border}`,borderRadius:24,
