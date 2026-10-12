@@ -4194,6 +4194,7 @@ function ProcurementPage({
   const [saving, setSaving]       = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [acceptDialog, setAcceptDialog]   = useState(false);
+  const [cancelView, setCancelView]       = useState(false);   // dialog slid to the cancel notice
   const [acceptComments, setAcceptComments] = useState("");
   const [acceptItems, setAcceptItems]     = useState([]);
 
@@ -4278,7 +4279,7 @@ function ProcurementPage({
   const openOrder = async (soid) => {
     try {
       const o = await api.getSupplierOrder(soid);
-      setViewOrder(o);
+      setViewOrder(o); setCancelView(false);
       setAcceptItems(o.items.map(it=>({...it, qty_actual: it.qty_actual !== null ? it.qty_actual : it.qty_ordered})));
     } catch(e){ toast(e.message,"error"); }
   };
@@ -4500,12 +4501,14 @@ function ProcurementPage({
       {/* ── VIEW / ACCEPT ORDER DIALOG ──────────────────────────────────── */}
       {viewOrder&&(
         <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
-          <div style={{ background:G.white, borderRadius:16, width:"100%", maxWidth:760, maxHeight:"90vh", display:"flex", flexDirection:"column", boxShadow:"0 20px 60px rgba(44,24,16,0.2)", animation:"fadeIn 0.2s ease" }}>
+          <div style={{ background:G.white, borderRadius:16, width:"100%", maxWidth:760, overflow:"hidden", boxShadow:"0 20px 60px rgba(44,24,16,0.2)", animation:"fadeIn 0.2s ease" }}>
+           <div style={{ display:"flex", width:"200%", transform:cancelView?"translateX(-50%)":"translateX(0)", transition:"transform 0.3s ease" }}>
+            <div style={{ width:"50%", flexShrink:0, maxHeight:"90vh", display:"flex", flexDirection:"column", visibility:cancelView?"hidden":"visible", transition:"visibility 0.3s" }}>
             <div style={{ padding:"20px 24px", borderBottom:`1px solid ${G.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
               <h3 style={{fontFamily:G.font,fontSize:18}}>
                 {viewOrder.status==="New"?"Edit order":"Accept order"} #{viewOrder.order_id} — {viewOrder.supplier_name}
               </h3>
-              <button onClick={()=>setViewOrder(null)} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:G.muted,lineHeight:1}}>×</button>
+              <button onClick={()=>{setViewOrder(null);setCancelView(false);}} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:G.muted,lineHeight:1}}>×</button>
             </div>
             <div style={{ flex:1, overflowY:"auto", padding:24 }}>
               <table style={{ width:"100%", borderCollapse:"collapse", marginBottom:16 }}>
@@ -4613,6 +4616,9 @@ function ProcurementPage({
             </div>
             <div style={{ padding:"16px 24px", borderTop:`1px solid ${G.border}`, display:"flex", gap:10, justifyContent:"space-between", alignItems:"center" }}>
               <div>
+                {viewOrder?.status==="Submitted" && (
+                  <Btn variant="danger" onClick={()=>setCancelView(true)}>Cancel →</Btn>
+                )}
                 {viewOrder?.status==="New" && (
                   <Btn variant="danger" loading={saving} onClick={async()=>{
                     if(!window.confirm("Delete this order? This cannot be undone.")) return;
@@ -4626,7 +4632,7 @@ function ProcurementPage({
                 )}
               </div>
               <div style={{display:"flex",gap:10}}>
-                <Btn variant="ghost" onClick={()=>setViewOrder(null)}>Close</Btn>
+                <Btn variant="ghost" onClick={()=>{setViewOrder(null);setCancelView(false);}}>Close</Btn>
                 {viewOrder?.status==="New" ? (<>
                   <Btn variant="secondary" loading={saving} onClick={async()=>{
                     setSaving(true);
@@ -4650,6 +4656,35 @@ function ProcurementPage({
                 ) : null}
               </div>
             </div>
+            </div>
+            {/* Cancel notice (slides in from the right) */}
+            <div style={{ width:"50%", flexShrink:0, display:"flex", flexDirection:"column", visibility:cancelView?"visible":"hidden", transition:"visibility 0.3s" }}>
+              <div style={{ padding:"20px 24px", borderBottom:`1px solid ${G.border}` }}>
+                <h3 style={{fontFamily:G.font,fontSize:18}}>Cancel order #{viewOrder.order_id} — {viewOrder.supplier_name}</h3>
+              </div>
+              <div style={{ padding:24, flex:1 }}>
+                <p style={{fontSize:14,color:G.dark,lineHeight:1.7}}>
+                  Order #{viewOrder.order_id} will be terminated. Tanelu will not revoke the order with the supplier. Please, be sure to communicate your decision to {viewOrder.supplier_name}, if you already placed this order. If you wanted to close the dialog instead, just click "Close".
+                </p>
+              </div>
+              <div style={{ padding:"16px 24px", borderTop:`1px solid ${G.border}`, display:"flex", gap:10, justifyContent:"space-between", alignItems:"center" }}>
+                <Btn variant="secondary" onClick={()=>setCancelView(false)}>← Accept</Btn>
+                <div style={{display:"flex",gap:10}}>
+                  <Btn variant="ghost" onClick={()=>{setViewOrder(null);setCancelView(false);}}>Close</Btn>
+                  <Btn variant="danger" loading={saving} onClick={async()=>{
+                    setSaving(true);
+                    try {
+                      const u = await api.cancelSupplierOrder(viewOrder.soid);
+                      setOrders(prev=>prev.map(o=>o.soid===viewOrder.soid?{...o,...u}:o));
+                      toast(`Order #${viewOrder.order_id} cancelled`);
+                      setViewOrder(null); setCancelView(false);
+                      await load();
+                    } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
+                  }}>Cancel anyway</Btn>
+                </div>
+              </div>
+            </div>
+           </div>
           </div>
         </div>
       )}
