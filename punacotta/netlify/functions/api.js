@@ -28,6 +28,7 @@ async function ensureMigrations() {
   if (_migrated) return
   _migrated = true
   try {
+    await dbr(`ALTER TABLE menu ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT false`)
     await dbr(`ALTER TABLE recipe ADD COLUMN IF NOT EXISTS min_inventory NUMERIC(10,3)`)
     await dbr(`ALTER TABLE recipe ADD COLUMN IF NOT EXISTS procid INTEGER`)
     await dbr(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS lat NUMERIC(10,7)`)
@@ -1284,15 +1285,19 @@ async function route(method, segments, body, headers, event) {
         const [m] = await dbq('SELECT mid FROM menu WHERE mid=$1 AND owner_uid=$2', [r1, user.uid])
         if (!m) return [404, { error: 'Menu not found' }]
         const [{ n }] = await dbq('SELECT COUNT(*)::int AS n FROM "order" WHERE mid=$1', [r1])
-        if (n > 0) return [409, { error: `This menu can't be deleted because it has ${n} order${n === 1 ? '' : 's'} in the history. Mark it as unavailable instead to hide it from customers.` }]
         await dbr('DELETE FROM menu_recipe WHERE mid=$1', [r1])
-        await dbr('DELETE FROM menu WHERE mid=$1', [r1])
-        return [200, { deleted: Number(r1) }]
+        if (n > 0) {
+          // Orders reference this menu: archive it (hidden everywhere, history and reports intact)
+          await dbr('UPDATE menu SET deleted=true, available=false WHERE mid=$1', [r1])
+        } else {
+          await dbr('DELETE FROM menu WHERE mid=$1', [r1])
+        }
+        return [200, { deleted: Number(r1), archived: n > 0 }]
       }
     }
     if (method === 'GET') {
       const rows = user.is_manufacturer
-        ? await dbq('SELECT mid FROM menu WHERE owner_uid=$1 ORDER BY mid', [user.uid])
+        ? await dbq('SELECT mid FROM menu WHERE owner_uid=$1 AND deleted=false ORDER BY mid', [user.uid])
         : await dbq('SELECT mid FROM menu WHERE available=true ORDER BY mid')
       return [200, await Promise.all(rows.map(r => fetchMenu(r.mid)))]
     }
