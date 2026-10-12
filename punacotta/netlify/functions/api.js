@@ -3457,9 +3457,9 @@ async function route(method, segments, body, headers, event) {
       const etaMs     = startedAt.getTime() + plannedMs + holdMs;
       const eta       = new Date(etaMs);
       const minsLeft  = Math.max(0, Math.round((etaMs - now.getTime()) / 60000));
-      const etaHHMM   = eta.toTimeString().slice(0,5);
+      const etaHHMM   = eta.toISOString();
       // Delivery ETA = pickup + 30min estimated
-      const etaDelivery = new Date(etaMs + 1800000).toTimeString().slice(0,5);
+      const etaDelivery = new Date(etaMs + 1800000).toISOString();
       // Freshness 0=just started, 1=ready/overdue
       const freshness = row.run_status==='completed'
         ? Math.min(1, (now.getTime()-new Date(row.completed_at).getTime()) / 3600000)

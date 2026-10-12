@@ -5820,6 +5820,12 @@ function SuppliersPage({
 }
 
 // ─── BOARD OF ARRIVALS ────────────────────────────────────────────────────────
+// ETA timestamps arrive as ISO (UTC); show them in the viewer's local time as HH:MM
+const fmtLocalTime = iso => {
+  const d = new Date(iso);
+  return isNaN(d) ? (iso || "") : d.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit", hour12:false });
+};
+
 function BoardOfArrivals({ toast }) {
   const [arrivals, setArrivals] = useState([]);
   const [loading,  setLoading]  = useState(true);
@@ -6176,9 +6182,9 @@ function BoardOfArrivals({ toast }) {
                             <td style={{padding:"10px 12px",fontSize:13,fontFamily:G.mono}}>{a.price} {a.currency}</td>
                             <td style={{padding:"10px 12px",fontFamily:G.mono,fontSize:13,
                               color:isReady?G.green:a.mins_left<15?G.red:G.dark,fontWeight:isReady?700:400}}>
-                              {isReady?<span style={{color:G.green}}>✓ Ready</span>:a.eta_pickup}
+                              {isReady?<span style={{color:G.green}}>✓ Ready</span>:fmtLocalTime(a.eta_pickup)}
                             </td>
-                            <td style={{padding:"10px 12px",fontFamily:G.mono,fontSize:13,color:G.muted}}>{a.eta_delivery}</td>
+                            <td style={{padding:"10px 12px",fontFamily:G.mono,fontSize:13,color:G.muted}}>{fmtLocalTime(a.eta_delivery)}</td>
                             <td style={{padding:"10px 12px"}}>
                               <div style={{display:"flex",alignItems:"center",gap:6}}>
                                 <button onClick={()=>setQty(a,-1)} disabled={qty===0}
