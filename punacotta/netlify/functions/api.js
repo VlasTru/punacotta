@@ -1283,6 +1283,8 @@ async function route(method, segments, body, headers, event) {
         if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
         const [m] = await dbq('SELECT mid FROM menu WHERE mid=$1 AND owner_uid=$2', [r1, user.uid])
         if (!m) return [404, { error: 'Menu not found' }]
+        const [{ n }] = await dbq('SELECT COUNT(*)::int AS n FROM "order" WHERE mid=$1', [r1])
+        if (n > 0) return [409, { error: `This menu can't be deleted because it has ${n} order${n === 1 ? '' : 's'} in the history. Mark it as unavailable instead to hide it from customers.` }]
         await dbr('DELETE FROM menu_recipe WHERE mid=$1', [r1])
         await dbr('DELETE FROM menu WHERE mid=$1', [r1])
         return [200, { deleted: Number(r1) }]
