@@ -110,6 +110,10 @@ export const api = {
   pauseStep:          (prid,psrid)  => req('POST', `/process-runs/${prid}/steps/${psrid}/pause`),
   resumeStep:         (prid,psrid)  => req('POST', `/process-runs/${prid}/steps/${psrid}/resume`),
   completeStep:       (prid,psrid,data={}) => req('POST', `/process-runs/${prid}/steps/${psrid}/complete`, data),
+  getStockNotifications: ()       => req('GET',  '/notifications/stock'),
+  markStockSeen:      (nids)      => req('POST', '/notifications/stock/seen', { nids }),
+  dismissStockNotifs: (nids)      => req('POST', '/notifications/stock/dismiss', { nids }),
+  setNotifPeriod:     (period)    => req('PATCH','/notifications/period', { period }),
   getRecipeUsage:     (ids)       => req('POST',   '/recipes/usage', { ids }),
   skipStep:           (prid,psrid,data) => req('POST', `/process-runs/${prid}/steps/${psrid}/skip`, data),
   // Processes

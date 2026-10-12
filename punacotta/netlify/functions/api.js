@@ -82,6 +82,17 @@ async function ensureMigrations() {
     await dbr(`ALTER TABLE process_run_item ADD COLUMN IF NOT EXISTS wasted_qty NUMERIC(10,3)`)
     await dbr(`ALTER TABLE process_run_item ADD COLUMN IF NOT EXISTS accepted_qty NUMERIC(10,3)`)
     await dbr(`ALTER TABLE recipe ADD COLUMN IF NOT EXISTS expiry_hours NUMERIC(10,2)`)
+    await dbr(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS notify_email BOOLEAN DEFAULT false`)
+    await dbr(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS notif_period VARCHAR(8) DEFAULT 'day'`)
+    await dbr(`CREATE TABLE IF NOT EXISTS stock_notification (
+      nid SERIAL PRIMARY KEY, owner_uid INTEGER NOT NULL, kind VARCHAR(16) NOT NULL, pid INTEGER NOT NULL,
+      period VARCHAR(20) NOT NULL, text TEXT NOT NULL, payload JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), resolved_at TIMESTAMPTZ)`)
+    await dbr(`CREATE UNIQUE INDEX IF NOT EXISTS stock_notification_active ON stock_notification (owner_uid, kind, pid, period) WHERE resolved_at IS NULL`)
+    await dbr(`CREATE TABLE IF NOT EXISTS stock_notification_state (
+      nid INTEGER NOT NULL, uid INTEGER NOT NULL, seen_at TIMESTAMPTZ, dismissed_at TIMESTAMPTZ, PRIMARY KEY (nid, uid))`)
+    await dbr(`CREATE TABLE IF NOT EXISTS stock_autowaste_day (owner_uid INTEGER NOT NULL, day DATE NOT NULL, PRIMARY KEY (owner_uid, day))`)
+    await dbr(`CREATE TABLE IF NOT EXISTS stock_notif_calc (owner_uid INTEGER PRIMARY KEY, computed_at TIMESTAMPTZ NOT NULL)`)
     await dbr(`CREATE TABLE IF NOT EXISTS boa_view_day (
       day DATE NOT NULL, owner_uid INTEGER NOT NULL, views INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (day, owner_uid)
@@ -437,12 +448,330 @@ async function backfillRecipeStock(ownerUid) {
   }
 }
 
+// ─── STOCK NOTIFICATIONS (shortage / wastage) ─────────────────────────────────
+// Actuals  A = AQS + AQSS − AQSO − AQSBA − AQSWE            (now → end of day today+P)
+// Forecast F = A + FQSS − FQSO − FQSBA − FQSWE              (the next P days)
+// P = 1 / 7 / 30 days for day / week / month. Product demand = (item demand not covered by
+// item stock or by items already in running processes) × recipe contents.
+const PERIOD_DAYS = { day: 1, week: 7, month: 30 }
+const OPEN_ORDER = `('New','Accepted','Preparing')`
+const fmtQ = n => String(parseFloat(Number(n).toFixed(2)))
+const joinNames = a => a.length <= 1 ? (a[0] || '') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1]
+
+async function notifOwnerUid(user) {
+  if (!user) return null
+  return user.is_manufacturer ? user.uid : (user.employer_uid || null)
+}
+
+// Remaining stock "lots" (FIFO): positive ledger rows net of all negative rows, oldest consumed first
+function stockLots(rows) {
+  const pos = rows.filter(r => Number(r.qty) > 0).map(r => ({ at: new Date(r.created_at).getTime(), qty: Number(r.qty) }))
+    .sort((a, b) => a.at - b.at)
+  let neg = rows.filter(r => Number(r.qty) < 0).reduce((s, r) => s - Number(r.qty), 0)
+  for (const l of pos) { const t = Math.min(l.qty, neg); l.qty -= t; neg -= t }
+  return pos.filter(l => l.qty > 1e-9)
+}
+
+async function computeStockPicture(ownerUid, period, now = Date.now()) {
+  const P = PERIOD_DAYS[period] || 1
+  const endOfDay = new Date(now); endOfDay.setHours(23, 59, 59, 999)
+  const aEnd = endOfDay.getTime() + P * 86400000
+  const fEnd = aEnd + P * 86400000
+  const LA = Math.max((aEnd - now) / 86400000, 0.01)
+
+  const products = await dbq(
+    `SELECT DISTINCT p.pid, p.name, p.expiry_hours, u.name AS unit
+     FROM recipe_product rp
+     JOIN recipe r ON r.rid=rp.rid AND r.deleted=false
+     JOIN product p ON p.pid=rp.pid AND p.deleted=false
+     LEFT JOIN units u ON u.unid=p.unid
+     WHERE rp.rid IN (
+       SELECT mr.rid FROM menu_recipe mr JOIN menu m ON m.mid=mr.mid WHERE m.owner_uid=$1
+       UNION SELECT pi.rid FROM process_item pi JOIN process pr ON pr.procid=pi.procid WHERE pr.owner_uid=$1
+       UNION SELECT r2.rid FROM recipe r2 JOIN process pr2 ON pr2.procid=r2.procid WHERE pr2.owner_uid=$1)`, [ownerUid])
+  if (!products.length) return []
+  const pids = products.map(p => p.pid)
+
+  const contents = await dbq(
+    `SELECT rp.rid, rp.pid, rp.qty, r.name AS item_name
+     FROM recipe_product rp JOIN recipe r ON r.rid=rp.rid AND r.deleted=false
+     WHERE rp.pid = ANY($1::int[])`, [pids])
+  const rids = [...new Set(contents.map(c => c.rid))]
+
+  // Item side: stock, running output, open demand (stock channel / BoA channel)
+  const num = rows => Object.fromEntries(rows.map(r => [r.rid, Number(r.q)]))
+  const itemStock = num(await dbq(`SELECT rid, SUM(qty) AS q FROM recipe_stock WHERE owner_uid=$1 AND rid=ANY($2::int[]) GROUP BY rid`, [ownerUid, rids]))
+  const running = num(await dbq(
+    `SELECT pri.rid, SUM(pri.qty) AS q FROM process_run_item pri JOIN process_run pr ON pr.prid=pri.prid
+     WHERE pr.owner_uid=$1 AND pr.status IN ('in_progress','on_hold') AND pri.rid=ANY($2::int[]) GROUP BY pri.rid`, [ownerUid, rids]))
+  const lineQ = `CASE WHEN r.allow_submultiples AND r.moq > 0
+       THEN oi.qty * r.moq / CASE un.name WHEN 'kilograms' THEN 1000 WHEN 'litres' THEN 1000 WHEN 'pounds' THEN 16 ELSE 1 END
+       ELSE oi.qty END`
+  const dStock = num(await dbq(
+    `SELECT oi.rid, SUM(${lineQ}) AS q FROM order_item oi
+     JOIN "order" o ON o.oid=oi.oid AND o.status IN ${OPEN_ORDER} AND o.prid IS NULL
+     JOIN menu m ON m.mid=o.mid AND m.owner_uid=$1
+     JOIN recipe r ON r.rid=oi.rid LEFT JOIN units un ON un.unid=r.unid
+     WHERE oi.rid=ANY($2::int[]) GROUP BY oi.rid`, [ownerUid, rids]))
+  const dBoa = num(await dbq(
+    `SELECT oi.rid, SUM(${lineQ}) AS q FROM order_item oi
+     JOIN "order" o ON o.oid=oi.oid AND o.status IN ${OPEN_ORDER} AND o.mid IS NULL AND o.prid IS NOT NULL
+          AND o.guest_email IS NOT NULL AND o.owner_uid=$1
+     JOIN recipe r ON r.rid=oi.rid LEFT JOIN units un ON un.unid=r.unid
+     WHERE oi.rid=ANY($2::int[]) GROUP BY oi.rid`, [ownerUid, rids]))
+  // Item demand that still has to be produced (ordered − item stock − already running)
+  const needS = {}, needB = {}
+  for (const rid of rids) {
+    let supply = Math.max(0, itemStock[rid] || 0) + (running[rid] || 0)
+    const cs = Math.min(dStock[rid] || 0, supply); supply -= cs
+    const cb = Math.min(dBoa[rid] || 0, supply)
+    needS[rid] = (dStock[rid] || 0) - cs
+    needB[rid] = (dBoa[rid] || 0) - cb
+  }
+
+  // Sales history (last 28 days) → daily consumption per product and channel
+  const histRows = async (boa) => dbq(
+    `SELECT rp.pid, SUM(${lineQ} * rp.qty) AS q FROM order_item oi
+     JOIN "order" o ON o.oid=oi.oid AND o.created_at >= NOW() - INTERVAL '28 days'
+          AND o.status NOT IN ('Declined','Cancelled')
+     ${boa ? `AND o.mid IS NULL AND o.prid IS NOT NULL AND o.guest_email IS NOT NULL AND o.owner_uid=$1`
+           : `JOIN menu m ON m.mid=o.mid AND m.owner_uid=$1`}
+     JOIN recipe r ON r.rid=oi.rid LEFT JOIN units un ON un.unid=r.unid
+     JOIN recipe_product rp ON rp.rid=oi.rid AND rp.pid=ANY($2::int[])
+     GROUP BY rp.pid`, [ownerUid, pids])
+  const hS = Object.fromEntries((await histRows(false)).map(r => [r.pid, Number(r.q) / 28]))
+  const hB = Object.fromEntries((await histRows(true)).map(r => [r.pid, Number(r.q) / 28]))
+
+  const stockRows = await dbq(`SELECT pid, qty, created_at FROM product_stock WHERE owner_uid=$1 AND pid=ANY($2::int[])`, [ownerUid, pids])
+  const arrivals = await dbq(
+    `SELECT soi.pid, soi.qty_ordered AS qty, so.etd FROM supplier_order_item soi
+     JOIN supplier_order so ON so.soid=soi.soid
+     WHERE so.owner_uid=$1 AND so.status='Submitted' AND soi.pid=ANY($2::int[])`, [ownerUid, pids])
+  const sups = await dbq(
+    `SELECT ps.pid, s.name FROM product_supplier ps JOIN supplier s ON s.sid=ps.sid
+     WHERE s.owner_uid=$1 AND ps.pid=ANY($2::int[]) ORDER BY s.name`, [ownerUid, pids])
+
+  const out = []
+  for (const p of products) {
+    const pid = p.pid
+    const cont = contents.filter(c => c.pid === pid)
+    const itemNames = [...new Set(cont.map(c => c.item_name))].sort()
+    const supNames = [...new Set(sups.filter(s => s.pid === pid).map(s => s.name))]
+    const lots = stockLots(stockRows.filter(r => r.pid === pid))
+    const AQS = lots.reduce((s, l) => s + l.qty, 0)
+    const expMs = p.expiry_hours ? Number(p.expiry_hours) * 3600000 : null
+    const lotExp = expMs ? lots.map(l => ({ at: l.at + expMs, qty: l.qty })) : []
+
+    const arr = arrivals.filter(a => a.pid === pid).map(a => ({
+      at: a.etd ? new Date(a.etd).getTime() : now, qty: Number(a.qty) }))
+    const AQSS = arr.filter(a => a.at <= aEnd).reduce((s, a) => s + a.qty, 0)
+    const FQSS = arr.filter(a => a.at > aEnd && a.at <= fEnd).reduce((s, a) => s + a.qty, 0)
+
+    const AQSO = cont.reduce((s, c) => s + (needS[c.rid] || 0) * Number(c.qty), 0)
+    const AQSBA = cont.reduce((s, c) => s + (needB[c.rid] || 0) * Number(c.qty), 0)
+    const AQSWE = lotExp.filter(l => l.at <= aEnd).reduce((s, l) => s + l.qty, 0)
+    const A = AQS + AQSS - AQSO - AQSBA - AQSWE
+
+    const FQSO = (hS[pid] || 0) * P, FQSBA = (hB[pid] || 0) * P
+    const leftover = Math.max(0, A)
+    const FQWSE = Math.min(leftover, lotExp.filter(l => l.at > aEnd && l.at <= fEnd).reduce((s, l) => s + l.qty, 0))
+    const F = A + FQSS - FQSO - FQSBA - FQWSE
+
+    // First moment the balance goes below zero (hourly walk; demand spread evenly inside each window)
+    let balance = AQS, firstNeg = null
+    const rateA = (AQSO + AQSBA) / (LA * 24), rateF = (FQSO + FQSBA) / (P * 24)
+    for (let t = now, i = 0; t <= fEnd; t += 3600000, i++) {
+      const rate = t <= aEnd ? rateA : rateF
+      balance -= rate
+      balance += arr.filter(a => a.at > t - 3600000 && a.at <= t).reduce((s, a) => s + a.qty, 0)
+      balance -= lotExp.filter(l => l.at > t - 3600000 && l.at <= t).reduce((s, l) => s + Math.min(l.qty, Math.max(balance, 0)), 0)
+      if (balance < -1e-9 && firstNeg === null) { firstNeg = t - now; break }
+    }
+    const firstExp = lotExp.filter(l => l.at > now && l.at <= aEnd).sort((a, b) => a.at - b.at)[0]
+    out.push({ pid, name: p.name, unit: p.unit || '', itemNames, supNames,
+      A, F, AQS, AQSS, AQSO, AQSBA, AQSWE, FQSS, FQSO, FQSBA, FQWSE, firstNegMs: firstNeg ?? ((A < 0 || F < 0) ? Math.max(0, aEnd - now) : null),
+      shortage: Math.max(0, -Math.min(A, F)), wasteQty: AQSWE, wasteAt: firstExp ? firstExp.at : null })
+  }
+  return out
+}
+
+function shortageText(x) {
+  const h = Math.max(0, Math.floor((x.firstNegMs ?? 0) / 3600000))
+  const d = Math.floor(h / 24), hh = h % 24
+  const when = `${d} day${d === 1 ? '' : 's'} and ${hh} hour${hh === 1 ? '' : 's'}`
+  return `📉 You'll be running out of ${x.name} in ${when}. This product is used in ${joinNames(x.itemNames)}.` +
+    ` Suppliers: ${x.supNames.length ? joinNames(x.supNames) : '—'}. Minimum required: ${fmtQ(x.shortage)} ${x.unit}`.trimEnd() + '.'
+}
+function wastageText(x) {
+  const dt = new Date(x.wasteAt)
+  const dm = `${String(dt.getDate()).padStart(2, '0')}.${String(dt.getMonth() + 1).padStart(2, '0')}`
+  return `🗑️ You're about to waste ${fmtQ(x.wasteQty)} ${x.unit} ${x.name} on ${dm} due to expiration of shelf life, unless you utilize the stock. The product is used in ${joinNames(x.itemNames)}.`
+}
+
+async function notifRecipients(ownerUid) {
+  return dbq(`SELECT uid, email, notify_email, notif_period FROM "user" WHERE uid=$1 OR employer_uid=$1`, [ownerUid])
+}
+
+async function emailNotification(ownerUid, n) {
+  try {
+    for (const u of await notifRecipients(ownerUid)) {
+      if (!u.notify_email || !u.email) continue
+      if (n.period && !String(n.period).startsWith('auto') && (u.notif_period || 'day') !== n.period) continue
+      await sendMail(u.email, n.text.slice(0, 80), n.text,
+        mailHtml('Tanelu notification', n.text, `${APP_URL}`, 'Open Tanelu'))
+    }
+  } catch (e) { console.error('notification email failed', e.message) }
+}
+
+// Insert or update an active notification. Returns true when it is new (or re-opened).
+async function upsertNotification(ownerUid, kind, pid, period, text, payload) {
+  const [cur] = await dbq(
+    `SELECT nid, text FROM stock_notification WHERE owner_uid=$1 AND kind=$2 AND pid=$3 AND period=$4 AND resolved_at IS NULL`,
+    [ownerUid, kind, pid, period])
+  if (cur) {
+    if (cur.text !== text) await dbr(`UPDATE stock_notification SET text=$2, payload=$3, updated_at=NOW() WHERE nid=$1`, [cur.nid, text, JSON.stringify(payload || {})])
+    return false
+  }
+  await dbr(`INSERT INTO stock_notification (owner_uid, kind, pid, period, text, payload) VALUES ($1,$2,$3,$4,$5,$6)`,
+    [ownerUid, kind, pid, period, text, JSON.stringify(payload || {})])
+  await emailNotification(ownerUid, { text, period })
+  return true
+}
+
+async function refreshStockNotifications(ownerUid) {
+  try {
+    if (!ownerUid) return
+    for (const period of Object.keys(PERIOD_DAYS)) {
+      const pic = await computeStockPicture(ownerUid, period)
+      const keep = { shortage: new Set(), wastage: new Set() }
+      for (const x of pic) {
+        if (x.shortage > 1e-6) { keep.shortage.add(x.pid); await upsertNotification(ownerUid, 'shortage', x.pid, period, shortageText(x), { A: x.A, F: x.F }) }
+        if (x.wasteQty > 1e-6 && x.wasteAt) { keep.wastage.add(x.pid); await upsertNotification(ownerUid, 'wastage', x.pid, period, wastageText(x), { qty: x.wasteQty }) }
+      }
+      for (const kind of ['shortage', 'wastage']) {
+        await dbr(
+          `UPDATE stock_notification SET resolved_at=NOW()
+           WHERE owner_uid=$1 AND kind=$2 AND period=$3 AND resolved_at IS NULL AND NOT (pid = ANY($4::int[]))`,
+          [ownerUid, kind, period, [...keep[kind]]])
+      }
+    }
+    await dbr(`INSERT INTO stock_notif_calc (owner_uid, computed_at) VALUES ($1, NOW())
+               ON CONFLICT (owner_uid) DO UPDATE SET computed_at=NOW()`, [ownerUid])
+  } catch (e) { console.error('refreshStockNotifications failed', e.message) }
+}
+
+// Daily at the beginning of the work day: write off stock whose shelf life has run out
+async function autoWasteForOwner(ownerUid, now = Date.now()) {
+  const dayKey = Number(new Date(now).toISOString().slice(0, 10).replace(/-/g, ''))
+  const prods = await dbq(
+    `SELECT p.pid, p.name, p.expiry_hours, u.name AS unit FROM product p LEFT JOIN units u ON u.unid=p.unid
+     WHERE p.deleted=false AND p.expiry_hours IS NOT NULL AND p.expiry_hours > 0
+       AND p.pid IN (SELECT pid FROM product_stock WHERE owner_uid=$1)`, [ownerUid])
+  for (const p of prods) {
+    const rows = await dbq(`SELECT qty, created_at FROM product_stock WHERE owner_uid=$1 AND pid=$2`, [ownerUid, p.pid])
+    const expired = stockLots(rows).filter(l => l.at + Number(p.expiry_hours) * 3600000 <= now).reduce((s, l) => s + l.qty, 0)
+    if (expired <= 1e-6) continue
+    await dbr(
+      `INSERT INTO product_stock (pid, owner_uid, qty, source, source_id, created_at) VALUES ($1,$2,$3,'expiry',$4,NOW())
+       ON CONFLICT (pid, owner_uid, source, source_id) DO NOTHING`, [p.pid, ownerUid, -expired, dayKey])
+    const sups = await dbq(`SELECT DISTINCT s.name FROM product_supplier ps JOIN supplier s ON s.sid=ps.sid WHERE s.owner_uid=$1 AND ps.pid=$2 ORDER BY s.name`, [ownerUid, p.pid])
+    const text = `🗑️ ${fmtQ(expired)} ${p.unit || ''} ${p.name} shall be wasted today due to expiration of shelf life. The stock levels have been adjusted automatically.` +
+      (sups.length ? ` Restock, if required, from ${joinNames(sups.map(s => s.name))}.` : '')
+    await upsertNotification(ownerUid, 'auto_wastage', p.pid, `auto:${dayKey}`, text.replace(/\s{2,}/g, ' '), { qty: expired })
+  }
+}
+
+async function runDailyStockJob(now = Date.now()) {
+  const owners = await dbq(`SELECT uid, schedule FROM "user" WHERE is_manufacturer=true`)
+  const DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
+  for (const o of owners) {
+    try {
+      const sch = typeof o.schedule === 'string' ? JSON.parse(o.schedule) : (o.schedule || {})
+      const tz = sch.timezone || 'UTC'
+      let local
+      try {
+        const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz, hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', weekday: 'short' })
+          .formatToParts(new Date(now)).map(p => [p.type, p.value]))
+        local = { date: `${parts.year}-${parts.month}-${parts.day}`, mins: (Number(parts.hour) % 24) * 60 + Number(parts.minute), dow: parts.weekday.slice(0, 3).toLowerCase() }
+      } catch { local = { date: new Date(now).toISOString().slice(0, 10), mins: new Date(now).getUTCHours() * 60, dow: DAYS[new Date(now).getUTCDay()] } }
+      const periods = sch.schedule?.[local.dow]?.periods || []
+      const from = periods.map(p => p.from).filter(Boolean).sort()[0]
+      const startMins = from ? Number(from.split(':')[0]) * 60 + Number(from.split(':')[1] || 0) : 0
+      if (local.mins < startMins) continue
+      const claimed = await dbq(`INSERT INTO stock_autowaste_day (owner_uid, day) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING owner_uid`, [o.uid, local.date])
+      if (!claimed.length) continue
+      await autoWasteForOwner(o.uid, now)
+      await refreshStockNotifications(o.uid)
+    } catch (e) { console.error('daily stock job failed for', o.uid, e.message) }
+  }
+}
+
+// Fire-and-forget safe wrapper for the triggering events
+const notifyStockChange = ownerUid => refreshStockNotifications(ownerUid)
+async function orderSellerUid(oid) {
+  const [r] = await dbq(`SELECT COALESCE(m.owner_uid, o.owner_uid) AS uid FROM "order" o LEFT JOIN menu m ON m.mid=o.mid WHERE o.oid=$1`, [oid])
+  return r?.uid || null
+}
+
+
 // ─── ROUTER ───────────────────────────────────────────────────────────────────
 const TRANSITIONS = { New:'Accepted', Accepted:'Preparing', Preparing:'Done', Done:'Dispatched', Dispatched:'Delivered' }
 
 async function route(method, segments, body, headers, event) {
   const user = await enrichUser(getUser(headers))
   const [r0, r1, r2] = segments
+
+  // ── STOCK NOTIFICATIONS ─────────────────────────────────────────────────────
+  if (r0 === 'notifications') {
+    if (!user) return [401, { error: 'Unauthorized' }]
+    const ownerUid = await notifOwnerUid(user)
+    if (r1 === 'period' && method === 'PATCH') {
+      const period = PERIOD_DAYS[body?.period] ? body.period : 'day'
+      await dbr('UPDATE "user" SET notif_period=$1 WHERE uid=$2', [period, user.uid])
+      return [200, { period }]
+    }
+    if (r1 === 'stock') {
+      const [me] = await dbq('SELECT notif_period FROM "user" WHERE uid=$1', [user.uid])
+      const period = me?.notif_period || 'day'
+      if (!ownerUid) return [200, { period, items: [] }]
+      if (!r2 && method === 'GET') {
+        const [calc] = await dbq('SELECT computed_at FROM stock_notif_calc WHERE owner_uid=$1', [ownerUid])
+        if (!calc || Date.now() - new Date(calc.computed_at).getTime() > 15 * 60000) await refreshStockNotifications(ownerUid)
+        const rows = await dbq(
+          `SELECT n.nid, n.kind, n.pid, n.text, n.created_at, s.seen_at
+           FROM stock_notification n
+           LEFT JOIN stock_notification_state s ON s.nid=n.nid AND s.uid=$2
+           WHERE n.owner_uid=$1 AND s.dismissed_at IS NULL
+             AND ((n.kind IN ('shortage','wastage') AND n.period=$3 AND n.resolved_at IS NULL)
+               OR (n.kind='auto_wastage' AND n.created_at >= NOW() - INTERVAL '3 days'))
+           ORDER BY n.created_at DESC`, [ownerUid, user.uid, period])
+        return [200, { period, items: rows }]
+      }
+      if (r2 === 'seen' && method === 'POST') {
+        const ids = (Array.isArray(body?.nids) ? body.nids : []).map(Number).filter(Number.isFinite)
+        for (const nid of ids)
+          await dbr(`INSERT INTO stock_notification_state (nid, uid, seen_at) VALUES ($1,$2,NOW())
+                     ON CONFLICT (nid, uid) DO UPDATE SET seen_at=COALESCE(stock_notification_state.seen_at, NOW())`, [nid, user.uid])
+        return [200, { ok: true }]
+      }
+      if (r2 === 'dismiss' && method === 'POST') {
+        const ids = (Array.isArray(body?.nids) ? body.nids : []).map(Number).filter(Number.isFinite)
+        for (const nid of ids)
+          await dbr(`INSERT INTO stock_notification_state (nid, uid, seen_at, dismissed_at) VALUES ($1,$2,NOW(),NOW())
+                     ON CONFLICT (nid, uid) DO UPDATE SET dismissed_at=NOW()`, [nid, user.uid])
+        return [200, { ok: true }]
+      }
+    }
+  }
+
+  // Called hourly by stock-scheduled.js (token = hash of the database URL, known only to the functions)
+  if (r0 === 'cron' && r1 === 'stock-daily' && method === 'POST') {
+    const { createHash } = await import('crypto')
+    const want = createHash('sha256').update(String(process.env.NETLIFY_DATABASE_URL || process.env.DATABASE_URL || '')).digest('hex')
+    if (!headers['x-cron-token'] || headers['x-cron-token'] !== want) return [401, { error: 'Unauthorized' }]
+    await runDailyStockJob()
+    return [200, { ok: true }]
+  }
 
   // ── PROFILE ──────────────────────────────────────────────────────────────────
   if (r0 === 'profile') {
@@ -453,7 +782,7 @@ async function route(method, segments, body, headers, event) {
         `SELECT uid, first_name, last_name, email, phone,
                 street_address, city, zip, business_name,
                 logo_url, logo_cloudinary_id,
-                lat, lng, address_display
+                lat, lng, address_display, notify_email
          FROM "user" WHERE uid=$1`, [user.uid])
       return [200, row || {}]
     }
@@ -503,9 +832,11 @@ async function route(method, segments, body, headers, event) {
          business_name||null, logo_url||null, logo_cloudinary_id||null,
          lat||null, lng||null, address_display||null, user.uid]
       )
+      if (body.notify_email !== undefined)
+        await dbr('UPDATE "user" SET notify_email=$1 WHERE uid=$2', [!!body.notify_email, user.uid])
       const [updated] = await dbq(
         `SELECT uid, first_name, last_name, email, phone, street_address, city, zip,
-                business_name, logo_url, logo_cloudinary_id, lat, lng, address_display
+                business_name, logo_url, logo_cloudinary_id, lat, lng, address_display, notify_email
          FROM "user" WHERE uid=$1`, [user.uid])
       return [200, updated]
     }
@@ -1057,6 +1388,7 @@ async function route(method, segments, body, headers, event) {
           await applyOrderDoneStock(r1)
         }
         if (next === 'Delivered') await dbr('UPDATE "order" SET handed_over_at=COALESCE(handed_over_at,NOW()) WHERE oid=$1', [r1])
+        notifyStockChange(await orderSellerUid(r1))
         return [200, await fetchOrder(r1)]
       }
       if (r2 === 'decline') {
@@ -1066,6 +1398,7 @@ async function route(method, segments, body, headers, event) {
         if (['Declined','Delivered'].includes(o.status)) return [400, { error: 'Cannot decline' }]
         await dbr("UPDATE \"order\" SET status='Declined' WHERE oid=$1", [r1])
         await reverseOrderStock(r1)
+        await notifyStockChange(await orderSellerUid(r1))
         return [200, await fetchOrder(r1)]
       }
       if (r2 === 'cancel') {
@@ -1074,6 +1407,7 @@ async function route(method, segments, body, headers, event) {
         if (['Declined','Delivered'].includes(o.status)) return [400, { error: 'Cannot cancel' }]
         await dbr("UPDATE \"order\" SET status='Declined' WHERE oid=$1", [r1])
         await reverseOrderStock(r1)
+        await notifyStockChange(await orderSellerUid(r1))
         return [200, await fetchOrder(r1)]
       }
       if (r2 === 'confirm-delivery') {
@@ -1144,6 +1478,7 @@ async function route(method, segments, body, headers, event) {
           `Hi, ${cust.first_name} ${cust.last_name},\n\nYour order #${oid} is on its way to the kitchen.\n\nKind regards,\n${manuf?.business_name||'Pun&Cotta'}`)
       }
 
+      await notifyStockChange(menu.owner_uid)
       return [201, full]
     }
   }
@@ -1488,6 +1823,7 @@ async function route(method, segments, body, headers, event) {
       const full = await fetchSO(r2)
       const pdfB64 = await generatePDF('po', full, user)
       await dbr('UPDATE supplier_order SET po_pdf_url=$1 WHERE soid=$2', [pdfB64, r2])
+      await notifyStockChange(user.uid)
       return [200, { ...full, po_pdf_url: pdfB64, status:'Submitted' }]
     }
 
@@ -1497,6 +1833,7 @@ async function route(method, segments, body, headers, event) {
       if (!o) return [404, { error:'Not found' }]
       if (['Accepted','Cancelled'].includes(o.status)) return [400, { error:'Cannot cancel' }]
       await dbr(`UPDATE supplier_order SET status='Cancelled' WHERE soid=$1`, [r2])
+      await notifyStockChange(user.uid)
       return [200, await fetchSO(r2)]
     }
 
@@ -2247,6 +2584,13 @@ async function route(method, segments, body, headers, event) {
           await dbr('INSERT INTO process_run_item (prid,rid,qty) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING',
             [prid, it.rid, it.qty||1])
         }
+        // Products are consumed when the process starts (declared quantity × recipe contents)
+        await dbr(
+          `INSERT INTO product_stock (pid, owner_uid, qty, source, source_id, created_at)
+           SELECT rp.pid, $2, -SUM(pri.qty * rp.qty), 'run', $1, NOW()
+           FROM process_run_item pri JOIN recipe_product rp ON rp.rid=pri.rid
+           WHERE pri.prid=$1 GROUP BY rp.pid
+           ON CONFLICT (pid, owner_uid, source, source_id) DO UPDATE SET qty=EXCLUDED.qty`, [prid, ownerUid])
 
         // Create a Stock order automatically for this run
         // Calculate ETA = sum of all step durations in this process
@@ -2283,6 +2627,7 @@ async function route(method, segments, body, headers, event) {
         }
       }
 
+      await notifyStockChange(ownerUid)
       return [201, { ...runData, steps: allSteps, warnings }]
     }
   }
@@ -2516,6 +2861,7 @@ async function route(method, segments, body, headers, event) {
       await creditRunStock(r1)
       await dbr(`UPDATE process_run_step SET status='skipped' WHERE prid=$1 AND status IN ('pending','in_progress','on_hold')`, [r1])
       await syncOrderStatus(r1, 'cancelled')
+      await notifyStockChange(ownerUid)
       return [200, await fetchRun(r1)]
     }
 
@@ -2607,6 +2953,7 @@ async function route(method, segments, body, headers, event) {
       } else {
         await activateDependentSteps(r1, psrid)
       }
+      if (!remaining.length) await notifyStockChange(ownerUid)
       return [200, await fetchRun(r1)]
     }
 
@@ -2699,6 +3046,7 @@ async function route(method, segments, body, headers, event) {
       const rows = await dbq(
         `SELECT rid, SUM(qty) AS qty FROM recipe_stock WHERE owner_uid=$1 GROUP BY rid`,
         [user.uid])
+      await notifyStockChange(user.uid)
       return [200, rows]
     }
 
@@ -3146,6 +3494,7 @@ async function route(method, segments, body, headers, event) {
       results.push({ prid, rid, qty_confirmed:canFulfill, qty_waiting:waiting,
         resid, oid, needs_split: waiting > 0 })
     }
+    for (const sellerUid of new Set(items.map(i => Number(i.owner_uid)).filter(Boolean))) await notifyStockChange(sellerUid)
     return [201, { results }]
   }
 
@@ -3308,6 +3657,7 @@ async function route(method, segments, body, headers, event) {
       const rows = await dbq(
         `SELECT pid, SUM(qty) AS qty FROM product_stock WHERE owner_uid=$1 GROUP BY pid`,
         [user.uid])
+      await notifyStockChange(user.uid)
       return [200, rows]
     }
   }

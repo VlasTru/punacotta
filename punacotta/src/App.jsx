@@ -1018,7 +1018,43 @@ function useNotifications(user) {
   // notifs: Map<psrid, { psrid, prid, process_name, step_name, dueAt, type, seenAt }>
   // type: 'now' | 'overdue' | 'upcoming'
   const [notifs, setNotifs] = useState(new Map());
+  const [period, setPeriodState] = useState('day');
   const stoppedPrids = useRef(new Set());
+  const isRestaurantUser = !!(user && (user.is_manufacturer || user.employer_uid));
+
+  // Stock notifications (shortage / wastage) are computed on the server and tracked per user
+  const loadStock = useCallback(async () => {
+    if (!isRestaurantUser) return;
+    try {
+      const res = await api.getStockNotifications();
+      setPeriodState(res.period || 'day');
+      setNotifs(prev => {
+        const next = new Map();
+        for (const [k, v] of prev) if (v.type !== 'stock') next.set(k, v);
+        for (const n of res.items || []) {
+          next.set(`s${n.nid}`, {
+            psrid: `s${n.nid}`, nid: n.nid, type: 'stock', kind: n.kind, text: n.text,
+            addedAt: new Date(n.created_at).getTime(),
+            seenAt: n.seen_at ? new Date(n.seen_at).getTime() : null,
+          });
+        }
+        return next;
+      });
+    } catch {}
+  }, [isRestaurantUser]);
+
+  const setPeriod = useCallback(async p => {
+    setPeriodState(p);
+    try { await api.setNotifPeriod(p); } catch {}
+    loadStock();
+  }, [loadStock]);
+
+  useEffect(() => {
+    if (!isRestaurantUser) return;
+    loadStock();
+    const iv = setInterval(loadStock, 60000);
+    return () => clearInterval(iv);
+  }, [isRestaurantUser, loadStock]);
 
   const compute = useCallback(async () => {
     if (!user) return;
@@ -1104,6 +1140,9 @@ function useNotifications(user) {
   }, [user, compute]);
 
   const dismiss = useCallback(psrid => {
+    if (typeof psrid === 'string' && psrid.startsWith('s')) {
+      api.dismissStockNotifs([Number(psrid.slice(1))]).catch(() => {});
+    }
     setNotifs(prev => { const next = new Map(prev); next.delete(psrid); return next; });
   }, []);
 
@@ -1111,7 +1150,12 @@ function useNotifications(user) {
     setNotifs(prev => {
       const next = new Map(prev);
       const now2 = Date.now();
-      for (const [k, v] of next) next.set(k, { ...v, seenAt: v.seenAt || now2 });
+      const unseenStock = [];
+      for (const [k, v] of next) {
+        if (v.type === 'stock' && !v.seenAt) unseenStock.push(v.nid);
+        next.set(k, { ...v, seenAt: v.seenAt || now2 });
+      }
+      if (unseenStock.length) api.markStockSeen(unseenStock).catch(() => {});
       return next;
     });
   }, []);
@@ -1122,7 +1166,7 @@ function useNotifications(user) {
     return n;
   }, [notifs]);
 
-  return { notifs, dismiss, markSeen, unseenCount, refresh: compute };
+  return { notifs, dismiss, markSeen, unseenCount, refresh: () => { compute(); loadStock(); }, period, setPeriod, showPeriod: isRestaurantUser };
 }
 
 function fmtNotifTime(dueAt, type) {
@@ -1157,7 +1201,7 @@ function fmtNotifTs(addedAt) {
   return `${hm} ${d.toLocaleDateString('en-US',{month:'short',day:'numeric'})}`;
 }
 
-function NotificationBell({ notifs, unseenCount, markSeen, dismiss, refresh }) {
+function NotificationBell({ notifs, unseenCount, markSeen, dismiss, refresh, period, setPeriod, showPeriod }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -1209,7 +1253,8 @@ function NotificationBell({ notifs, unseenCount, markSeen, dismiss, refresh }) {
             : items.map(n => {
                 const timeStr = fmtNotifTime(n.dueAt, n.type);
                 let text;
-                if (n.type==='now') text = `${n.process_name} | ${n.step_name} is due to start now`;
+                if (n.type==='stock') text = n.text;
+                else if (n.type==='now') text = `${n.process_name} | ${n.step_name} is due to start now`;
                 else if (n.type==='overdue') text = `${n.process_name} | ${n.step_name} was due to start ${timeStr} ago`;
                 else text = `${n.process_name} | ${n.step_name} due to start in ${timeStr}`;
                 return (
@@ -1227,6 +1272,17 @@ function NotificationBell({ notifs, unseenCount, markSeen, dismiss, refresh }) {
                 );
               })
           }
+          {showPeriod&&(
+            <div style={{ position:'sticky', bottom:0, background:G.white, borderTop:`1px solid ${G.border}`, padding:'10px 16px', display:'flex', alignItems:'center', gap:14, fontFamily:G.mono, fontSize:12, color:G.dark }}>
+              <span style={{ color:G.muted }}>Period</span>
+              {[['day','Day'],['week','Week'],['month','Month']].map(([v,l])=>(
+                <label key={v} style={{ display:'flex', alignItems:'center', gap:5, cursor:'pointer' }}>
+                  <input type="radio" name="notif-period" value={v} checked={period===v} onChange={()=>setPeriod(v)} style={{ accentColor:G.caramel }}/>
+                  {l}
+                </label>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -3766,6 +3822,10 @@ function GeneralPage({ user, setUser, toast }) {
         </div>
         <Input label={tl("Email")} value={form.email||''} type="email" disabled
           hint="Email cannot be changed here."/>
+        <label style={{display:"flex",alignItems:"center",gap:8,fontSize:14,cursor:"pointer",marginTop:10}}>
+          <input type="checkbox" checked={!!form.notify_email} onChange={e=>set('notify_email',e.target.checked)} style={{accentColor:G.caramel}}/>
+          also use it for notifications
+        </label>
         <div style={{marginTop:14}}>
           <Input label={tl("Phone")} value={form.phone||''} onChange={v=>set('phone',v)} placeholder="+374 91 …"/>
         </div>
@@ -9063,7 +9123,7 @@ export default function App() {
   _currentLang = lang;
   const {toasts,toast,remove} = useToast();
   const logout=()=>{localStorage.removeItem("token");setUser(null);setPage("login");};
-  const { notifs, dismiss, markSeen, unseenCount, refresh: refreshNotifs } = useNotifications(user);
+  const { notifs, dismiss, markSeen, unseenCount, refresh: refreshNotifs, period: notifPeriod, setPeriod: setNotifPeriod, showPeriod } = useNotifications(user);
   const onLogin = u => {
     setUser(u);
     setHashPage(null);
@@ -9120,7 +9180,7 @@ export default function App() {
         </>
       ):(
         <>
-          <Nav user={user} page={page} setPage={setPage} logout={logout} lang={lang} setLang={setLang} notifProps={{ notifs, dismiss, markSeen, unseenCount, refresh: refreshNotifs }}/>
+          <Nav user={user} page={page} setPage={setPage} logout={logout} lang={lang} setLang={setLang} notifProps={{ notifs, dismiss, markSeen, unseenCount, refresh: refreshNotifs, period: notifPeriod, setPeriod: setNotifPeriod, showPeriod }}/>
           {/* Floating "Yours, tanelu" balloon */}
           <div style={{position:"fixed",bottom:20,right:20,zIndex:500,
             background:G.white,border:`1px solid ${G.border}`,borderRadius:24,
