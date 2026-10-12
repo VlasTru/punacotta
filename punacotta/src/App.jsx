@@ -3245,7 +3245,7 @@ function OrdersManufPage({
                       <div style={{ marginBottom:8 }}>{(o.items||[]).map((it,i)=><div key={i} style={{fontSize:12}}>{it.qty}× {it.name}</div>)}</div>
                       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", borderTop:`1px solid ${G.border}`, paddingTop:8 }}>
                         <span style={{ fontWeight:700, color:G.caramel }}>{(o.items||[]).reduce((s,it)=>s+it.qty*it.price,0)} AMD</span>
-                        <span style={{ fontSize:11, color:G.muted }}>{o.fulfillment==='stock'?tl("Stock"):o.pickup?tl("Pickup (free)"):tl("Delivery")}</span>
+                        <span style={{ fontSize:11, color:G.muted }}>{o.is_boa?"Board of Arrivals · "+(o.fulfillment==='delivery'?tl("Delivery"):tl("Pickup (free)")):o.fulfillment==='stock'?tl("Stock"):o.pickup?tl("Pickup (free)"):tl("Delivery")}</span>
                         {o.prid&&<span style={{ fontSize:10, padding:"1px 6px", borderRadius:10, background:`${G.caramel}18`, color:G.caramel, fontFamily:G.mono }}>⚙️ Run #{o.prid}</span>}
                       </div>
                       {(cfg.next && !(o.status==="Done" && o.allNonDeliverable))&&(

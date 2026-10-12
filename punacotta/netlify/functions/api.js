@@ -92,6 +92,14 @@ async function ensureMigrations() {
     await dbr(`CREATE TABLE IF NOT EXISTS stock_notification_state (
       nid INTEGER NOT NULL, uid INTEGER NOT NULL, seen_at TIMESTAMPTZ, dismissed_at TIMESTAMPTZ, PRIMARY KEY (nid, uid))`)
     await dbr(`CREATE TABLE IF NOT EXISTS stock_autowaste_day (owner_uid INTEGER NOT NULL, day DATE NOT NULL, PRIMARY KEY (owner_uid, day))`)
+    await dbr(`CREATE TABLE IF NOT EXISTS migration_flag (key TEXT PRIMARY KEY)`)
+    const boaPrice = await dbq(`INSERT INTO migration_flag (key) VALUES ('boa_unit_price') ON CONFLICT DO NOTHING RETURNING key`)
+    if (boaPrice.length) {
+      await dbr(`UPDATE order_item oi SET price = ROUND(oi.price / oi.qty)
+                 FROM "order" o
+                 WHERE o.oid=oi.oid AND o.mid IS NULL AND o.prid IS NOT NULL AND o.guest_email IS NOT NULL
+                   AND oi.qty > 0 AND oi.price > 0`)
+    }
     await dbr(`CREATE TABLE IF NOT EXISTS stock_notif_calc (owner_uid INTEGER PRIMARY KEY, computed_at TIMESTAMPTZ NOT NULL)`)
     await dbr(`CREATE TABLE IF NOT EXISTS boa_view_day (
       day DATE NOT NULL, owner_uid INTEGER NOT NULL, views INTEGER NOT NULL DEFAULT 0,
@@ -279,7 +287,9 @@ async function fetchOrder(oid) {
     FROM order_item oi JOIN recipe r ON r.rid = oi.rid
     WHERE oi.oid = $1`, [oid])
   let customer = null
-  if (order.owner_uid) {
+  const isBoa = !order.mid && order.prid && order.guest_email
+  if (isBoa) customer = { first_name: order.guest_name || 'Guest', last_name: '', email: order.guest_email, uid: null }
+  else if (order.owner_uid) {
     const [c] = await dbq(
       'SELECT uid, first_name, last_name, email FROM "user" WHERE uid = $1', [order.owner_uid])
     customer = c || null
@@ -288,8 +298,8 @@ async function fetchOrder(oid) {
     customer = { first_name: order.walkin_name, last_name: '', email: null, uid: null }
   }
   const allNonDeliverable = items.length > 0 && items.every(i => i.deliverable === false)
-  const doneIsTerminal = order.pickup || allNonDeliverable
-  return { ...order, items, customer, allNonDeliverable: doneIsTerminal }
+  const doneIsTerminal = order.pickup || order.fulfillment === 'pickup' || allNonDeliverable
+  return { ...order, items, customer, allNonDeliverable: doneIsTerminal, is_boa: !!isBoa }
 }
 
 // ─── MULTIPART PARSER ─────────────────────────────────────────────────────────
@@ -1376,7 +1386,7 @@ async function route(method, segments, body, headers, event) {
           SELECT r.deliverable FROM order_item oi
           JOIN recipe r ON r.rid=oi.rid WHERE oi.oid=$1`, [r1])
         const allNonDeliverable = items.length > 0 && items.every(i => i.deliverable === false)
-        const doneIsTerminal = o.pickup || allNonDeliverable
+        const doneIsTerminal = o.pickup || o.fulfillment === 'pickup' || allNonDeliverable
         const transitions = doneIsTerminal
           ? { New:'Accepted', Accepted:'Preparing', Preparing:'Done' }
           : { New:'Accepted', Accepted:'Preparing', Preparing:'Done', Done:'Dispatched', Dispatched:'Delivered' }
@@ -1420,8 +1430,10 @@ async function route(method, segments, body, headers, event) {
     }
     if (method === 'GET') {
       const rows = user.is_manufacturer
-        ? await dbq(`SELECT o.oid FROM "order" o JOIN menu m ON m.mid=o.mid
-                     WHERE m.owner_uid=$1 ORDER BY o.created_at DESC`, [user.uid])
+        ? await dbq(`SELECT o.oid FROM "order" o LEFT JOIN menu m ON m.mid=o.mid
+                     WHERE m.owner_uid=$1
+                        OR (o.mid IS NULL AND o.prid IS NOT NULL AND o.guest_email IS NOT NULL AND o.owner_uid=$1)
+                     ORDER BY o.created_at DESC`, [user.uid])
         : await dbq('SELECT oid FROM "order" WHERE owner_uid=$1 ORDER BY created_at DESC', [user.uid])
       return [200, await Promise.all(rows.map(r => fetchOrder(r.oid)))]
     }
@@ -3478,7 +3490,7 @@ async function route(method, segments, body, headers, event) {
         [owner_uid, fulfillment||'pickup', guest_name, guest_email, guest_phone||null, delivery_address||null, prid])
       const oid = orderRes.rows[0].oid
       await dbr(`INSERT INTO order_item (oid,rid,qty,price) VALUES ($1,$2,$3,$4)`,
-        [oid, rid, Math.ceil(canFulfill), Math.round(price*canFulfill)])
+        [oid, rid, Math.ceil(canFulfill), price])
       await dbr(`UPDATE boa_reservation SET oid=$1 WHERE resid=$2`, [oid, resid])
 
       // Reserved after the batch was already finished: those units were credited to item stock,
@@ -3702,8 +3714,9 @@ async function route(method, segments, body, headers, event) {
                SUM(oi.price * oi.qty) AS revenue
         FROM "order" o
         JOIN order_item oi ON oi.oid = o.oid
-        JOIN menu m ON m.mid = o.mid
-        WHERE m.owner_uid = $1
+        LEFT JOIN menu m ON m.mid = o.mid
+        WHERE (m.owner_uid = $1 OR (o.mid IS NULL AND o.prid IS NOT NULL AND o.guest_email IS NOT NULL AND o.owner_uid = $1))
+          AND COALESCE(o.fulfillment,'pickup') <> 'stock'
           AND o.status NOT IN ('Declined','Cancelled')
           AND o.created_at >= NOW() - INTERVAL '${interval}'
         GROUP BY DATE(o.created_at)
@@ -3723,8 +3736,9 @@ async function route(method, segments, body, headers, event) {
         FROM order_item oi
         JOIN recipe r ON r.rid = oi.rid
         JOIN "order" o ON o.oid = oi.oid
-        JOIN menu m ON m.mid = o.mid
-        WHERE m.owner_uid = $1
+        LEFT JOIN menu m ON m.mid = o.mid
+        WHERE (m.owner_uid = $1 OR (o.mid IS NULL AND o.prid IS NOT NULL AND o.guest_email IS NOT NULL AND o.owner_uid = $1))
+          AND COALESCE(o.fulfillment,'pickup') <> 'stock'
           AND o.status NOT IN ('Declined','Cancelled')
           AND o.created_at >= NOW() - INTERVAL '365 days'
         GROUP BY r.rid, r.name
@@ -3749,8 +3763,9 @@ async function route(method, segments, body, headers, event) {
         FROM order_item oi
         JOIN recipe r ON r.rid = oi.rid
         JOIN "order" o ON o.oid = oi.oid
-        JOIN menu m ON m.mid = o.mid
-        WHERE m.owner_uid = $1
+        LEFT JOIN menu m ON m.mid = o.mid
+        WHERE (m.owner_uid = $1 OR (o.mid IS NULL AND o.prid IS NOT NULL AND o.guest_email IS NOT NULL AND o.owner_uid = $1))
+          AND COALESCE(o.fulfillment,'pickup') <> 'stock'
           AND o.status NOT IN ('Declined','Cancelled')
           AND o.created_at >= NOW() - INTERVAL '365 days'
         ORDER BY o.oid, r.name`, [user.uid])
@@ -3864,10 +3879,9 @@ async function route(method, segments, body, headers, event) {
                WHERE ${SALE} AND ${LIVE} AND o.handed_over_at IS NOT NULL
                  AND o.created_at >= NOW() - ${SINCE}`, [uid, days]),
 
-          // Weekly revenue. BoA order_item.price holds the line total (price × qty fulfilled),
-          // stock-model order_item.price is per unit — hence the different formulas.
+          // Weekly revenue (order_item.price is per unit for both models)
           dbq(`SELECT to_char(date_trunc('week', o.created_at), 'YYYY-MM-DD') AS wk,
-                      COUNT(DISTINCT o.oid)::int AS orders, COALESCE(SUM(oi.price),0) AS revenue
+                      COUNT(DISTINCT o.oid)::int AS orders, COALESCE(SUM(oi.price*oi.qty),0) AS revenue
                FROM "order" o JOIN order_item oi ON oi.oid=o.oid
                WHERE ${BOA} AND o.owner_uid=$1 AND ${LIVE}
                  AND o.created_at >= NOW() - ${SINCE}
