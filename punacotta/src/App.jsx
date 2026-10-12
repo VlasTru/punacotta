@@ -9601,12 +9601,14 @@ export default function App() {
             display:"flex",alignItems:"center",gap:5,
             pointerEvents:"none",userSelect:"none"}}>
             <span style={{fontFamily:G.mono,fontSize:12,color:G.muted}}>Yours,</span>
-            <span style={{fontFamily:"Georgia, serif",fontSize:15,fontWeight:600,
-              color:G.caramel,letterSpacing:"-0.3px",lineHeight:1}}>tanelu</span>
-            <svg width="10" height="14" viewBox="0 0 12 16" fill="none" style={{display:"block",marginBottom:1}}>
-              <rect x="0.5" y="0.5" width="11" height="4" fill={G.caramel}/>
-              <circle cx="6" cy="11" r="4" fill={G.caramel}/>
-            </svg>
+            <span style={{display:"inline-flex",alignItems:"center",gap:0}}>
+              <svg width="10" height="14" viewBox="0 0 12 16" fill="none" style={{display:"block",marginBottom:1}}>
+                <rect x="0.5" y="0.5" width="11" height="4" fill={G.caramel}/>
+                <circle cx="6" cy="11" r="4" fill={G.caramel}/>
+              </svg>
+              <span style={{fontFamily:"Georgia, serif",fontSize:15,fontWeight:600,
+                color:G.caramel,letterSpacing:"-0.3px",lineHeight:1}}>tanelu</span>
+            </span>
           </div>
           {page==="products"     &&<ProductsPage toast={toast}/>}
           {page==="items"        &&<RecipesPage  toast={toast}/>}
