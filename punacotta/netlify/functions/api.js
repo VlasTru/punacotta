@@ -30,6 +30,7 @@ async function ensureMigrations() {
   try {
     await dbr(`ALTER TABLE menu ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT false`)
     await dbr(`ALTER TABLE recipe ADD COLUMN IF NOT EXISTS min_inventory NUMERIC(10,3)`)
+    await dbr(`DELETE FROM menu_recipe WHERE rid IN (SELECT rid FROM recipe WHERE deleted=true)`)
     await dbr(`ALTER TABLE recipe ADD COLUMN IF NOT EXISTS procid INTEGER`)
     await dbr(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS lat NUMERIC(10,7)`)
     await dbr(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS lng NUMERIC(10,7)`)
@@ -275,7 +276,7 @@ async function fetchMenu(mid) {
     JOIN recipe r ON r.rid = mr.rid
     LEFT JOIN recipe_category c ON c.caid = r.caid
     LEFT JOIN units u ON u.unid = r.unid
-    WHERE mr.mid = $1 ORDER BY c.name, r.name`, [mid])
+    WHERE mr.mid = $1 AND r.deleted = false ORDER BY c.name, r.name`, [mid])
   return { ...menu, recipes }
 }
 
@@ -1042,6 +1043,7 @@ async function route(method, segments, body, headers, event) {
               const [rec] = await dbq('SELECT cloudinary_id FROM recipe WHERE rid=$1', [rid])
               if (rec?.cloudinary_id) await cloudinaryDelete(rec.cloudinary_id)
             }
+            await dbr('DELETE FROM menu_recipe WHERE rid=ANY($1::int[])', [rids])
             await dbr('UPDATE recipe SET deleted=true WHERE rid=ANY($1::int[])', [rids])
           }
         }
@@ -1120,7 +1122,11 @@ async function route(method, segments, body, headers, event) {
            UNION
            SELECT r.rid, r.procid FROM recipe r WHERE r.rid = ANY($1::int[]) AND r.procid IS NOT NULL
          ) x JOIN process p ON p.procid = x.procid ORDER BY p.name`, [ids]) : []
-      return [200, rows]
+      const menus = ids.length ? await dbq(
+        `SELECT mr.rid, m.mid, m.name AS menu_name FROM menu_recipe mr
+         JOIN menu m ON m.mid = mr.mid AND m.deleted = false
+         WHERE mr.rid = ANY($1::int[]) ORDER BY m.name`, [ids]) : []
+      return [200, [...rows, ...menus]]
     }
     // PUT /recipes/:rid — full update
     if (r1 && method === 'PUT') {
@@ -1183,6 +1189,7 @@ async function route(method, segments, body, headers, event) {
         if (r?.cloudinary_id) await cloudinaryDelete(r.cloudinary_id)
         await dbr('DELETE FROM recipe_product WHERE rid=$1', [rid])
         await dbr('DELETE FROM process_item WHERE rid=$1', [rid])
+        await dbr('DELETE FROM menu_recipe WHERE rid=$1', [rid])
         await dbr('UPDATE recipe SET procid=NULL WHERE rid=$1', [rid])
       }
       await dbr('UPDATE recipe SET deleted=true WHERE rid=ANY($1::int[])', [ids])

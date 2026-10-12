@@ -2230,16 +2230,21 @@ function RecipesPage({
 
       <Dialog open={dialog==="del"} title="Delete recipes?" onConfirm={doDelete} onCancel={()=>setDialog(null)}>
         Are you sure you wish to delete <b>{selected.map(id=>recipes.find(r=>r.rid===id)?.name).filter(Boolean).join(", ")}</b>?
-        {delUsage.length>0&&(
-          <div style={{marginTop:12,padding:"10px 12px",background:"#fef3c7",border:"1px solid #fcd34d",borderRadius:8,fontSize:13,color:"#92400e"}}>
-            {[...new Set(delUsage.map(u=>u.rid))].map(rid=>{
-              const nm=recipes.find(r=>r.rid===rid)?.name;
-              const procs=[...new Set(delUsage.filter(u=>u.rid===rid).map(u=>u.process_name))];
-              return <div key={rid}><b>{nm}</b> is used in {procs.join(", ")}.</div>;
-            })}
-            <div style={{marginTop:6}}>Deleting will also remove {delUsage.length>1||new Set(delUsage.map(u=>u.rid)).size>1?"these items":"this item"} from the process{new Set(delUsage.map(u=>u.process_name)).size>1?"es":""} listed above.</div>
-          </div>
-        )}
+        {delUsage.length>0&&(()=>{
+          const procRows=delUsage.filter(u=>u.process_name), menuRows=delUsage.filter(u=>u.menu_name);
+          const rids=[...new Set(delUsage.map(u=>u.rid))];
+          const lines=(rows,key,label)=>rids.map(rid=>{
+            const names=[...new Set(rows.filter(u=>u.rid===rid).map(u=>u[key]))];
+            return names.length?<div key={label+rid}><b>{recipes.find(r=>r.rid===rid)?.name}</b> is {label} {names.join(", ")}.</div>:null;
+          });
+          return (
+            <div style={{marginTop:12,padding:"10px 12px",background:"#fef3c7",border:"1px solid #fcd34d",borderRadius:8,fontSize:13,color:"#92400e"}}>
+              {lines(procRows,"process_name","used in")}
+              {lines(menuRows,"menu_name","on the menu")}
+              <div style={{marginTop:6}}>Deleting will also remove {rids.length>1?"these items":"this item"} from {[procRows.length&&`the process${new Set(procRows.map(u=>u.process_name)).size>1?"es":""}`,menuRows.length&&`the menu${new Set(menuRows.map(u=>u.menu_name)).size>1?"s":""}`].filter(Boolean).join(" and ")} listed above.</div>
+            </div>
+          );
+        })()}
       </Dialog>
       <Lightbox src={lightbox?.src} description={lightbox?.description} onClose={()=>setLightbox(null)} />
 
