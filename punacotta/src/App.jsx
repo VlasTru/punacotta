@@ -4,6 +4,7 @@ import ReactCrop from "react-image-crop";
 import "react-image-crop/dist/ReactCrop.css";
 import { api } from "./api.js";
 import "./tanelu-logo.css";
+import { parseVoiceSale } from "./voiceSale.js";
 
 // ─── DESIGN TOKENS ────────────────────────────────────────────────────────────
 const G = {
@@ -126,7 +127,7 @@ const RU = {
   "Are you sure you want to cancel order":"Вы уверены, что хотите отменить заказ",
   "No restaurants open right now":"Сейчас нет открытых ресторанов",
   "Check back soon!":"Загляните позже!",
-  "Quick Sale":"Быстрая продажа","Search items…":"Поиск позиций…","No items found":"Позиции не найдены","in stock":"в наличии","no stock":"нет в наличии","Current sale":"Текущая продажа","Tap items to add them.":"Нажимайте на позиции, чтобы добавить.","Sold":"Продано","Sold earlier":"Продано ранее","Clear":"Очистить","Recent sales":"Последние продажи","Undo":"Отменить","Sale undone":"Продажа отменена",
+  "Quick Sale":"Быстрая продажа","Search items…":"Поиск позиций…","No items found":"Позиции не найдены","in stock":"в наличии","no stock":"нет в наличии","Current sale":"Текущая продажа","Tap items to add them.":"Нажимайте на позиции, чтобы добавить.","Sold":"Продано","Sold earlier":"Продано ранее","Clear":"Очистить","Recent sales":"Последние продажи","Undo":"Отменить","Sale undone":"Продажа отменена","Voice input is not supported in this browser. Try Chrome or Safari.":"Голосовой ввод не поддерживается в этом браузере. Попробуйте Chrome или Safari.","Microphone access is blocked. Allow it in the browser settings.":"Доступ к микрофону заблокирован. Разрешите его в настройках браузера.","Voice error":"Ошибка голоса","Voice language":"Язык голоса","Stop":"Стоп","Speak a sale":"Продиктовать продажу","Listening…":"Слушаю…","I heard":"Я услышал","No items recognised. Try again or tap the items.":"Позиции не распознаны. Повторите или выберите нажатием.","Not recognised":"Не распознано","Confirm sale":"Подтвердить продажу","Add to ticket":"Добавить в чек","Discard":"Отмена","Speak again":"Повторить",
   "Reports":"Отчёты","Week":"Неделя","Month":"Месяц","Year":"Год",
   "Revenue":"Выручка","ABC Analysis":"ABC-анализ","Association Rules":"Правила ассоциации",
   "No data yet.":"Данных пока нет.",
@@ -328,6 +329,7 @@ const makeCss = () => `
   @keyframes fadeIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
   @keyframes slideIn { from{opacity:0;transform:translateX(16px)} to{opacity:1;transform:translateX(0)} }
   @keyframes toastIn { from{opacity:0;transform:translateY(20px) scale(0.96)} to{opacity:1;transform:translateY(0) scale(1)} }
+  @keyframes pulse { 0%,100%{box-shadow:0 0 0 0 rgba(200,60,50,0.45)} 50%{box-shadow:0 0 0 10px rgba(200,60,50,0)} }
   @keyframes spin { to{transform:rotate(360deg)} }
   @keyframes slideUp { from{transform:translateY(100%)} to{transform:translateY(0)} }
   .recipe-thumb:hover .zoom-icon { opacity:1 !important; }
@@ -3103,6 +3105,59 @@ function QuickSalePage({ toast }) {
   const [soldAt, setSoldAt] = useState("");
   const fmtN = v => String(Number(Number(v).toFixed(2)));
 
+  // ── Voice input (browser speech recognition, push-to-talk) ──
+  const SR = typeof window !== "undefined" ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
+  const [vLang, setVLang] = useState(()=>{ try { return localStorage.getItem("qs_voice_lang") || (lang==="ru"?"ru-RU":"en-US"); } catch { return lang==="ru"?"ru-RU":"en-US"; } });
+  const [listening, setListening] = useState(false);
+  const [heard, setHeard]   = useState("");          // live / final transcript
+  const [voice, setVoice]   = useState(null);        // { text, lines, missed } awaiting confirmation
+  const recRef = useRef(null);
+  const toggleLang = () => setVLang(l => { const n = l==="ru-RU"?"en-US":"ru-RU"; try { localStorage.setItem("qs_voice_lang", n); } catch {} return n; });
+  const stopListening = () => { try { recRef.current?.stop(); } catch {} };
+  const startListening = () => {
+    if (!SR) { toast(tl("Voice input is not supported in this browser. Try Chrome or Safari."),"error"); return; }
+    if (listening) { stopListening(); return; }
+    const rec = new SR();
+    rec.lang = vLang; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
+    let finalText = "";
+    rec.onresult = e => {
+      let txt = "";
+      for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript + " ";
+      finalText = txt.trim(); setHeard(finalText);
+    };
+    rec.onerror = e => {
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") toast(tl("Microphone access is blocked. Allow it in the browser settings."),"error");
+      else if (e.error !== "no-speech" && e.error !== "aborted") toast(`${tl("Voice error")}: ${e.error}`,"error");
+    };
+    rec.onend = () => {
+      setListening(false); recRef.current = null;
+      if (finalText) setVoice({ text: finalText, ...parseVoiceSale(finalText, items) });
+      setHeard("");
+    };
+    recRef.current = rec; setHeard(""); setVoice(null); setListening(true);
+    try { rec.start(); } catch { setListening(false); }
+  };
+  useEffect(()=>()=>{ try { recRef.current?.abort(); } catch {} },[]);
+  const voiceBump = (rid, d) => setVoice(v => {
+    const lines = v.lines.map(l => l.rid===rid ? { ...l, qty: l.qty + d } : l).filter(l => l.qty > 0);
+    return { ...v, lines };
+  });
+  const voiceToCart = () => {
+    setCart(c => { const n = { ...c }; voice.lines.forEach(l => { n[l.rid] = (n[l.rid]||0) + l.qty; }); return n; });
+    setVoice(null);
+  };
+  const voiceSellNow = async () => {
+    if (!voice?.lines.length) return;
+    setSaving(true);
+    try {
+      const vl = voice.lines.map(l => ({ ...items.find(i=>i.rid===l.rid), qty: l.qty }));
+      await api.postQuickSale({ items: voice.lines });
+      toast(`${tl("Sold")}: ${vl.map(l=>`${l.qty} × ${l.name}`).join(", ")} — ${vl.reduce((s,l)=>s+l.qty*Number(l.price),0).toLocaleString()} ${vl[0]?.currency||"AMD"}`);
+      setVoice(null); await load();
+    } catch(e){ toast(e.message,"error"); }
+    finally { setSaving(false); }
+  };
+
   const load = useCallback(async () => {
     try { const d = await api.getQuickSale(); setItems(d.items||[]); setRecent(d.recent||[]); }
     catch(e){ toast(e.message,"error"); }
@@ -3142,8 +3197,51 @@ function QuickSalePage({ toast }) {
         <div style={{display:"flex",gap:20,alignItems:"flex-start",flexWrap:"wrap"}}>
           {/* Tiles */}
           <div style={{flex:"1 1 420px",minWidth:0}}>
-            <input value={filter} onChange={e=>setFilter(e.target.value)} placeholder={tl("Search items…")}
-              style={{width:"100%",boxSizing:"border-box",padding:"10px 14px",borderRadius:10,border:`1px solid ${G.border}`,fontSize:15,fontFamily:G.mono,outline:"none",marginBottom:14,background:G.white,color:G.dark}}/>
+            <div style={{display:"flex",gap:8,marginBottom:14,alignItems:"stretch"}}>
+              <input value={filter} onChange={e=>setFilter(e.target.value)} placeholder={tl("Search items…")}
+                style={{flex:1,minWidth:0,boxSizing:"border-box",padding:"10px 14px",borderRadius:10,border:`1px solid ${G.border}`,fontSize:15,fontFamily:G.mono,outline:"none",background:G.white,color:G.dark}}/>
+              <button onClick={toggleLang} title={tl("Voice language")}
+                style={{padding:"0 12px",borderRadius:10,border:`1px solid ${G.border}`,background:G.white,color:G.muted,fontFamily:G.mono,fontSize:13,cursor:"pointer"}}>{vLang==="ru-RU"?"RU":"EN"}</button>
+              <button onClick={startListening} aria-label={listening?tl("Stop"):tl("Speak a sale")} title={listening?tl("Stop"):tl("Speak a sale")}
+                style={{width:52,borderRadius:10,border:`2px solid ${listening?G.red:G.caramel}`,background:listening?G.red:G.caramel,color:G.white,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",animation:listening?"pulse 1.2s ease-in-out infinite":"none"}}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/></svg>
+              </button>
+            </div>
+            {(listening||voice)&&(
+              <div style={{background:G.white,border:`2px solid ${listening?G.red:G.caramel}`,borderRadius:12,padding:14,marginBottom:14}}>
+                {listening ? (
+                  <div>
+                    <div style={{fontSize:12,color:G.red,fontWeight:700,fontFamily:G.mono,marginBottom:4}}>● {tl("Listening…")}</div>
+                    <div style={{fontSize:16,color:G.dark,minHeight:22}}>{heard || <span style={{color:G.muted,fontStyle:"italic"}}>{vLang==="ru-RU"?"«Продал три булочки и два чизкейка»":"“Sold three buns and two cheesecakes”"}</span>}</div>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{fontSize:12,color:G.muted,fontFamily:G.mono,marginBottom:2}}>{tl("I heard")}</div>
+                    <div style={{fontSize:15,color:G.dark,fontStyle:"italic",marginBottom:10}}>“{voice.text}”</div>
+                    {voice.lines.length===0 && <p style={{fontSize:13,color:G.red,margin:"0 0 8px"}}>{tl("No items recognised. Try again or tap the items.")}</p>}
+                    {voice.lines.map(l=>{
+                      const it = items.find(i=>i.rid===l.rid);
+                      return (
+                        <div key={l.rid} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0"}}>
+                          <span style={{flex:1,fontSize:15,fontWeight:600,color:G.dark}}>{it?.name}</span>
+                          <button onClick={()=>voiceBump(l.rid,-1)} style={{width:32,height:32,borderRadius:8,border:`1px solid ${G.border}`,background:G.sand,cursor:"pointer",fontSize:16}}>−</button>
+                          <span style={{minWidth:24,textAlign:"center",fontFamily:G.mono,fontWeight:700}}>{l.qty}</span>
+                          <button onClick={()=>voiceBump(l.rid,1)} style={{width:32,height:32,borderRadius:8,border:`1px solid ${G.border}`,background:G.sand,cursor:"pointer",fontSize:16}}>+</button>
+                          <span style={{minWidth:84,textAlign:"right",fontFamily:G.mono,fontSize:13,color:G.caramel}}>{(l.qty*Number(it?.price||0)).toLocaleString()} {it?.currency}</span>
+                        </div>
+                      );
+                    })}
+                    {voice.missed.length>0 && <p style={{fontSize:12,color:G.red,margin:"8px 0 0"}}>{tl("Not recognised")}: {voice.missed.join(", ")}</p>}
+                    <div style={{display:"flex",gap:8,marginTop:12,flexWrap:"wrap"}}>
+                      <Btn loading={saving} disabled={!voice.lines.length} onClick={voiceSellNow}>{tl("Confirm sale")} · {voice.lines.reduce((s,l)=>s+l.qty*Number(items.find(i=>i.rid===l.rid)?.price||0),0).toLocaleString()} {currency}</Btn>
+                      <Btn variant="secondary" disabled={!voice.lines.length} onClick={voiceToCart}>{tl("Add to ticket")}</Btn>
+                      <Btn variant="ghost" onClick={()=>setVoice(null)}>{tl("Discard")}</Btn>
+                      <Btn variant="ghost" onClick={startListening}>{tl("Speak again")}</Btn>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
             {shown.length===0 && <div style={{padding:40,textAlign:"center",color:G.muted}}>{tl("No items found")}</div>}
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:12}}>
               {shown.map(i=>{
