@@ -3112,12 +3112,11 @@ function QuickSalePage({ toast }) {
 
   // ── Voice input (browser speech recognition, push-to-talk) ──
   const SR = typeof window !== "undefined" ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
-  const [vLang, setVLang] = useState(()=>{ try { return localStorage.getItem("qs_voice_lang") || (lang==="ru"?"ru-RU":"en-US"); } catch { return lang==="ru"?"ru-RU":"en-US"; } });
+  const vLang = lang==="ru" ? "ru-RU" : "en-US";           // speech language follows the app language
   const [listening, setListening] = useState(false);
   const [heard, setHeard]   = useState("");          // live / final transcript
   const [voice, setVoice]   = useState(null);        // { text, lines, missed } awaiting confirmation
   const recRef = useRef(null);
-  const toggleLang = () => setVLang(l => { const n = l==="ru-RU"?"en-US":"ru-RU"; try { localStorage.setItem("qs_voice_lang", n); } catch {} return n; });
   const stopListening = () => { try { recRef.current?.stop(); } catch {} };
   const startListening = () => {
     if (!SR) { toast(tl("Voice input is not supported in this browser. Try Chrome or Safari."),"error"); return; }
@@ -3303,8 +3302,6 @@ function QuickSalePage({ toast }) {
             <div style={{display:"flex",gap:8,marginBottom:14,alignItems:"stretch"}}>
               <input value={filter} onChange={e=>setFilter(e.target.value)} placeholder={tl("Search items…")}
                 style={{flex:1,minWidth:0,boxSizing:"border-box",padding:"10px 14px",borderRadius:10,border:`1px solid ${G.border}`,fontSize:15,fontFamily:G.mono,outline:"none",background:G.white,color:G.dark}}/>
-              <button onClick={toggleLang} title={tl("Voice language")}
-                style={{padding:"0 12px",borderRadius:10,border:`1px solid ${G.border}`,background:G.white,color:G.muted,fontFamily:G.mono,fontSize:13,cursor:"pointer"}}>{vLang==="ru-RU"?"RU":"EN"}</button>
               <button onClick={startListening} aria-label={listening?tl("Stop"):tl("Speak a sale")} title={listening?tl("Stop"):tl("Speak a sale")}
                 style={{width:52,borderRadius:10,border:`2px solid ${listening?G.red:G.caramel}`,background:listening?G.red:G.caramel,color:G.white,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",animation:listening?"pulse 1.2s ease-in-out infinite":"none"}}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/></svg>
