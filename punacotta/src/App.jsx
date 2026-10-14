@@ -127,7 +127,7 @@ const RU = {
   "Are you sure you want to cancel order":"Вы уверены, что хотите отменить заказ",
   "No restaurants open right now":"Сейчас нет открытых ресторанов",
   "Check back soon!":"Загляните позже!",
-  "Quick Sale":"Быстрая продажа","Search items…":"Поиск позиций…","No items found":"Позиции не найдены","in stock":"в наличии","no stock":"нет в наличии","Current sale":"Текущая продажа","Tap items to add them.":"Нажимайте на позиции, чтобы добавить.","Sold":"Продано","Sold earlier":"Продано ранее","Clear":"Очистить","Recent sales":"Последние продажи","Undo":"Отменить","Sale undone":"Продажа отменена","Voice input is not supported in this browser. Try Chrome or Safari.":"Голосовой ввод не поддерживается в этом браузере. Попробуйте Chrome или Safari.","Microphone access is blocked. Allow it in the browser settings.":"Доступ к микрофону заблокирован. Разрешите его в настройках браузера.","Voice error":"Ошибка голоса","Voice language":"Язык голоса","Stop":"Стоп","Speak a sale":"Продиктовать продажу","Listening…":"Слушаю…","I heard":"Я услышал","No items recognised. Try again or tap the items.":"Позиции не распознаны. Повторите или выберите нажатием.","Not recognised":"Не распознано","Confirm sale":"Подтвердить продажу","Add to ticket":"Добавить в чек","Discard":"Отмена","Speak again":"Повторить",
+  "Quick Sale":"Быстрая продажа","Search items…":"Поиск позиций…","No items found":"Позиции не найдены","in stock":"в наличии","no stock":"нет в наличии","Current sale":"Текущая продажа","Tap items to add them.":"Нажимайте на позиции, чтобы добавить.","Sold":"Продано","Sold earlier":"Продано ранее","Clear":"Очистить","Recent sales":"Последние продажи","Undo":"Отменить","Sale undone":"Продажа отменена","Voice input is not supported in this browser. Try Chrome or Safari.":"Голосовой ввод не поддерживается в этом браузере. Попробуйте Chrome или Safari.","Microphone access is blocked. Allow it in the browser settings.":"Доступ к микрофону заблокирован. Разрешите его в настройках браузера.","Voice error":"Ошибка голоса","Nothing was heard":"Ничего не услышано","Voice language":"Язык голоса","Stop":"Стоп","Speak a sale":"Продиктовать продажу","Listening…":"Слушаю…","I heard":"Я услышал","No items recognised. Try again or tap the items.":"Позиции не распознаны. Повторите или выберите нажатием.","Not recognised":"Не распознано","Confirm sale":"Подтвердить продажу","Add to ticket":"Добавить в чек","Discard":"Отмена","Speak again":"Повторить",
   "Reports":"Отчёты","Week":"Неделя","Month":"Месяц","Year":"Год",
   "Revenue":"Выручка","ABC Analysis":"ABC-анализ","Association Rules":"Правила ассоциации",
   "No data yet.":"Данных пока нет.",
@@ -3132,6 +3132,7 @@ function QuickSalePage({ toast }) {
     rec.onend = () => {
       setListening(false); recRef.current = null;
       if (finalText) setVoice({ text: finalText, ...parseVoiceSale(finalText, items) });
+      else toast(`${tl("Nothing was heard")} (${vLang==="ru-RU"?"RU":"EN"})`,"error");
       setHeard("");
     };
     recRef.current = rec; setHeard(""); setVoice(null); setListening(true);
