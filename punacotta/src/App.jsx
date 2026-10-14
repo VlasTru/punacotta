@@ -330,6 +330,16 @@ const makeCss = () => `
   @keyframes slideIn { from{opacity:0;transform:translateX(16px)} to{opacity:1;transform:translateX(0)} }
   @keyframes toastIn { from{opacity:0;transform:translateY(20px) scale(0.96)} to{opacity:1;transform:translateY(0) scale(1)} }
   @keyframes pulse { 0%,100%{box-shadow:0 0 0 0 rgba(200,60,50,0.45)} 50%{box-shadow:0 0 0 10px rgba(200,60,50,0)} }
+  .tn-mic-cap { transform-box: fill-box; transform-origin: center; }
+  .tn-mic-on .tn-mic-cap { animation: tnMicBeat 0.9s ease-in-out infinite; }
+  .tn-mic-on .tn-mic-cradle { animation: tnMicCradle 0.9s ease-in-out infinite; }
+  .tn-mic-on .tn-mic-wave { animation: tnMicWave 1.4s ease-out infinite; transform-box: fill-box; transform-origin: center; }
+  @keyframes tnMicBeat { 0%,100%{transform:scaleY(1)} 50%{transform:scaleY(1.14) scaleX(0.92)} }
+  @keyframes tnMicCradle { 0%,100%{opacity:1} 50%{opacity:0.55} }
+  @keyframes tnMicWave { 0%{opacity:0.9;transform:translateY(0) scale(0.8)} 100%{opacity:0;transform:translateY(-7px) scale(1.35)} }
+  @media (prefers-reduced-motion: reduce) {
+    .tn-mic-on .tn-mic-cap, .tn-mic-on .tn-mic-cradle, .tn-mic-on .tn-mic-wave { animation: none; }
+  }
   @keyframes spin { to{transform:rotate(360deg)} }
   @keyframes slideUp { from{transform:translateY(100%)} to{transform:translateY(0)} }
   .recipe-thumb:hover .zoom-icon { opacity:1 !important; }
@@ -3304,7 +3314,12 @@ function QuickSalePage({ toast }) {
                 style={{flex:1,minWidth:0,boxSizing:"border-box",padding:"10px 14px",borderRadius:10,border:`1px solid ${G.border}`,fontSize:15,fontFamily:G.mono,outline:"none",background:G.white,color:G.dark}}/>
               <button onClick={startListening} aria-label={listening?tl("Stop"):tl("Speak a sale")} title={listening?tl("Stop"):tl("Speak a sale")}
                 style={{width:52,borderRadius:10,border:`2px solid ${listening?G.red:G.caramel}`,background:listening?G.red:G.caramel,color:G.white,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",animation:listening?"pulse 1.2s ease-in-out infinite":"none"}}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/></svg>
+                <svg className={listening?"tn-mic tn-mic-on":"tn-mic"} width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" role="img" aria-label="Voice">
+                  <rect className="tn-mic-cap" x="9" y="2" width="6" height="13" rx="3"/>
+                  <path className="tn-mic-cradle" d="M5 10v2a7 7 0 0 0 14 0v-2"/>
+                  <path className="tn-mic-wave" d="M18.9 15.8a6.9 6.9 0 0 0-13.8 0" opacity="0"/>
+                  <path d="M12 19v3"/>
+                </svg>
               </button>
             </div>
             {(listening||voice)&&(
