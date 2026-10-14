@@ -127,7 +127,7 @@ const RU = {
   "Are you sure you want to cancel order":"Вы уверены, что хотите отменить заказ",
   "No restaurants open right now":"Сейчас нет открытых ресторанов",
   "Check back soon!":"Загляните позже!",
-  "Quick Sale":"Быстрая продажа","Search items…":"Поиск позиций…","No items found":"Позиции не найдены","in stock":"в наличии","no stock":"нет в наличии","Current sale":"Текущая продажа","Tap items to add them.":"Нажимайте на позиции, чтобы добавить.","Sold":"Продано","Sold earlier":"Продано ранее","Clear":"Очистить","Recent sales":"Последние продажи","Undo":"Отменить","Sale undone":"Продажа отменена","Voice input is not supported in this browser. Try Chrome or Safari.":"Голосовой ввод не поддерживается в этом браузере. Попробуйте Chrome или Safari.","Microphone access is blocked. Allow it in the browser settings.":"Доступ к микрофону заблокирован. Разрешите его в настройках браузера.","Voice error":"Ошибка голоса","Nothing was heard":"Ничего не услышано","Voice language":"Язык голоса","Stop":"Стоп","Speak a sale":"Продиктовать продажу","Listening…":"Слушаю…","I heard":"Я услышал","No items recognised. Try again or tap the items.":"Позиции не распознаны. Повторите или выберите нажатием.","Not recognised":"Не распознано","Confirm sale":"Подтвердить продажу","Add to ticket":"Добавить в чек","Discard":"Отмена","Speak again":"Повторить",
+  "Quick Sale":"Быстрая продажа","Search items…":"Поиск позиций…","No items found":"Позиции не найдены","in stock":"в наличии","no stock":"нет в наличии","Current sale":"Текущая продажа","Tap items to add them.":"Нажимайте на позиции, чтобы добавить.","Sold":"Продано","Sold earlier":"Продано ранее","Clear":"Очистить","Recent sales":"Последние продажи","Undo":"Отменить","Sale undone":"Продажа отменена","Sell":"Продажа","Closing count":"Закрытие смены","Enter what is left of each item. Anything missing is recorded as sold; mark units as wasted if they were thrown away. Items you leave as they are stay unchanged.":"Введите остаток каждой позиции. Недостающее записывается как проданное; отметьте единицы, которые были списаны. Позиции без изменений остаются как есть.","No items with stock on hand.":"Нет позиций в наличии.","Expected":"Ожидается","sold":"продано","of which wasted":"из них списано","more than expected — stock will be raised":"больше ожидаемого — остаток будет увеличен","Add another item…":"Добавить другую позицию…","No differences yet.":"Расхождений пока нет.","Wasted":"Списано","Surplus added to stock":"Излишек добавлен в остаток","Count saved: no differences":"Подсчёт сохранён: расхождений нет","Save count":"Сохранить подсчёт","Voice input is not supported in this browser. Try Chrome or Safari.":"Голосовой ввод не поддерживается в этом браузере. Попробуйте Chrome или Safari.","Microphone access is blocked. Allow it in the browser settings.":"Доступ к микрофону заблокирован. Разрешите его в настройках браузера.","Voice error":"Ошибка голоса","Nothing was heard":"Ничего не услышано","Voice language":"Язык голоса","Stop":"Стоп","Speak a sale":"Продиктовать продажу","Listening…":"Слушаю…","I heard":"Я услышал","No items recognised. Try again or tap the items.":"Позиции не распознаны. Повторите или выберите нажатием.","Not recognised":"Не распознано","Confirm sale":"Подтвердить продажу","Add to ticket":"Добавить в чек","Discard":"Отмена","Speak again":"Повторить",
   "Reports":"Отчёты","Week":"Неделя","Month":"Месяц","Year":"Год",
   "Revenue":"Выручка","ABC Analysis":"ABC-анализ","Association Rules":"Правила ассоциации",
   "No data yet.":"Данных пока нет.",
@@ -3103,6 +3103,11 @@ function QuickSalePage({ toast }) {
   const [saving, setSaving] = useState(false);
   const [earlier, setEarlier] = useState(false);
   const [soldAt, setSoldAt] = useState("");
+  // ── Closing count ──
+  const [mode, setMode]       = useState("sell");      // "sell" | "count"
+  const [counted, setCounted] = useState({});          // rid -> counted quantity (string, as typed)
+  const [wasteQ, setWasteQ]   = useState({});          // rid -> units of the shortfall that were wasted
+  const [extraRids, setExtraRids] = useState([]);      // items without stock that were added to the count
   const fmtN = v => String(Number(Number(v).toFixed(2)));
 
   // ── Voice input (browser speech recognition, push-to-talk) ──
@@ -3159,6 +3164,37 @@ function QuickSalePage({ toast }) {
     finally { setSaving(false); }
   };
 
+  const countItems = items.filter(i => i.stock > 0 || extraRids.includes(i.rid));
+  const cVal = i => counted[i.rid] === undefined || counted[i.rid] === "" ? i.stock : Number(counted[i.rid]);
+  const cDiff = i => Math.round((i.stock - cVal(i)) * 1000) / 1000;          // > 0 missing, < 0 surplus
+  const cWaste = i => Math.min(Math.max(0, Number(wasteQ[i.rid]) || 0), Math.max(0, cDiff(i)));
+  const cSummary = countItems.reduce((a, i) => {
+    const d = cDiff(i);
+    if (d > 0) { const w = cWaste(i); a.sold += d - w; a.revenue += (d - w) * Number(i.price); a.wasted += w; }
+    else if (d < 0) a.surplus += -d;
+    return a;
+  }, { sold: 0, revenue: 0, wasted: 0, surplus: 0 });
+  const cChanged = countItems.some(i => cDiff(i) !== 0);
+  const setCount = (i, v) => setCounted(c => ({ ...c, [i.rid]: v }));
+  const stepCount = (i, d) => setCount(i, String(Math.max(0, Math.round((cVal(i) + d) * 1000) / 1000)));
+  const saveCount = async () => {
+    setSaving(true);
+    try {
+      const res = await api.postClosingCount({
+        counts: countItems.filter(i => cDiff(i) !== 0).map(i => ({ rid: i.rid, counted: cVal(i), wasted: cWaste(i) })),
+        sold_at: earlier && soldAt ? new Date(soldAt).toISOString() : undefined,
+      });
+      const parts = [];
+      if (res.sale) parts.push(`${tl("Sold")}: ${res.sale.items.map(l=>`${l.qty} × ${l.name}`).join(", ")} — ${Number(res.sale.total).toLocaleString()} ${currency}`);
+      if (res.wasted.length) parts.push(`${tl("Wasted")}: ${res.wasted.map(w=>`${fmtN(w.qty)} × ${w.name}`).join(", ")}`);
+      if (res.surplus.length) parts.push(`${tl("Surplus added to stock")}: ${res.surplus.map(w=>`${fmtN(w.qty)} × ${w.name}`).join(", ")}`);
+      toast(parts.join(" · ") || tl("Count saved: no differences"));
+      setCounted({}); setWasteQ({}); setExtraRids([]); setEarlier(false); setSoldAt("");
+      await load();
+    } catch(e){ toast(e.message,"error"); }
+    finally { setSaving(false); }
+  };
+
   const load = useCallback(async () => {
     try { const d = await api.getQuickSale(); setItems(d.items||[]); setRecent(d.recent||[]); }
     catch(e){ toast(e.message,"error"); }
@@ -3194,7 +3230,73 @@ function QuickSalePage({ toast }) {
 
   return (
     <Page title={tl("Quick Sale")}>
-      {loading ? <Spinner/> : (
+      <div style={{display:"inline-flex",border:`1px solid ${G.border}`,borderRadius:10,overflow:"hidden",marginBottom:18}}>
+        {[["sell",tl("Sell")],["count",tl("Closing count")]].map(([k,l])=>(
+          <button key={k} onClick={()=>setMode(k)} style={{padding:"9px 20px",border:"none",cursor:"pointer",fontSize:14,fontFamily:G.mono,background:mode===k?G.caramel:G.white,color:mode===k?G.white:G.muted}}>{l}</button>
+        ))}
+      </div>
+      {mode==="count" && !loading && (
+        <div style={{maxWidth:760}}>
+          <p style={{fontSize:13,color:G.muted,margin:"0 0 14px",lineHeight:1.5}}>{tl("Enter what is left of each item. Anything missing is recorded as sold; mark units as wasted if they were thrown away. Items you leave as they are stay unchanged.")}</p>
+          <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,overflow:"hidden"}}>
+            {countItems.length===0 && <div style={{padding:30,textAlign:"center",color:G.muted}}>{tl("No items with stock on hand.")}</div>}
+            {countItems.map(i=>{
+              const d = cDiff(i), w = cWaste(i);
+              return (
+                <div key={i.rid} style={{padding:"12px 16px",borderBottom:`1px solid ${G.border}`,background:d!==0?G.sand:"transparent"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                    <div style={{flex:"1 1 160px",minWidth:0}}>
+                      <div style={{fontFamily:G.font,fontSize:16,fontWeight:600,color:G.dark}}>{i.name}</div>
+                      <div style={{fontSize:12,color:G.muted,fontFamily:G.mono}}>{tl("Expected")}: {fmtN(i.stock)}</div>
+                    </div>
+                    <button onClick={()=>stepCount(i,-1)} style={{width:40,height:40,borderRadius:10,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",fontSize:20}}>−</button>
+                    <input type="number" inputMode="decimal" min="0" step="any" value={counted[i.rid]===undefined?String(i.stock):counted[i.rid]} onChange={e=>setCount(i,e.target.value)} onFocus={e=>e.target.select()}
+                      style={{width:84,height:40,boxSizing:"border-box",textAlign:"center",fontSize:18,fontWeight:700,fontFamily:G.mono,borderRadius:10,border:`2px solid ${d!==0?G.caramel:G.border}`,background:G.white,color:G.dark,outline:"none"}}/>
+                    <button onClick={()=>stepCount(i,1)} style={{width:40,height:40,borderRadius:10,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",fontSize:20}}>+</button>
+                  </div>
+                  {d>0 && (
+                    <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8,flexWrap:"wrap",fontSize:13}}>
+                      <span style={{color:G.dark}}>{fmtN(d-w)} {tl("sold")} · {(Math.max(0,d-w)*Number(i.price)).toLocaleString()} {i.currency}</span>
+                      <span style={{color:G.muted}}>·</span>
+                      <label style={{display:"flex",alignItems:"center",gap:6,color:G.muted}}>{tl("of which wasted")}
+                        <input type="number" inputMode="decimal" min="0" max={d} step="any" value={wasteQ[i.rid]===undefined?"":wasteQ[i.rid]} placeholder="0" onChange={e=>setWasteQ(m=>({...m,[i.rid]:e.target.value}))}
+                          style={{width:64,height:32,boxSizing:"border-box",textAlign:"center",fontFamily:G.mono,fontSize:14,borderRadius:8,border:`1px solid ${G.border}`,background:G.white,color:G.dark}}/>
+                      </label>
+                    </div>
+                  )}
+                  {d<0 && <div style={{marginTop:8,fontSize:13,color:G.green}}>＋{fmtN(-d)} {tl("more than expected — stock will be raised")}</div>}
+                </div>
+              );
+            })}
+            {items.some(i=>i.stock<=0 && !extraRids.includes(i.rid)) && (
+              <div style={{padding:"12px 16px"}}>
+                <select value="" onChange={e=>{ if(e.target.value) setExtraRids(r=>[...r,Number(e.target.value)]); }}
+                  style={{padding:"9px 12px",borderRadius:8,border:`1px solid ${G.border}`,fontFamily:G.mono,fontSize:13,background:G.white,color:G.dark}}>
+                  <option value="">＋ {tl("Add another item…")}</option>
+                  {items.filter(i=>i.stock<=0 && !extraRids.includes(i.rid)).map(i=><option key={i.rid} value={i.rid}>{i.name}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
+          <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,padding:18,marginTop:16}}>
+            <div style={{fontSize:14,color:G.dark,lineHeight:1.7}}>
+              {!cChanged ? <span style={{color:G.muted}}>{tl("No differences yet.")}</span> : (<>
+                {cSummary.sold>0 && <div>{tl("Sold")}: <b>{fmtN(cSummary.sold)}</b> · <b style={{color:G.caramel}}>{cSummary.revenue.toLocaleString()} {currency}</b></div>}
+                {cSummary.wasted>0 && <div>{tl("Wasted")}: <b>{fmtN(cSummary.wasted)}</b></div>}
+                {cSummary.surplus>0 && <div>{tl("Surplus added to stock")}: <b>{fmtN(cSummary.surplus)}</b></div>}
+              </>)}
+            </div>
+            <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:G.muted,margin:"12px 0 6px",cursor:"pointer"}}>
+              <input type="checkbox" checked={earlier} onChange={e=>setEarlier(e.target.checked)} style={{accentColor:G.caramel}}/>
+              {tl("Sold earlier")}
+            </label>
+            {earlier && <input type="datetime-local" value={soldAt} max={new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16)} onChange={e=>setSoldAt(e.target.value)}
+              style={{boxSizing:"border-box",padding:"8px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontFamily:G.mono,fontSize:13,marginBottom:8,background:G.white,color:G.dark}}/>}
+            <Btn style={{width:"100%",padding:"14px 0",fontSize:16,marginTop:6}} loading={saving} disabled={!cChanged||(earlier&&!soldAt)} onClick={saveCount}>{tl("Save count")}</Btn>
+          </div>
+        </div>
+      )}
+      {mode==="sell" && (loading ? <Spinner/> : (
         <div style={{display:"flex",gap:20,alignItems:"flex-start",flexWrap:"wrap"}}>
           {/* Tiles */}
           <div style={{flex:"1 1 420px",minWidth:0}}>
@@ -3316,7 +3418,8 @@ function QuickSalePage({ toast }) {
             )}
           </div>
         </div>
-      )}
+      ))}
+      {mode==="count" && loading && <Spinner/>}
     </Page>
   );
 }

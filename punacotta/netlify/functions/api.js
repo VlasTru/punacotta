@@ -430,6 +430,28 @@ async function applyOrderDoneStock(oid) {
   }
 }
 
+// Walk-in (counter) sale: a Done order on the seller's hidden "Walk-in sales" menu.
+// lines: [{rid, qty}] in order units. Returns the new oid.
+async function createWalkinSale(ownerUid, lines, soldAt) {
+  let [wm] = await dbq(`SELECT mid FROM menu WHERE owner_uid=$1 AND name='Walk-in sales' AND deleted=true ORDER BY mid LIMIT 1`, [ownerUid])
+  if (!wm) {
+    const ins = await dbr(
+      `INSERT INTO menu (name, available, delivery_fee, owner_uid, deleted) VALUES ('Walk-in sales', false, 0, $1, true) RETURNING mid`, [ownerUid])
+    wm = { mid: ins.rows[0].mid }
+  }
+  const res = await dbr(
+    `INSERT INTO "order" (owner_uid, mid, pickup, fulfillment, status, walkin_name, source, created_at, done_at, handed_over_at)
+     VALUES (NULL,$1,true,'pickup','Done','Walk-in','walkin',$2,$2,$2) RETURNING oid`, [wm.mid, soldAt])
+  const oid = res.rows[0].oid
+  for (const l of lines) {
+    const [rec] = await dbq('SELECT price FROM recipe WHERE rid=$1 AND deleted=false', [l.rid])
+    if (!rec) continue
+    await dbr('INSERT INTO order_item (oid,rid,qty,price) VALUES ($1,$2,$3,$4)', [oid, l.rid, l.qty, rec.price])
+  }
+  await applyOrderDoneStock(oid)
+  return oid
+}
+
 async function reverseOrderStock(oid) {          // a Done order was declined or cancelled
   await dbr(`DELETE FROM recipe_stock WHERE source IN ('order','stock_order') AND source_id=$1`, [oid])
 }
@@ -1601,24 +1623,60 @@ async function route(method, segments, body, headers, event) {
         if (isNaN(d) || d.getTime() > Date.now() + 5 * 60000) return [400, { error: 'Invalid sale time' }]
         soldAt = d
       }
-      let [wm] = await dbq(`SELECT mid FROM menu WHERE owner_uid=$1 AND name='Walk-in sales' AND deleted=true ORDER BY mid LIMIT 1`, [user.uid])
-      if (!wm) {
-        const ins = await dbr(
-          `INSERT INTO menu (name, available, delivery_fee, owner_uid, deleted) VALUES ('Walk-in sales', false, 0, $1, true) RETURNING mid`, [user.uid])
-        wm = { mid: ins.rows[0].mid }
-      }
-      const res = await dbr(
-        `INSERT INTO "order" (owner_uid, mid, pickup, fulfillment, status, walkin_name, source, created_at, done_at, handed_over_at)
-         VALUES (NULL,$1,true,'pickup','Done','Walk-in','walkin',$2,$2,$2) RETURNING oid`, [wm.mid, soldAt])
-      const oid = res.rows[0].oid
-      for (const l of lines) {
-        const [rec] = await dbq('SELECT price FROM recipe WHERE rid=$1 AND deleted=false', [l.rid])
-        if (!rec) continue
-        await dbr('INSERT INTO order_item (oid,rid,qty,price) VALUES ($1,$2,$3,$4)', [oid, l.rid, l.qty, rec.price])
-      }
-      await applyOrderDoneStock(oid)
+      const oid = await createWalkinSale(user.uid, lines, soldAt)
       await notifyStockChange(user.uid)
       return [201, (await orderTotals([oid]))[0]]
+    }
+
+    // POST /quicksale/count { counts:[{rid, counted, wasted?}], sold_at? } — closing count.
+    // Missing units become one walk-in sale (minus those marked wasted, which are logged as item
+    // wastage); surplus raises the stock. Untouched items (counted = expected) change nothing.
+    if (r1 === 'count' && method === 'POST') {
+      const counts = (Array.isArray(body?.counts) ? body.counts : [])
+        .map(c => ({ rid: Number(c.rid), counted: Number(c.counted), wasted: Math.max(0, Number(c.wasted) || 0) }))
+        .filter(c => c.rid && Number.isFinite(c.counted) && c.counted >= 0)
+      if (!counts.length) return [400, { error: 'Nothing counted' }]
+      let soldAt = new Date()
+      if (body?.sold_at) {
+        const d = new Date(body.sold_at)
+        if (isNaN(d) || d.getTime() > Date.now() + 5 * 60000) return [400, { error: 'Invalid sale time' }]
+        soldAt = d
+      }
+      const saleLines = [], wasted = [], surplus = []
+      for (const c of counts) {
+        const [r] = await dbq(
+          `SELECT r.rid, r.name, r.price, r.allow_submultiples, r.moq, un.name AS unit_name,
+                  COALESCE((SELECT SUM(qty) FROM recipe_stock rs WHERE rs.rid=r.rid AND rs.owner_uid=$2), 0) AS stock
+           FROM recipe r LEFT JOIN units un ON un.unid=r.unid WHERE r.rid=$1 AND r.deleted=false`, [c.rid, user.uid])
+        if (!r) continue
+        const expected = Math.max(0, Number(r.stock))
+        const diff = Math.round((expected - c.counted) * 1000) / 1000
+        if (diff > 0) {
+          const w = Math.min(c.wasted, diff)
+          const sold = Math.round((diff - w) * 1000) / 1000
+          if (w > 0) {
+            await dbr(`INSERT INTO recipe_stock (rid, owner_uid, qty, source, created_at) VALUES ($1,$2,$3,'wastage',$4)`,
+              [r.rid, user.uid, -w, soldAt])
+            wasted.push({ rid: r.rid, name: r.name, qty: w })
+          }
+          if (sold > 0) {
+            const perLine = lineUnits(1, r) || 1                      // stock units per order unit
+            saleLines.push({ rid: r.rid, qty: Math.round(sold / perLine * 1000) / 1000, name: r.name, sold })
+          }
+        } else if (diff < 0) {
+          const add = -diff
+          await dbr(`INSERT INTO recipe_stock (rid, owner_uid, qty, source, created_at) VALUES ($1,$2,$3,'count',$4)`,
+            [r.rid, user.uid, add, soldAt])
+          surplus.push({ rid: r.rid, name: r.name, qty: add })
+        }
+      }
+      let sale = null
+      if (saleLines.length) {
+        const oid = await createWalkinSale(user.uid, saleLines, soldAt)
+        sale = (await orderTotals([oid]))[0]
+      }
+      await notifyStockChange(user.uid)
+      return [201, { sale, wasted, surplus }]
     }
 
     // DELETE /quicksale/:oid — undo a walk-in sale (kept in history as Declined, stock restored)

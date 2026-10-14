@@ -62,6 +62,7 @@ export const api = {
   getArrivals:        ()          => req('GET',  '/arrivals'),
   getQuickSale:      ()          => req('GET',    '/quicksale'),
   postQuickSale:     (data)      => req('POST',   '/quicksale', data),
+  postClosingCount:  (data)      => req('POST',   '/quicksale/count', data),
   undoQuickSale:     (oid)       => req('DELETE', `/quicksale/${oid}`),
   lookupGuestByEmail: (email) => req('GET', `/arrivals/lookup?email=${encodeURIComponent(email)}`),
   placeArrivalOrder:  (data)      => req('POST', '/arrivals/order', data),
