@@ -126,6 +126,7 @@ const RU = {
   "Are you sure you want to cancel order":"Вы уверены, что хотите отменить заказ",
   "No restaurants open right now":"Сейчас нет открытых ресторанов",
   "Check back soon!":"Загляните позже!",
+  "Quick Sale":"Быстрая продажа","Search items…":"Поиск позиций…","No items found":"Позиции не найдены","in stock":"в наличии","no stock":"нет в наличии","Current sale":"Текущая продажа","Tap items to add them.":"Нажимайте на позиции, чтобы добавить.","Sold":"Продано","Sold earlier":"Продано ранее","Clear":"Очистить","Recent sales":"Последние продажи","Undo":"Отменить","Sale undone":"Продажа отменена",
   "Reports":"Отчёты","Week":"Неделя","Month":"Месяц","Year":"Год",
   "Revenue":"Выручка","ABC Analysis":"ABC-анализ","Association Rules":"Правила ассоциации",
   "No data yet.":"Данных пока нет.",
@@ -1323,7 +1324,7 @@ function Nav({ user, page, setPage, logout, lang, setLang, notifProps, themePref
   },[]);
   const tl = k => lang==='ru' ? (RU[k]||k) : k;
   const links = isM
-    ? [{key:"orders-manuf",label:tl("Orders")},{key:"products",label:tl("Products")},{key:"items",label:tl("Items")},{key:"menus",label:tl("Menus")},{key:"procurement",label:tl("Procurement")},{key:"suppliers",label:tl("Suppliers")},{key:"reports",label:tl("Reports")},{key:"staff",label:tl("Staff")},{key:"processes",label:tl("Processes")},{key:"equipment",label:tl("Equipment")}]
+    ? [{key:"orders-manuf",label:tl("Orders")},{key:"quick-sale",label:tl("Quick Sale")},{key:"products",label:tl("Products")},{key:"items",label:tl("Items")},{key:"menus",label:tl("Menus")},{key:"procurement",label:tl("Procurement")},{key:"suppliers",label:tl("Suppliers")},{key:"reports",label:tl("Reports")},{key:"staff",label:tl("Staff")},{key:"processes",label:tl("Processes")},{key:"equipment",label:tl("Equipment")}]
     : user?.employer_uid ? [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")},{key:"roster-emp",label:tl("My Roster")},{key:"processes-emp",label:tl("Processes")}]
     : [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")}];
   const navigate = key => { setPage(key); setDropOpen(false); };
@@ -3085,6 +3086,139 @@ function EditOrderModal({ order, toast, onClose, onSaved }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── QUICK SALE (walk-in sales in one step) ──────────────────────────────────
+function QuickSalePage({ toast }) {
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+  const [items, setItems]   = useState([]);
+  const [recent, setRecent] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [cart, setCart]     = useState({});          // rid -> qty
+  const [filter, setFilter] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [earlier, setEarlier] = useState(false);
+  const [soldAt, setSoldAt] = useState("");
+  const fmtN = v => String(Number(Number(v).toFixed(2)));
+
+  const load = useCallback(async () => {
+    try { const d = await api.getQuickSale(); setItems(d.items||[]); setRecent(d.recent||[]); }
+    catch(e){ toast(e.message,"error"); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(()=>{ load(); },[]);
+
+  const bump = (rid, d) => setCart(c => {
+    const q = Math.max(0, (c[rid]||0) + d);
+    const n = { ...c }; if (q) n[rid] = q; else delete n[rid];
+    return n;
+  });
+  const lines = items.filter(i => cart[i.rid]).map(i => ({ ...i, qty: cart[i.rid] }));
+  const total = lines.reduce((s,l)=>s+l.qty*Number(l.price),0);
+  const currency = lines[0]?.currency || items[0]?.currency || "AMD";
+  const shown = items.filter(i => !filter.trim() || i.name.toLowerCase().includes(filter.trim().toLowerCase()));
+
+  const sell = async () => {
+    if (!lines.length) return;
+    setSaving(true);
+    try {
+      await api.postQuickSale({ items: lines.map(l=>({rid:l.rid, qty:l.qty})), sold_at: earlier && soldAt ? new Date(soldAt).toISOString() : undefined });
+      toast(`${tl("Sold")}: ${lines.map(l=>`${l.qty} × ${l.name}`).join(", ")} — ${total.toLocaleString()} ${currency}`);
+      setCart({}); setEarlier(false); setSoldAt("");
+      await load();
+    } catch(e){ toast(e.message,"error"); }
+    finally { setSaving(false); }
+  };
+  const undo = async oid => {
+    try { await api.undoQuickSale(oid); toast(tl("Sale undone")); await load(); }
+    catch(e){ toast(e.message,"error"); }
+  };
+
+  return (
+    <Page title={tl("Quick Sale")}>
+      {loading ? <Spinner/> : (
+        <div style={{display:"flex",gap:20,alignItems:"flex-start",flexWrap:"wrap"}}>
+          {/* Tiles */}
+          <div style={{flex:"1 1 420px",minWidth:0}}>
+            <input value={filter} onChange={e=>setFilter(e.target.value)} placeholder={tl("Search items…")}
+              style={{width:"100%",boxSizing:"border-box",padding:"10px 14px",borderRadius:10,border:`1px solid ${G.border}`,fontSize:15,fontFamily:G.mono,outline:"none",marginBottom:14,background:G.white,color:G.dark}}/>
+            {shown.length===0 && <div style={{padding:40,textAlign:"center",color:G.muted}}>{tl("No items found")}</div>}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:12}}>
+              {shown.map(i=>{
+                const q = cart[i.rid]||0;
+                return (
+                  <div key={i.rid} onClick={()=>bump(i.rid,1)}
+                    style={{position:"relative",minHeight:96,padding:"12px 12px 10px",borderRadius:12,cursor:"pointer",userSelect:"none",WebkitTapHighlightColor:"transparent",
+                      background:q?G.sand:G.white,border:`2px solid ${q?G.caramel:G.border}`,display:"flex",flexDirection:"column",justifyContent:"space-between",transition:"border-color 0.1s, background 0.1s"}}>
+                    <div style={{fontFamily:G.font,fontSize:16,fontWeight:600,color:G.dark,lineHeight:1.2,paddingRight:q?34:0}}>{i.name}</div>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginTop:8}}>
+                      <span style={{fontSize:13,fontFamily:G.mono,color:G.caramel,fontWeight:600}}>{Number(i.price).toLocaleString()} {i.currency}</span>
+                      <span style={{fontSize:11,fontFamily:G.mono,color:i.stock>0?G.muted:G.red}}>{i.stock>0?`${fmtN(i.stock)} ${tl("in stock")}`:tl("no stock")}</span>
+                    </div>
+                    {q>0 && <span style={{position:"absolute",top:8,right:8,minWidth:28,height:28,borderRadius:14,background:G.caramel,color:G.white,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,fontFamily:G.mono}}>{q}</span>}
+                    {q>0 && <button onClick={e=>{e.stopPropagation();bump(i.rid,-1);}} aria-label="minus"
+                      style={{position:"absolute",top:40,right:8,width:28,height:28,borderRadius:14,border:`1px solid ${G.border}`,background:G.white,color:G.dark,fontSize:16,cursor:"pointer",lineHeight:1}}>−</button>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Ticket */}
+          <div style={{flex:"0 0 320px",maxWidth:"100%",position:"sticky",top:76}}>
+            <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,padding:18}}>
+              <h3 style={{fontFamily:G.font,fontSize:17,marginBottom:12,color:G.dark}}>{tl("Current sale")}</h3>
+              {lines.length===0 ? <p style={{fontSize:13,color:G.muted,fontStyle:"italic"}}>{tl("Tap items to add them.")}</p> : (
+                <>
+                  {lines.map(l=>(
+                    <div key={l.rid} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:`1px solid ${G.border}`}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:14,fontWeight:600,color:G.dark,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.name}</div>
+                        <div style={{fontSize:12,color:G.muted,fontFamily:G.mono}}>{(l.qty*Number(l.price)).toLocaleString()} {l.currency}</div>
+                      </div>
+                      <button onClick={()=>bump(l.rid,-1)} style={{width:32,height:32,borderRadius:8,border:`1px solid ${G.border}`,background:G.sand,cursor:"pointer",fontSize:16}}>−</button>
+                      <span style={{minWidth:22,textAlign:"center",fontFamily:G.mono,fontWeight:700}}>{l.qty}</span>
+                      <button onClick={()=>bump(l.rid,1)} style={{width:32,height:32,borderRadius:8,border:`1px solid ${G.border}`,background:G.sand,cursor:"pointer",fontSize:16}}>+</button>
+                    </div>
+                  ))}
+                  <div style={{display:"flex",justifyContent:"space-between",fontWeight:700,fontSize:18,padding:"12px 0 4px"}}>
+                    <span>{tl("Total")}</span><span style={{color:G.caramel}}>{total.toLocaleString()} {currency}</span>
+                  </div>
+                </>
+              )}
+              <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:G.muted,margin:"10px 0 6px",cursor:"pointer"}}>
+                <input type="checkbox" checked={earlier} onChange={e=>setEarlier(e.target.checked)} style={{accentColor:G.caramel}}/>
+                {tl("Sold earlier")}
+              </label>
+              {earlier && <input type="datetime-local" value={soldAt} max={new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16)} onChange={e=>setSoldAt(e.target.value)}
+                style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontFamily:G.mono,fontSize:13,marginBottom:8,background:G.white,color:G.dark}}/>}
+              <Btn style={{width:"100%",padding:"14px 0",fontSize:16,marginTop:6}} loading={saving} disabled={!lines.length||(earlier&&!soldAt)} onClick={sell}>{tl("Sold")}</Btn>
+              {lines.length>0 && <button onClick={()=>setCart({})} style={{width:"100%",marginTop:8,background:"none",border:"none",color:G.muted,fontSize:13,cursor:"pointer",fontFamily:G.mono}}>{tl("Clear")}</button>}
+            </div>
+
+            {recent.length>0 && (
+              <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,padding:18,marginTop:16}}>
+                <h3 style={{fontFamily:G.font,fontSize:15,marginBottom:8,color:G.dark}}>{tl("Recent sales")}</h3>
+                {recent.map(o=>{
+                  const undone = o.status==="Declined";
+                  return (
+                    <div key={o.oid} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:`1px solid ${G.border}`,opacity:undone?0.45:1}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,color:G.dark,textDecoration:undone?"line-through":"none"}}>{(o.items||[]).map(it=>`${it.qty} × ${it.name}`).join(", ")}</div>
+                        <div style={{fontSize:11,color:G.muted,fontFamily:G.mono}}>{new Date(o.created_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",hour12:false})} · {Number(o.total).toLocaleString()} {currency}</div>
+                      </div>
+                      {!undone && <button onClick={()=>undo(o.oid)} style={{background:"none",border:`1px solid ${G.border}`,borderRadius:8,padding:"4px 10px",fontSize:12,color:G.red,cursor:"pointer",fontFamily:G.mono}}>{tl("Undo")}</button>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </Page>
   );
 }
 
@@ -9625,6 +9759,7 @@ export default function App() {
           {page==="processes-emp"&&<EmployeeProcessesPage user={user} setPage={setPage} toast={toast}/>}
           {page==="embed"        &&<EmbedMenuPage toast={toast}/>}
           {page==="orders-manuf" &&<OrdersManufPage toast={toast}/>}
+          {page==="quick-sale"   &&<QuickSalePage toast={toast}/>}
           {page==="restaurants"  &&<RestaurantsPage setPage={setPage} setActiveMenu={setActiveMenu}/>}
           {page==="order"        &&<OrderPage menu={activeMenu} user={user} setPage={setPage} toast={toast}/>}
           {page==="orders-cust"  &&<OrdersCustPage toast={toast}/>}

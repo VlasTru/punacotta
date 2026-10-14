@@ -60,6 +60,9 @@ export const api = {
 
   lookupUserByEmail: (email) => req('GET', `/staff/lookup?email=${encodeURIComponent(email)}`),
   getArrivals:        ()          => req('GET',  '/arrivals'),
+  getQuickSale:      ()          => req('GET',    '/quicksale'),
+  postQuickSale:     (data)      => req('POST',   '/quicksale', data),
+  undoQuickSale:     (oid)       => req('DELETE', `/quicksale/${oid}`),
   lookupGuestByEmail: (email) => req('GET', `/arrivals/lookup?email=${encodeURIComponent(email)}`),
   placeArrivalOrder:  (data)      => req('POST', '/arrivals/order', data),
   recordArrivalsView: (owner_uids) => req('POST', '/arrivals/view', { owner_uids }),

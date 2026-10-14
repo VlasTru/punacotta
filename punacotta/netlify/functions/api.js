@@ -29,6 +29,7 @@ async function ensureMigrations() {
   _migrated = true
   try {
     await dbr(`ALTER TABLE menu ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT false`)
+    await dbr(`ALTER TABLE "order" ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'app'`)
     await dbr(`ALTER TABLE recipe ADD COLUMN IF NOT EXISTS min_inventory NUMERIC(10,3)`)
     await dbr(`DELETE FROM menu_recipe WHERE rid IN (SELECT rid FROM recipe WHERE deleted=true)`)
     await dbr(`ALTER TABLE recipe ADD COLUMN IF NOT EXISTS procid INTEGER`)
@@ -1555,6 +1556,83 @@ async function route(method, segments, body, headers, event) {
 
       await notifyStockChange(menu.owner_uid)
       return [201, full]
+    }
+  }
+
+  // ── QUICK SALE (walk-in / counter sales: one step, created as Done) ──────────
+  // Walk-in orders hang off a hidden per-seller menu ("Walk-in sales", archived) so that stock,
+  // Orders and every report treat them like any other menu order.
+  if (r0 === 'quicksale') {
+    if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+    const orderTotals = async oids => oids.length ? await dbq(
+      `SELECT o.oid, o.created_at, o.status,
+              COALESCE(json_agg(json_build_object('name', r.name, 'qty', oi.qty, 'price', oi.price) ORDER BY r.name), '[]') AS items,
+              COALESCE(SUM(oi.qty * oi.price), 0) AS total
+       FROM "order" o JOIN order_item oi ON oi.oid=o.oid JOIN recipe r ON r.rid=oi.rid
+       WHERE o.oid = ANY($1::int[]) GROUP BY o.oid ORDER BY o.created_at DESC`, [oids]) : []
+
+    // GET /quicksale — tiles (most sold first, with stock on hand) + today's recent sales
+    if (!r1 && method === 'GET') {
+      const items = await dbq(
+        `SELECT r.rid, r.name, r.price, r.currency, r.image_thumb_url, c.name AS category,
+                COALESCE((SELECT SUM(qty) FROM recipe_stock rs WHERE rs.rid=r.rid AND rs.owner_uid=$1), 0) AS stock,
+                COALESCE((SELECT SUM(oi.qty) FROM order_item oi JOIN "order" o ON o.oid=oi.oid
+                          WHERE oi.rid=r.rid AND o.created_at >= NOW() - INTERVAL '30 days'
+                            AND o.status NOT IN ('Declined') AND COALESCE(o.fulfillment,'pickup') <> 'stock'), 0) AS sold_30d
+         FROM recipe r LEFT JOIN recipe_category c ON c.caid=r.caid
+         WHERE r.deleted=false
+         ORDER BY sold_30d DESC, lower(r.name)`, [user.uid])
+      const recent = await dbq(
+        `SELECT o.oid FROM "order" o JOIN menu m ON m.mid=o.mid AND m.owner_uid=$1
+         WHERE o.source='walkin' AND o.created_at >= NOW() - INTERVAL '24 hours'
+         ORDER BY o.created_at DESC LIMIT 15`, [user.uid])
+      return [200, { items: items.map(i => ({ ...i, stock: Math.max(0, Number(i.stock)), sold_30d: Number(i.sold_30d) })),
+                     recent: await orderTotals(recent.map(r => r.oid)) }]
+    }
+
+    // POST /quicksale { items:[{rid,qty}], sold_at? }
+    if (!r1 && method === 'POST') {
+      const lines = (Array.isArray(body?.items) ? body.items : [])
+        .map(i => ({ rid: Number(i.rid), qty: Number(i.qty) })).filter(i => i.rid && i.qty > 0)
+      if (!lines.length) return [400, { error: 'Nothing to sell' }]
+      let soldAt = new Date()
+      if (body?.sold_at) {
+        const d = new Date(body.sold_at)
+        if (isNaN(d) || d.getTime() > Date.now() + 5 * 60000) return [400, { error: 'Invalid sale time' }]
+        soldAt = d
+      }
+      let [wm] = await dbq(`SELECT mid FROM menu WHERE owner_uid=$1 AND name='Walk-in sales' AND deleted=true ORDER BY mid LIMIT 1`, [user.uid])
+      if (!wm) {
+        const ins = await dbr(
+          `INSERT INTO menu (name, available, delivery_fee, owner_uid, deleted) VALUES ('Walk-in sales', false, 0, $1, true) RETURNING mid`, [user.uid])
+        wm = { mid: ins.rows[0].mid }
+      }
+      const res = await dbr(
+        `INSERT INTO "order" (owner_uid, mid, pickup, fulfillment, status, walkin_name, source, created_at, done_at, handed_over_at)
+         VALUES (NULL,$1,true,'pickup','Done','Walk-in','walkin',$2,$2,$2) RETURNING oid`, [wm.mid, soldAt])
+      const oid = res.rows[0].oid
+      for (const l of lines) {
+        const [rec] = await dbq('SELECT price FROM recipe WHERE rid=$1 AND deleted=false', [l.rid])
+        if (!rec) continue
+        await dbr('INSERT INTO order_item (oid,rid,qty,price) VALUES ($1,$2,$3,$4)', [oid, l.rid, l.qty, rec.price])
+      }
+      await applyOrderDoneStock(oid)
+      await notifyStockChange(user.uid)
+      return [201, (await orderTotals([oid]))[0]]
+    }
+
+    // DELETE /quicksale/:oid — undo a walk-in sale (kept in history as Declined, stock restored)
+    if (r1 && method === 'DELETE') {
+      const [o] = await dbq(
+        `SELECT o.oid, o.status FROM "order" o JOIN menu m ON m.mid=o.mid AND m.owner_uid=$1
+         WHERE o.oid=$2 AND o.source='walkin'`, [user.uid, r1])
+      if (!o) return [404, { error: 'Sale not found' }]
+      if (o.status !== 'Declined') {
+        await dbr(`UPDATE "order" SET status='Declined' WHERE oid=$1`, [r1])
+        await reverseOrderStock(r1)
+        await notifyStockChange(user.uid)
+      }
+      return [200, { undone: Number(r1) }]
     }
   }
 
