@@ -127,6 +127,7 @@ const RU = {
   "Are you sure you want to cancel order":"Вы уверены, что хотите отменить заказ",
   "No restaurants open right now":"Сейчас нет открытых ресторанов",
   "Check back soon!":"Загляните позже!",
+  "Production":"Производство","No equipment":"Без оборудования","Produced, not reserved":"Произведено, не зарезервировано","Reserved on the Board of Arrivals":"Зарезервировано на табло","Unfulfilled":"Не выполнено","No batches in production.":"Нет партий в производстве.","Production capacity chart":"Диаграмма загрузки оборудования","not reserved":"не зарезервировано","unfulfilled":"не выполнен","units":"ед.","reserved":"резерв","Order":"Заказ","cancelled":"отменён","Start":"Запустите","again for":"ещё раз на","could not be produced":"не удалось произвести","Re-produce":"Произвести заново","Contact customer & cancel":"Связаться с клиентом и отменить","Cancel order":"Отменить заказ","Please let the customer know first:":"Сначала сообщите клиенту:","Back":"Назад",
   "Packaging":"Упаковка","+ Package":"+ Упаковка","Max. capacity":"Макс. вместимость","Type to search items…":"Введите название блюда…","Max. capacity must be greater than 0":"Макс. вместимость должна быть больше 0","Edit Package":"Редактировать упаковку","New Package":"Новая упаковка","Delete package?":"Удалить упаковку?","Remove":"Убрать","Packaging adjusted":"Упаковка скорректирована","used beyond the automatic write-off — recorded in Profit & Loss":"использовано сверх автоматического списания — учтено в отчёте о доходах и расходах","Deleted":"Удалено","Select a supplier":"Выберите поставщика","Supplier…":"Поставщик…","Price":"Цена","Link":"Привязать","Confirm":"Подтвердить","Cancel wastage":"Отменить списание","The following packaging will be wasted, and stock levels shall be changed accordingly. The action is irreversible. Are you sure you wish to proceed?":"Следующая упаковка будет списана, остатки изменятся. Действие необратимо. Продолжить?","Supplier linked":"Поставщик привязан","Wastage applied":"Списание выполнено","Confirm wastage":"Подтверждение списания","Add supplier":"Добавить поставщика","Items":"Блюда","Name required":"Укажите название",
   "Quick Sale":"Быстрая продажа","Online":"Онлайн","Offline":"Офлайн","Inventory":"Склад","Search items…":"Поиск позиций…","No items found":"Позиции не найдены","in stock":"в наличии","no stock":"нет в наличии","Current sale":"Текущая продажа","Tap items to add them.":"Нажимайте на позиции, чтобы добавить.","Sold":"Продано","Sold earlier":"Продано ранее","Clear":"Очистить","Recent sales":"Последние продажи","Undo":"Отменить","Sale undone":"Продажа отменена","Sell":"Продажа","Closing count":"Закрытие смены","Enter what is left of each item. Anything missing is recorded as sold; mark units as wasted if they were thrown away. Items you leave as they are stay unchanged.":"Введите остаток каждой позиции. Недостающее записывается как проданное; отметьте единицы, которые были списаны. Позиции без изменений остаются как есть.","No items with stock on hand.":"Нет позиций в наличии.","Expected":"Ожидается","sold":"продано","of which wasted":"из них списано","more than expected — stock will be raised":"больше ожидаемого — остаток будет увеличен","Add another item…":"Добавить другую позицию…","No differences yet.":"Расхождений пока нет.","Wasted":"Списано","Surplus added to stock":"Излишек добавлен в остаток","Count saved: no differences":"Подсчёт сохранён: расхождений нет","Save count":"Сохранить подсчёт","Voice input is not supported in this browser. Try Chrome or Safari.":"Голосовой ввод не поддерживается в этом браузере. Попробуйте Chrome или Safari.","Microphone access is blocked. Allow it in the browser settings.":"Доступ к микрофону заблокирован. Разрешите его в настройках браузера.","Voice error":"Ошибка голоса","Nothing was heard":"Ничего не услышано","Voice language":"Язык голоса","Stop":"Стоп","Speak a sale":"Продиктовать продажу","Listening…":"Слушаю…","I heard":"Я услышал","No items recognised. Try again or tap the items.":"Позиции не распознаны. Повторите или выберите нажатием.","Not recognised":"Не распознано","Confirm sale":"Подтвердить продажу","Add to ticket":"Добавить в чек","Discard":"Отмена","Speak again":"Повторить",
   "Reports":"Отчёты","Week":"Неделя","Month":"Месяц","Year":"Год",
@@ -3772,6 +3773,196 @@ function InventoryHub({ toast, initial }) {
   );
 }
 
+// ─── PRODUCTION CHART (Marimekko-style) ───────────────────────────────────────
+// X = equipment units, each holding one bar per running batch (process); Y = equipment capacity used.
+// A bar is cut into sections: units reserved through the Board of Arrivals (hatched, labelled with the
+// order), units still free (plain) and, for a batch that ended short, the unfulfilled part (red).
+function ProductionChart({ toast }) {
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+  const [data, setData] = useState(null);
+  const [tip, setTip] = useState(null);                       // { x, y, text }
+  const [confirm, setConfirm] = useState(null);               // unfulfilled order awaiting "cancel" confirmation
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(async()=>{ try { setData(await api.getProduction()); } catch(e){ /* chart is optional */ } },[]);
+  useEffect(()=>{ load(); const t = setInterval(load, 60000); return ()=>clearInterval(t); },[]);
+  if (!data) return null;
+
+  const fmtN = v => String(parseFloat(Number(v).toFixed(2)));
+  const unitLabel = u => !u ? "" : (String(u).toLowerCase()==="pcs" ? "pcs." : u);
+  const PLOT_H = 230, BAR_W = 112, GAP = 16, GROUP_GAP = 34, LEFT = 44, TOP = 34, BOTTOM = 58;
+
+  // Build groups: equipment unit (or "no equipment") → one bar per batch
+  const groups = new Map();
+  for (const run of data.runs) {
+    const byKey = new Map();
+    for (const it of run.items) {
+      const key = it.eid || "none";
+      byKey.set(key, [...(byKey.get(key)||[]), it]);
+    }
+    for (const [key, its] of byKey) {
+      if (!groups.has(key)) groups.set(key, { key, name: key==="none" ? tl("No equipment") : its[0].equipment, bars: [] });
+      groups.get(key).bars.push({ run, items: its });
+    }
+  }
+  const list = [...groups.values()].sort((a,b)=> a.key==="none" ? 1 : b.key==="none" ? -1 : a.name.localeCompare(b.name));
+
+  // Sections of one item, bottom to top, in units
+  const sections = it => {
+    const secs = [];
+    const reservedTotal = it.reservations.reduce((s,r)=>s+r.qty,0);
+    for (const r of it.reservations) if (r.qty - r.short > 1e-9) secs.push({ kind:"reserved", units:r.qty - r.short, oid:r.oid, customer:r.customer, it });
+    for (const r of it.reservations) if (r.short > 1e-9) secs.push({ kind:"short", units:r.short, oid:r.oid, customer:r.customer, it });
+    const free = it.made === null ? it.declared - reservedTotal : it.made - (reservedTotal - it.reservations.reduce((s,r)=>s+r.short,0));
+    if (free > 1e-9) secs.push({ kind:"free", units:free, it });
+    return secs;
+  };
+
+  let x = LEFT;
+  const layout = list.map(g => {
+    const gx = x;
+    const bars = g.bars.map(b => {
+      const secs = b.items.flatMap(sections);
+      const noEq = g.key === "none";
+      // fraction of the equipment's capacity used: units / (units that fit)
+      const used = noEq ? null : b.items.reduce((s,it)=>{ const u = sections(it).reduce((a,c)=>a+c.units,0); return s + u / it.volume; }, 0);
+      const totalUnits = secs.reduce((s,c)=>s+c.units,0) || 1;
+      const barH = noEq ? PLOT_H : Math.min(1, used) * PLOT_H;
+      let y = TOP + PLOT_H;
+      const placed = secs.map(c => {
+        const h = noEq ? c.units / totalUnits * barH : (c.units / c.it.volume) / used * barH;
+        y -= h; return { ...c, y, h };
+      });
+      const bx = x; x += BAR_W + GAP;
+      return { ...b, bx, barH, used, placed, noEq };
+    });
+    x += GROUP_GAP - GAP;
+    return { ...g, gx, gw: x - gx - GROUP_GAP + GAP - GAP, bars };
+  });
+  const W = Math.max(520, x + 10), H = TOP + PLOT_H + BOTTOM;
+  const clip = (s, n) => s.length > n ? s.slice(0, n-1) + "…" : s;
+
+  const decide = async (u, action) => {
+    setBusy(true);
+    try {
+      await api.resolveShortfall(u.resid, action);
+      toast(action==="cancel" ? `${tl("Order")} #${u.oid} ${tl("cancelled")}` : `${tl("Start")} “${u.process_name}” ${tl("again for")} ${fmtN(u.shortfall)} × ${u.item_name}`);
+      setConfirm(null); await load();
+    } catch(e){ toast(e.message,"error"); } finally { setBusy(false); }
+  };
+
+  const legend = (fill, label, hatch) => (
+    <span style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12,color:G.muted}}>
+      <svg width="18" height="12"><rect width="18" height="12" rx="2" fill={fill}/>{hatch&&<rect width="18" height="12" rx="2" fill="url(#pcHatch)"/>}</svg>{label}
+    </span>
+  );
+  const FREE = `${G.caramel}33`;
+
+  return (
+    <div style={{marginTop:28}}>
+      <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",flexWrap:"wrap",gap:10,marginBottom:10}}>
+        <h3 style={{fontFamily:G.font,fontSize:18,color:G.dark,margin:0}}>{tl("Production")}</h3>
+        <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+          {legend(FREE, tl("Produced, not reserved"))}
+          {legend(G.caramel, tl("Reserved on the Board of Arrivals"), true)}
+          {legend(G.red, tl("Unfulfilled"))}
+        </div>
+      </div>
+      <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,padding:"14px 10px",overflowX:"auto",position:"relative"}}>
+        {list.length===0 ? (
+          <div style={{padding:"26px 10px",textAlign:"center",color:G.muted,fontSize:14}}>{tl("No batches in production.")}</div>
+        ) : (
+          <svg width={W} height={H} style={{display:"block",fontFamily:G.mono}} role="img" aria-label={tl("Production capacity chart")}
+               onMouseLeave={()=>setTip(null)}>
+            <defs>
+              <pattern id="pcHatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                <rect width="7" height="7" fill={G.caramel}/><rect width="3" height="7" fill={G.white} opacity="0.28"/>
+              </pattern>
+              <pattern id="pcRed" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+                <rect width="7" height="7" fill={G.red}/><rect width="3" height="7" fill={G.white} opacity="0.22"/>
+              </pattern>
+            </defs>
+            {[0,25,50,75,100].map(t=>{ const y = TOP + PLOT_H - t/100*PLOT_H; return (
+              <g key={t}><line x1={LEFT} x2={W-6} y1={y} y2={y} stroke={G.border} strokeWidth="1" strokeDasharray={t?"3,4":"0"}/>
+                <text x={LEFT-8} y={y+4} textAnchor="end" fontSize="11" fill={G.muted}>{t}%</text></g>
+            );})}
+            {layout.map(g=>(
+              <g key={g.key}>
+                {g.bars.map(b=>{
+                  const reservedUnits = b.placed.filter(c=>c.kind==="reserved").reduce((s,c)=>s+c.units,0);
+                  const madeUnits = b.items.reduce((s,it)=>s+(it.made===null?it.declared:it.made),0);
+                  const top = TOP + PLOT_H - b.barH;
+                  const pct = b.noEq ? "n/a" : `${Math.round(b.used*100)}%`;
+                  return (
+                    <g key={b.run.prid}>
+                      {b.placed.map((c,ci)=>{
+                        const fill = c.kind==="free" ? FREE : c.kind==="reserved" ? "url(#pcHatch)" : "url(#pcRed)";
+                        const label = c.kind==="free" ? null : [`#${c.oid}`, `${c.it.name} x ${fmtN(c.units)} ${unitLabel(c.it.unit)}`];
+                        const text = c.kind==="free"
+                          ? `${c.it.name}: ${fmtN(c.units)} ${unitLabel(c.it.unit)} ${tl("not reserved")}`
+                          : `#${c.oid}${c.customer?` · ${c.customer}`:""}: ${c.it.name} x ${fmtN(c.units)} ${unitLabel(c.it.unit)}${c.kind==="short"?` — ${tl("unfulfilled")}`:""}`;
+                        return (
+                          <g key={ci} onMouseMove={e=>{ const r = e.currentTarget.ownerSVGElement.getBoundingClientRect(); setTip({ x:e.clientX-r.left, y:e.clientY-r.top, text }); }}>
+                            <rect x={b.bx} y={c.y+1} width={BAR_W} height={Math.max(0,c.h-2)} rx="3" fill={fill}/>
+                            {label && c.h >= 34 && (
+                              <g>
+                                <rect x={b.bx+BAR_W/2-46} y={c.y+c.h/2-17} width="92" height="34" rx="4" fill={G.white} opacity="0.88"/>
+                                <text x={b.bx+BAR_W/2} y={c.y+c.h/2-3} textAnchor="middle" fontSize="12" fontWeight="700" fill={G.dark}>{label[0]}</text>
+                                <text x={b.bx+BAR_W/2} y={c.y+c.h/2+12} textAnchor="middle" fontSize="10.5" fill={G.dark}>{clip(label[1], 17)}</text>
+                              </g>
+                            )}
+                          </g>
+                        );
+                      })}
+                      <text x={b.bx+BAR_W/2} y={top-8} textAnchor="middle" fontSize="13" fontWeight="700" fill={G.dark}>{pct}</text>
+                      <text x={b.bx+BAR_W/2} y={TOP+PLOT_H+16} textAnchor="middle" fontSize="11.5" fontWeight="600" fill={G.dark}>{clip(b.run.process_name, 16)}</text>
+                      <text x={b.bx+BAR_W/2} y={TOP+PLOT_H+30} textAnchor="middle" fontSize="10.5" fill={G.muted}>{`${fmtN(madeUnits)} ${tl("units")} · ${fmtN(reservedUnits)} ${tl("reserved")}`}</text>
+                    </g>
+                  );
+                })}
+                <text x={g.bars[0].bx} y={TOP+PLOT_H+50} fontSize="11" fontWeight="700" fill={G.caramel}>{clip(g.name, 24)}</text>
+              </g>
+            ))}
+          </svg>
+        )}
+        {tip && <div style={{position:"absolute",left:Math.min(tip.x+14, W-200),top:tip.y+22,background:G.dark,color:G.white,fontSize:12,padding:"5px 9px",borderRadius:6,pointerEvents:"none",maxWidth:300,fontFamily:G.mono,zIndex:5}}>{tip.text}</div>}
+      </div>
+
+      {data.unfulfilled.length>0 && (
+        <div style={{marginTop:14,display:"flex",flexDirection:"column",gap:10}}>
+          {data.unfulfilled.map(u=>(
+            <div key={u.resid} style={{background:G.white,border:`1px solid ${G.red}`,borderRadius:12,padding:"12px 16px",display:"flex",gap:14,alignItems:"center",flexWrap:"wrap"}}>
+              <div style={{flex:"1 1 280px",minWidth:0}}>
+                <div style={{fontSize:14,fontWeight:700,color:G.dark}}>😰 {tl("Order")} #{u.oid} {tl("unfulfilled")}</div>
+                <div style={{fontSize:13,color:G.muted,marginTop:3,lineHeight:1.5}}>
+                  {fmtN(u.shortfall)} × {u.item_name} {tl("could not be produced")} ({u.process_name}). {u.guest_name}{u.guest_email?` · ${u.guest_email}`:""}{u.guest_phone?` · ${u.guest_phone}`:""}
+                </div>
+              </div>
+              <Btn size="sm" variant="secondary" disabled={busy} onClick={()=>decide(u,"reproduce")}>{tl("Re-produce")}</Btn>
+              <Btn size="sm" variant="danger" disabled={busy} onClick={()=>setConfirm(u)}>{tl("Contact customer & cancel")}</Btn>
+            </div>
+          ))}
+        </div>
+      )}
+      {confirm && (
+        <div style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.45)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{background:G.white,borderRadius:16,padding:32,maxWidth:480,width:"90%",boxShadow:"0 20px 60px rgba(44,24,16,0.2)"}}>
+            <h3 style={{fontFamily:G.font,fontSize:20,marginBottom:12}}>{tl("Cancel order")} #{confirm.oid}?</h3>
+            <p style={{color:G.muted,lineHeight:1.6,marginBottom:14,fontSize:15}}>{tl("Please let the customer know first:")}</p>
+            <div style={{background:G.sand,borderRadius:10,padding:"12px 16px",marginBottom:20,fontSize:14,color:G.dark,lineHeight:1.7}}>
+              <b>{confirm.guest_name}</b>{confirm.guest_phone&&<div>{confirm.guest_phone}</div>}{confirm.guest_email&&<div>{confirm.guest_email}</div>}
+            </div>
+            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+              <Btn variant="ghost" onClick={()=>setConfirm(null)}>{tl("Back")}</Btn>
+              <Btn variant="danger" loading={busy} onClick={()=>decide(confirm,"cancel")}>{tl("Cancel order")}</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OrdersManufPage({
  toast }) {
   const lang = useLangContext();
@@ -4099,6 +4290,7 @@ function OrdersManufPage({
           </div>
         </>
       )}
+      <ProductionChart toast={toast}/>
       <Dialog open={dialog==="decline"} title="Decline order?" onConfirm={decline} onCancel={()=>setDialog(null)}>Are you sure you want to decline order #{pending}?</Dialog>
     </Page>
   );

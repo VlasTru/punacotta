@@ -48,6 +48,10 @@ export const api = {
   updateProduct:     (pid, data) => req('PATCH', `/products/${pid}`, data),
   deleteProducts:    (ids, cascade_recipes) => req('DELETE', '/products', { ids, cascade_recipes }),
 
+  // Production chart
+  getProduction:     ()           => req('GET',    '/production'),
+  resolveShortfall:  (resid, action) => req('POST', `/production/shortfall/${resid}`, { action }),
+
   // Packaging
   getPackages:       ()           => req('GET',    '/packages'),
   getPackageForecast:()           => req('GET',    '/packages/forecast'),

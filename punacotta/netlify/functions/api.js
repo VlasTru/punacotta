@@ -29,6 +29,8 @@ async function ensureMigrations() {
   _migrated = true
   try {
     await dbr(`ALTER TABLE menu ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT false`)
+    await dbr(`ALTER TABLE boa_reservation ADD COLUMN IF NOT EXISTS shortfall NUMERIC(10,3) NOT NULL DEFAULT 0`)
+    await dbr(`ALTER TABLE boa_reservation ADD COLUMN IF NOT EXISTS shortfall_state VARCHAR(12)`)
     // Packaging: a package is a product row flagged is_package (so purchasing, supplier links and stock reuse the product machinery)
     await dbr(`ALTER TABLE product ADD COLUMN IF NOT EXISTS is_package BOOLEAN NOT NULL DEFAULT false`)
     await dbr(`ALTER TABLE product ADD COLUMN IF NOT EXISTS owner_uid INTEGER`)
@@ -554,7 +556,8 @@ function isOwnBoaOrder(o, user) {
 // Cancelling / declining a BoA order frees its reservation and puts reserved units back in stock
 async function releaseBoaOrder(oid) {
   await dbr(`UPDATE boa_reservation SET status='cancelled' WHERE oid=$1 AND status IN ('pending','confirmed')`, [oid])
-  await dbr(`DELETE FROM recipe_stock WHERE source='boa' AND source_id=$1`, [oid])
+  await dbr(`DELETE FROM recipe_stock WHERE source IN ('boa','boa_short') AND source_id=$1`, [oid])
+  await dbr(`UPDATE boa_reservation SET shortfall=0, shortfall_state=NULL WHERE oid=$1`, [oid])
 }
 
 async function logUnsoldStock(ownerUid, prid, rid, wasted) {
@@ -835,6 +838,42 @@ async function syncSingleNotification(ownerUid, kind, period, text, payload) {
   await upsertNotification(ownerUid, kind, 0, period, text, payload)
 }
 
+// ─── UNFULFILLED BOARD OF ARRIVALS ORDERS ─────────────────────────────────────
+// When a batch ends (completed or stopped) with fewer units than were reserved, reservations are served
+// first come, first served; the rest of the latest ones is the shortfall (state 'open') until the
+// restaurant decides: cancel the order or re-produce the missing units.
+async function settleRunShortfall(prid) {
+  const items = await dbq('SELECT rid, COALESCE(accepted_qty, qty) AS made FROM process_run_item WHERE prid=$1', [prid])
+  for (const it of items) {
+    const res = await dbq(
+      `SELECT br.resid, oi.qty FROM boa_reservation br
+       JOIN "order" o ON o.oid=br.oid AND o.status NOT IN ('Declined','Cancelled')
+       JOIN order_item oi ON oi.oid=o.oid AND oi.rid=br.rid
+       WHERE br.prid=$1 AND br.rid=$2 AND br.status='confirmed' ORDER BY br.resid`, [prid, it.rid])
+    let left = Number(it.made)
+    for (const r of res) {
+      const give = Math.min(left, Number(r.qty)); left -= give
+      const short = Math.round((Number(r.qty) - give) * 1000) / 1000
+      await dbr(`UPDATE boa_reservation SET shortfall=$2, shortfall_state=$3 WHERE resid=$1`,
+        [r.resid, short, short > 0 ? 'open' : null])
+    }
+  }
+}
+
+// 😰 One notification listing every order that could not be fully produced and still awaits a decision
+async function refreshUnfulfilledNotification(ownerUid) {
+  try {
+    if (!ownerUid) return
+    const rows = await dbq(
+      `SELECT DISTINCT br.oid FROM boa_reservation br JOIN "order" o ON o.oid=br.oid
+       WHERE br.owner_uid=$1 AND br.shortfall > 0 AND br.shortfall_state='open'
+         AND o.status NOT IN ('Declined','Cancelled') ORDER BY br.oid`, [ownerUid])
+    const ids = rows.map(r => `#${r.oid}`)
+    const text = ids.length ? `😰 Order${ids.length > 1 ? 's' : ''} ${ids.join(', ')} unfulfilled.` : null
+    await syncSingleNotification(ownerUid, 'unfulfilled', 'auto:unfulfilled', text, { count: ids.length })
+  } catch (e) { console.error('refreshUnfulfilledNotification failed', e.message) }
+}
+
 // 🚛 One notification listing every submitted supply order whose expected delivery date is today
 async function refreshDeliveriesNotification(ownerUid) {
   try {
@@ -920,6 +959,7 @@ async function refreshStockNotifications(ownerUid) {
     if (!ownerUid) return
     await refreshUnlistedNotification(ownerUid)
     await refreshDeliveriesNotification(ownerUid)
+    await refreshUnfulfilledNotification(ownerUid)
     await refreshEquipmentUtilization(ownerUid)
     for (const period of Object.keys(PERIOD_DAYS)) {
       const pic = await computeStockPicture(ownerUid, period)
@@ -1019,13 +1059,14 @@ async function route(method, segments, body, headers, event) {
         if (!calc || Date.now() - new Date(calc.computed_at).getTime() > 15 * 60000) await refreshStockNotifications(ownerUid)
         else await refreshUnlistedNotification(ownerUid)
         await refreshDeliveriesNotification(ownerUid)
+        await refreshUnfulfilledNotification(ownerUid)
         const rows = await dbq(
           `SELECT n.nid, n.kind, n.pid, n.text, n.created_at, s.seen_at
            FROM stock_notification n
            LEFT JOIN stock_notification_state s ON s.nid=n.nid AND s.uid=$2
            WHERE n.owner_uid=$1 AND s.dismissed_at IS NULL
              AND ((n.kind IN ('shortage','wastage','equip_util') AND n.period=$3 AND n.resolved_at IS NULL)
-               OR (n.kind='deliveries' AND n.resolved_at IS NULL)
+               OR (n.kind IN ('deliveries','unfulfilled') AND n.resolved_at IS NULL)
                OR (n.kind='auto_wastage' AND n.created_at >= NOW() - INTERVAL '3 days')
                OR (n.kind='unlisted' AND n.resolved_at IS NULL))
            ORDER BY n.created_at DESC`, [ownerUid, user.uid, period])
@@ -3141,6 +3182,92 @@ async function route(method, segments, body, headers, event) {
     }
   }
 
+  // ── PRODUCTION (capacity chart on the Orders tab) ───────────────────────────────
+  if (r0 === 'production') {
+    if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+
+    // GET /production — running batches (plus recently finished ones with a shortfall), the equipment each
+    // item is made on, and the Board of Arrivals reservations against every item.
+    if (!r1 && method === 'GET') {
+      const runs = await dbq(
+        `SELECT pr.prid, pr.procid, pr.status, pr.started_at, pr.completed_at, p.name AS process_name
+         FROM process_run pr JOIN process p ON p.procid=pr.procid
+         WHERE pr.owner_uid=$1 AND (pr.status IN ('in_progress','on_hold')
+            OR (pr.completed_at >= NOW() - INTERVAL '24 hours' AND EXISTS (
+                  SELECT 1 FROM boa_reservation b WHERE b.prid=pr.prid AND b.shortfall > 0 AND b.shortfall_state='open')))
+         ORDER BY pr.prid`, [user.uid])
+      const prids = runs.map(r => r.prid)
+      const items = prids.length ? await dbq(
+        `SELECT pri.prid, pri.rid, pri.qty, pri.accepted_qty, r.name, un.name AS unit
+         FROM process_run_item pri JOIN recipe r ON r.rid=pri.rid LEFT JOIN units un ON un.unid=r.unid
+         WHERE pri.prid = ANY($1::int[]) ORDER BY r.name`, [prids]) : []
+      const rids = [...new Set(items.map(i => i.rid))]
+      const eq = rids.length ? await dbq(
+        `SELECT ei.rid, ei.eid, ei.volume, e.name FROM equipment_item ei
+         JOIN equipment e ON e.eid=ei.eid AND e.owner_uid=$2 AND COALESCE(e.status,'idle') <> 'inactive'
+         WHERE ei.rid = ANY($1::int[]) ORDER BY ei.eid`, [rids, user.uid]) : []
+      const resv = prids.length ? await dbq(
+        `SELECT br.resid, br.prid, br.rid, br.oid, oi.qty, br.shortfall, br.shortfall_state,
+                br.guest_name, br.guest_email, br.guest_phone, o.status
+         FROM boa_reservation br
+         JOIN "order" o ON o.oid=br.oid AND o.status NOT IN ('Declined','Cancelled')
+         JOIN order_item oi ON oi.oid=o.oid AND oi.rid=br.rid
+         WHERE br.prid = ANY($1::int[]) AND br.status='confirmed' ORDER BY br.resid`, [prids]) : []
+      const out = runs.map(run => {
+        const finished = !['in_progress', 'on_hold'].includes(run.status)
+        return {
+          ...run, finished,
+          items: items.filter(i => i.prid === run.prid).map(i => {
+            const cands = eq.filter(e => e.rid === i.rid && Number(e.volume) > 0)
+            const e = cands[0] || null                        // first unit (by id) that can make this item
+            return {
+              rid: i.rid, name: i.name, unit: i.unit, declared: Number(i.qty),
+              made: finished ? Number(i.accepted_qty ?? i.qty) : null,
+              eid: e?.eid || null, equipment: e?.name || null, volume: e ? Number(e.volume) : null,
+              reservations: resv.filter(r => r.prid === run.prid && r.rid === i.rid).map(r => ({
+                resid: r.resid, oid: r.oid, qty: Number(r.qty), short: finished ? Number(r.shortfall) : 0,
+                state: r.shortfall_state, customer: r.guest_name,
+              })),
+            }
+          }),
+        }
+      })
+      // Every shortfall still waiting for a decision (whatever the age of its batch)
+      const open = await dbq(
+        `SELECT br.resid, br.oid, br.prid, br.rid, br.shortfall, br.guest_name, br.guest_email, br.guest_phone,
+                r.name AS item_name, un.name AS unit, p.name AS process_name, pr.procid
+         FROM boa_reservation br
+         JOIN "order" o ON o.oid=br.oid AND o.status NOT IN ('Declined','Cancelled')
+         JOIN recipe r ON r.rid=br.rid LEFT JOIN units un ON un.unid=r.unid
+         JOIN process_run pr ON pr.prid=br.prid JOIN process p ON p.procid=pr.procid
+         WHERE br.owner_uid=$1 AND br.shortfall > 0 AND br.shortfall_state='open' ORDER BY br.oid`, [user.uid])
+      return [200, { runs: out, unfulfilled: open.map(o => ({ ...o, shortfall: Number(o.shortfall) })) }]
+    }
+
+    // POST /production/shortfall/:resid { action: 'cancel' | 'reproduce' }
+    if (r1 === 'shortfall' && r2 && method === 'POST') {
+      const [br] = await dbq(
+        `SELECT br.*, pr.procid FROM boa_reservation br JOIN process_run pr ON pr.prid=br.prid
+         WHERE br.resid=$1 AND br.owner_uid=$2`, [r2, user.uid])
+      if (!br || br.shortfall_state !== 'open') return [404, { error: 'Nothing to resolve' }]
+      if (body?.action === 'cancel') {
+        await dbr(`UPDATE "order" SET status='Declined' WHERE oid=$1`, [br.oid])
+        await releaseBoaOrder(br.oid)
+        await dbr(`UPDATE boa_reservation SET shortfall_state='cancelled' WHERE resid=$1`, [br.resid])
+      } else if (body?.action === 'reproduce') {
+        // The missing units will come from a new batch: reserve them in the item ledger up front
+        await dbr(`UPDATE boa_reservation SET shortfall_state='reproduce' WHERE resid=$1`, [br.resid])
+        await dbr(
+          `INSERT INTO recipe_stock (rid, owner_uid, qty, source, source_id, created_at) VALUES ($1,$2,$3,'boa_short',$4,NOW())
+           ON CONFLICT (rid, owner_uid, source, source_id) DO UPDATE SET qty=$3`,
+          [br.rid, user.uid, -Number(br.shortfall), br.oid])
+      } else return [400, { error: 'Unknown action' }]
+      await refreshUnfulfilledNotification(user.uid)
+      await notifyStockChange(user.uid)
+      return [200, { ok: true, procid: br.procid }]
+    }
+  }
+
   // ── EQUIPMENT ─────────────────────────────────────────────────────────────────
   if (r0 === 'equipment') {
     if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
@@ -3327,6 +3454,10 @@ async function route(method, segments, body, headers, event) {
         }
       }
       // Batch finished → its units go into item stock first, then customer orders tied to it deduct theirs
+      if (runStatus === 'completed' || runStatus === 'cancelled') {
+        await settleRunShortfall(prid)
+        await refreshUnfulfilledNotification(ownerUid)
+      }
       if (runStatus === 'completed') {
         await creditRunStock(prid)
         const linked = await dbq(`SELECT oid FROM "order" WHERE prid=$1`, [prid])
