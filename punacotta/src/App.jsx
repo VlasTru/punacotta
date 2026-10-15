@@ -56,8 +56,8 @@ const RU = {
   "Procurement":"Снабжение","Suppliers":"Поставщики",
   "Restaurants":"Рестораны","My Orders":"Мои заказы",
   // Buttons
-  "+ New order":"+ Заказ","+ New product":"+ Продукт","+ New item":"+ Блюдо",
-  "+ New menu":"+ Меню","+ New supplier":"+ Поставщик",
+  "+ Order":"+ Заказ","+ Product":"+ Продукт","+ Item":"+ Блюдо",
+  "+ Menu":"+ Меню","+ New supplier":"+ Поставщик",
   // Status names (badge/table)
   "New":"Новый","Accepted":"Принят","Preparing":"Готовится","Done":"Выполнено",
   "Dispatched":"Передан","Declined":"Отклонён","Delivered":"Доставлен",
@@ -127,7 +127,7 @@ const RU = {
   "Are you sure you want to cancel order":"Вы уверены, что хотите отменить заказ",
   "No restaurants open right now":"Сейчас нет открытых ресторанов",
   "Check back soon!":"Загляните позже!",
-  "Quick Sale":"Быстрая продажа","Search items…":"Поиск позиций…","No items found":"Позиции не найдены","in stock":"в наличии","no stock":"нет в наличии","Current sale":"Текущая продажа","Tap items to add them.":"Нажимайте на позиции, чтобы добавить.","Sold":"Продано","Sold earlier":"Продано ранее","Clear":"Очистить","Recent sales":"Последние продажи","Undo":"Отменить","Sale undone":"Продажа отменена","Sell":"Продажа","Closing count":"Закрытие смены","Enter what is left of each item. Anything missing is recorded as sold; mark units as wasted if they were thrown away. Items you leave as they are stay unchanged.":"Введите остаток каждой позиции. Недостающее записывается как проданное; отметьте единицы, которые были списаны. Позиции без изменений остаются как есть.","No items with stock on hand.":"Нет позиций в наличии.","Expected":"Ожидается","sold":"продано","of which wasted":"из них списано","more than expected — stock will be raised":"больше ожидаемого — остаток будет увеличен","Add another item…":"Добавить другую позицию…","No differences yet.":"Расхождений пока нет.","Wasted":"Списано","Surplus added to stock":"Излишек добавлен в остаток","Count saved: no differences":"Подсчёт сохранён: расхождений нет","Save count":"Сохранить подсчёт","Voice input is not supported in this browser. Try Chrome or Safari.":"Голосовой ввод не поддерживается в этом браузере. Попробуйте Chrome или Safari.","Microphone access is blocked. Allow it in the browser settings.":"Доступ к микрофону заблокирован. Разрешите его в настройках браузера.","Voice error":"Ошибка голоса","Nothing was heard":"Ничего не услышано","Voice language":"Язык голоса","Stop":"Стоп","Speak a sale":"Продиктовать продажу","Listening…":"Слушаю…","I heard":"Я услышал","No items recognised. Try again or tap the items.":"Позиции не распознаны. Повторите или выберите нажатием.","Not recognised":"Не распознано","Confirm sale":"Подтвердить продажу","Add to ticket":"Добавить в чек","Discard":"Отмена","Speak again":"Повторить",
+  "Quick Sale":"Быстрая продажа","Online":"Онлайн","Offline":"Офлайн","Inventory":"Склад","Search items…":"Поиск позиций…","No items found":"Позиции не найдены","in stock":"в наличии","no stock":"нет в наличии","Current sale":"Текущая продажа","Tap items to add them.":"Нажимайте на позиции, чтобы добавить.","Sold":"Продано","Sold earlier":"Продано ранее","Clear":"Очистить","Recent sales":"Последние продажи","Undo":"Отменить","Sale undone":"Продажа отменена","Sell":"Продажа","Closing count":"Закрытие смены","Enter what is left of each item. Anything missing is recorded as sold; mark units as wasted if they were thrown away. Items you leave as they are stay unchanged.":"Введите остаток каждой позиции. Недостающее записывается как проданное; отметьте единицы, которые были списаны. Позиции без изменений остаются как есть.","No items with stock on hand.":"Нет позиций в наличии.","Expected":"Ожидается","sold":"продано","of which wasted":"из них списано","more than expected — stock will be raised":"больше ожидаемого — остаток будет увеличен","Add another item…":"Добавить другую позицию…","No differences yet.":"Расхождений пока нет.","Wasted":"Списано","Surplus added to stock":"Излишек добавлен в остаток","Count saved: no differences":"Подсчёт сохранён: расхождений нет","Save count":"Сохранить подсчёт","Voice input is not supported in this browser. Try Chrome or Safari.":"Голосовой ввод не поддерживается в этом браузере. Попробуйте Chrome или Safari.","Microphone access is blocked. Allow it in the browser settings.":"Доступ к микрофону заблокирован. Разрешите его в настройках браузера.","Voice error":"Ошибка голоса","Nothing was heard":"Ничего не услышано","Voice language":"Язык голоса","Stop":"Стоп","Speak a sale":"Продиктовать продажу","Listening…":"Слушаю…","I heard":"Я услышал","No items recognised. Try again or tap the items.":"Позиции не распознаны. Повторите или выберите нажатием.","Not recognised":"Не распознано","Confirm sale":"Подтвердить продажу","Add to ticket":"Добавить в чек","Discard":"Отмена","Speak again":"Повторить",
   "Reports":"Отчёты","Week":"Неделя","Month":"Месяц","Year":"Год",
   "Revenue":"Выручка","ABC Analysis":"ABC-анализ","Association Rules":"Правила ассоциации",
   "No data yet.":"Данных пока нет.",
@@ -1286,7 +1286,7 @@ function NotificationBell({ notifs, unseenCount, markSeen, dismiss, refresh, per
                       : <span style={{ width:28, flexShrink:0 }}/>
                     }
                     <div style={{ flex:1, minWidth:0 }}>
-                      <div style={{ fontFamily:G.mono, fontSize:12, color:G.dark, lineHeight:1.4 }}>{text}</div>
+                      <div style={{ fontFamily:G.mono, fontSize:12, color:G.dark, lineHeight:1.4 }}>{String(text).split(/\*\*(.+?)\*\*/g).map((t,i)=>i%2?<strong key={i}>{t}</strong>:t)}</div>
                       <div style={{ fontFamily:G.mono, fontSize:10, color:G.muted, marginTop:3 }}>{fmtNotifTs(n.addedAt)}</div>
                     </div>
                     <button onClick={()=>dismiss(n.psrid)} style={{ background:'none', border:'none', cursor:'pointer', color:G.muted, fontSize:14, lineHeight:1, flexShrink:0, padding:'2px 4px' }}>×</button>
@@ -1326,10 +1326,11 @@ function Nav({ user, page, setPage, logout, lang, setLang, notifProps, themePref
   },[]);
   const tl = k => lang==='ru' ? (RU[k]||k) : k;
   const links = isM
-    ? [{key:"orders-manuf",label:tl("Orders")},{key:"quick-sale",label:tl("Quick Sale")},{key:"products",label:tl("Products")},{key:"items",label:tl("Items")},{key:"menus",label:tl("Menus")},{key:"procurement",label:tl("Procurement")},{key:"suppliers",label:tl("Suppliers")},{key:"reports",label:tl("Reports")},{key:"staff",label:tl("Staff")},{key:"processes",label:tl("Processes")},{key:"equipment",label:tl("Equipment")}]
+    ? [{key:"orders-manuf",label:tl("Orders")},{key:"inventory",label:tl("Inventory")},{key:"menus",label:tl("Menus")},{key:"procurement",label:tl("Procurement")},{key:"suppliers",label:tl("Suppliers")},{key:"reports",label:tl("Reports")},{key:"staff",label:tl("Staff")},{key:"processes",label:tl("Processes")},{key:"equipment",label:tl("Equipment")}]
     : user?.employer_uid ? [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")},{key:"roster-emp",label:tl("My Roster")},{key:"processes-emp",label:tl("Processes")}]
     : [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")}];
   const navigate = key => { setPage(key); setDropOpen(false); };
+  const navActive = k => page===k || (k==="inventory" && (page==="products"||page==="items")) || (k==="orders-manuf" && page==="quick-sale");
   return (
     <>
     <nav style={{ background:G.white, borderBottom:`1px solid ${G.border}`, padding:"0 20px", display:"flex", alignItems:"center", height:60, position:"sticky", top:0, zIndex:300, boxShadow:"0 1px 12px rgba(44,24,16,0.06)" }}>
@@ -1347,7 +1348,7 @@ function Nav({ user, page, setPage, logout, lang, setLang, notifProps, themePref
           </button>}
       <div style={{ display:"flex", gap:2, flex:1, minWidth:0, overflow:"hidden" }}>
         {links.map(l=>(
-          <button key={l.key} onClick={()=>navigate(l.key)} style={{ background:page===l.key?G.sand:"none", border:"none", padding:"6px 10px", borderRadius:8, fontFamily:G.mono, fontSize:13, fontWeight:page===l.key?600:400, color:page===l.key?G.caramel:G.muted, cursor:"pointer", transition:"all 0.15s", whiteSpace:"nowrap" }}>{l.label}</button>
+          <button key={l.key} onClick={()=>navigate(l.key)} style={{ background:navActive(l.key)?G.sand:"none", border:"none", padding:"6px 10px", borderRadius:8, fontFamily:G.mono, fontSize:13, fontWeight:navActive(l.key)?600:400, color:navActive(l.key)?G.caramel:G.muted, cursor:"pointer", transition:"all 0.15s", whiteSpace:"nowrap" }}>{l.label}</button>
         ))}
       </div>
       {/* Notification bell */}
@@ -1948,7 +1949,7 @@ function ProductsPage({ toast }) {
         : <Btn variant="secondary" size="sm" onClick={()=>setWastageMode(true)}>Wastage</Btn>
       }
       <Btn variant="secondary" size="sm" onClick={refreshForecast} loading={refreshingForecast}>↻ Forecast</Btn>
-      {!wastageMode&&<Btn size="sm" onClick={()=>setShowForm(s=>!s)}>{tl("+ New product")}</Btn>}
+      {!wastageMode&&<Btn size="sm" onClick={()=>setShowForm(s=>!s)}>{tl("+ Product")}</Btn>}
     </div>}>
       {showForm&&(
         <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
@@ -2210,7 +2211,7 @@ function RecipesPage({
           ? <Btn variant="secondary" size="sm" onClick={()=>{setWastageMode(false);setWastageDeltas({});}}>✕ Cancel wastage</Btn>
           : <Btn variant="secondary" size="sm" onClick={()=>setWastageMode(true)}>Wastage</Btn>
         }
-        {!wastageMode&&<Btn size="sm" onClick={()=>setShowNew(s=>!s)}>{tl("+ New item")}</Btn>}
+        {!wastageMode&&<Btn size="sm" onClick={()=>setShowNew(s=>!s)}>{tl("+ Item")}</Btn>}
       </div>
     }>
       {showNew&&(
@@ -2664,7 +2665,7 @@ function MenusPage({
   }
 
   return (
-    <Page title={tl("Menus")} actions={<Btn size="sm" onClick={()=>setShowNew(s=>!s)}>{tl("+ New menu")}</Btn>}>
+    <Page title={tl("Menus")} actions={<Btn size="sm" onClick={()=>setShowNew(s=>!s)}>{tl("+ Menu")}</Btn>}>
       {showNew&&(
         <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
           <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>New Menu</h3>
@@ -3092,76 +3093,26 @@ function EditOrderModal({ order, toast, onClose, onSaved }) {
 }
 
 // ─── QUICK SALE (walk-in sales in one step) ──────────────────────────────────
-function QuickSalePage({ toast }) {
+// ─── CLOSING COUNT (inventory) ───────────────────────────────────────────────
+function ClosingCountPage({ toast }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
   const [items, setItems]   = useState([]);
-  const [recent, setRecent] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [cart, setCart]     = useState({});          // rid -> qty
-  const [filter, setFilter] = useState("");
   const [saving, setSaving] = useState(false);
   const [earlier, setEarlier] = useState(false);
   const [soldAt, setSoldAt] = useState("");
-  // ── Closing count ──
-  const [mode, setMode]       = useState("sell");      // "sell" | "count"
   const [counted, setCounted] = useState({});          // rid -> counted quantity (string, as typed)
   const [wasteQ, setWasteQ]   = useState({});          // rid -> units of the shortfall that were wasted
   const [extraRids, setExtraRids] = useState([]);      // items without stock that were added to the count
   const fmtN = v => String(Number(Number(v).toFixed(2)));
-
-  // ── Voice input (browser speech recognition, push-to-talk) ──
-  const SR = typeof window !== "undefined" ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
-  const vLang = lang==="ru" ? "ru-RU" : "en-US";           // speech language follows the app language
-  const [listening, setListening] = useState(false);
-  const [heard, setHeard]   = useState("");          // live / final transcript
-  const [voice, setVoice]   = useState(null);        // { text, lines, missed } awaiting confirmation
-  const recRef = useRef(null);
-  const stopListening = () => { try { recRef.current?.stop(); } catch {} };
-  const startListening = () => {
-    if (!SR) { toast(tl("Voice input is not supported in this browser. Try Chrome or Safari."),"error"); return; }
-    if (listening) { stopListening(); return; }
-    const rec = new SR();
-    rec.lang = vLang; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
-    let finalText = "";
-    rec.onresult = e => {
-      let txt = "";
-      for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript + " ";
-      finalText = txt.trim(); setHeard(finalText);
-    };
-    rec.onerror = e => {
-      if (e.error === "not-allowed" || e.error === "service-not-allowed") toast(tl("Microphone access is blocked. Allow it in the browser settings."),"error");
-      else if (e.error !== "no-speech" && e.error !== "aborted") toast(`${tl("Voice error")}: ${e.error}`,"error");
-    };
-    rec.onend = () => {
-      setListening(false); recRef.current = null;
-      if (finalText) setVoice({ text: finalText, ...parseVoiceSale(finalText, items) });
-      else toast(`${tl("Nothing was heard")} (${vLang==="ru-RU"?"RU":"EN"})`,"error");
-      setHeard("");
-    };
-    recRef.current = rec; setHeard(""); setVoice(null); setListening(true);
-    try { rec.start(); } catch { setListening(false); }
-  };
-  useEffect(()=>()=>{ try { recRef.current?.abort(); } catch {} },[]);
-  const voiceBump = (rid, d) => setVoice(v => {
-    const lines = v.lines.map(l => l.rid===rid ? { ...l, qty: l.qty + d } : l).filter(l => l.qty > 0);
-    return { ...v, lines };
-  });
-  const voiceToCart = () => {
-    setCart(c => { const n = { ...c }; voice.lines.forEach(l => { n[l.rid] = (n[l.rid]||0) + l.qty; }); return n; });
-    setVoice(null);
-  };
-  const voiceSellNow = async () => {
-    if (!voice?.lines.length) return;
-    setSaving(true);
-    try {
-      const vl = voice.lines.map(l => ({ ...items.find(i=>i.rid===l.rid), qty: l.qty }));
-      await api.postQuickSale({ items: voice.lines });
-      toast(`${tl("Sold")}: ${vl.map(l=>`${l.qty} × ${l.name}`).join(", ")} — ${vl.reduce((s,l)=>s+l.qty*Number(l.price),0).toLocaleString()} ${vl[0]?.currency||"AMD"}`);
-      setVoice(null); await load();
-    } catch(e){ toast(e.message,"error"); }
-    finally { setSaving(false); }
-  };
+  const currency = items[0]?.currency || "AMD";
+  const load = useCallback(async () => {
+    try { const d = await api.getQuickSale(); setItems(d.items||[]); }
+    catch(e){ toast(e.message,"error"); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(()=>{ load(); },[]);
 
   const countItems = items.filter(i => i.stock > 0 || extraRids.includes(i.rid));
   const cVal = i => counted[i.rid] === undefined || counted[i.rid] === "" ? i.stock : Number(counted[i.rid]);
@@ -3194,47 +3145,9 @@ function QuickSalePage({ toast }) {
     finally { setSaving(false); }
   };
 
-  const load = useCallback(async () => {
-    try { const d = await api.getQuickSale(); setItems(d.items||[]); setRecent(d.recent||[]); }
-    catch(e){ toast(e.message,"error"); }
-    finally { setLoading(false); }
-  }, []);
-  useEffect(()=>{ load(); },[]);
-
-  const bump = (rid, d) => setCart(c => {
-    const q = Math.max(0, (c[rid]||0) + d);
-    const n = { ...c }; if (q) n[rid] = q; else delete n[rid];
-    return n;
-  });
-  const lines = items.filter(i => cart[i.rid]).map(i => ({ ...i, qty: cart[i.rid] }));
-  const total = lines.reduce((s,l)=>s+l.qty*Number(l.price),0);
-  const currency = lines[0]?.currency || items[0]?.currency || "AMD";
-  const shown = items.filter(i => !filter.trim() || i.name.toLowerCase().includes(filter.trim().toLowerCase()));
-
-  const sell = async () => {
-    if (!lines.length) return;
-    setSaving(true);
-    try {
-      await api.postQuickSale({ items: lines.map(l=>({rid:l.rid, qty:l.qty})), sold_at: earlier && soldAt ? new Date(soldAt).toISOString() : undefined });
-      toast(`${tl("Sold")}: ${lines.map(l=>`${l.qty} × ${l.name}`).join(", ")} — ${total.toLocaleString()} ${currency}`);
-      setCart({}); setEarlier(false); setSoldAt("");
-      await load();
-    } catch(e){ toast(e.message,"error"); }
-    finally { setSaving(false); }
-  };
-  const undo = async oid => {
-    try { await api.undoQuickSale(oid); toast(tl("Sale undone")); await load(); }
-    catch(e){ toast(e.message,"error"); }
-  };
-
   return (
-    <Page title={tl("Quick Sale")}>
-      <div style={{display:"inline-flex",border:`1px solid ${G.border}`,borderRadius:10,overflow:"hidden",marginBottom:18}}>
-        {[["sell",tl("Sell")],["count",tl("Closing count")]].map(([k,l])=>(
-          <button key={k} onClick={()=>setMode(k)} style={{padding:"9px 20px",border:"none",cursor:"pointer",fontSize:14,fontFamily:G.mono,background:mode===k?G.caramel:G.white,color:mode===k?G.white:G.muted}}>{l}</button>
-        ))}
-      </div>
-      {mode==="count" && !loading && (
+    <Page title={tl("Closing count")}>
+      {loading ? <Spinner/> : (
         <div style={{maxWidth:760}}>
           <p style={{fontSize:13,color:G.muted,margin:"0 0 14px",lineHeight:1.5}}>{tl("Enter what is left of each item. Anything missing is recorded as sold; mark units as wasted if they were thrown away. Items you leave as they are stay unchanged.")}</p>
           <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,overflow:"hidden"}}>
@@ -3295,7 +3208,112 @@ function QuickSalePage({ toast }) {
           </div>
         </div>
       )}
-      {mode==="sell" && (loading ? <Spinner/> : (
+    </Page>
+  );
+}
+
+function QuickSalePage({ toast }) {
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+  const [items, setItems]   = useState([]);
+  const [recent, setRecent] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [cart, setCart]     = useState({});          // rid -> qty
+  const [filter, setFilter] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [earlier, setEarlier] = useState(false);
+  const [soldAt, setSoldAt] = useState("");
+  const fmtN = v => String(Number(Number(v).toFixed(2)));
+
+  // ── Voice input (browser speech recognition, push-to-talk) ──
+  const SR = typeof window !== "undefined" ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
+  const vLang = lang==="ru" ? "ru-RU" : "en-US";           // speech language follows the app language
+  const [listening, setListening] = useState(false);
+  const [heard, setHeard]   = useState("");          // live / final transcript
+  const [voice, setVoice]   = useState(null);        // { text, lines, missed } awaiting confirmation
+  const recRef = useRef(null);
+  const stopListening = () => { try { recRef.current?.stop(); } catch {} };
+  const startListening = () => {
+    if (!SR) { toast(tl("Voice input is not supported in this browser. Try Chrome or Safari."),"error"); return; }
+    if (listening) { stopListening(); return; }
+    const rec = new SR();
+    rec.lang = vLang; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
+    let finalText = "";
+    rec.onresult = e => {
+      let txt = "";
+      for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript + " ";
+      finalText = txt.trim(); setHeard(finalText);
+    };
+    rec.onerror = e => {
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") toast(tl("Microphone access is blocked. Allow it in the browser settings."),"error");
+      else if (e.error !== "no-speech" && e.error !== "aborted") toast(`${tl("Voice error")}: ${e.error}`,"error");
+    };
+    rec.onend = () => {
+      setListening(false); recRef.current = null;
+      if (finalText) setVoice({ text: finalText, ...parseVoiceSale(finalText, items) });
+      else toast(`${tl("Nothing was heard")} (${vLang==="ru-RU"?"RU":"EN"})`,"error");
+      setHeard("");
+    };
+    recRef.current = rec; setHeard(""); setVoice(null); setListening(true);
+    try { rec.start(); } catch { setListening(false); }
+  };
+  useEffect(()=>()=>{ try { recRef.current?.abort(); } catch {} },[]);
+  const voiceBump = (rid, d) => setVoice(v => {
+    const lines = v.lines.map(l => l.rid===rid ? { ...l, qty: l.qty + d } : l).filter(l => l.qty > 0);
+    return { ...v, lines };
+  });
+  const voiceToCart = () => {
+    setCart(c => { const n = { ...c }; voice.lines.forEach(l => { n[l.rid] = (n[l.rid]||0) + l.qty; }); return n; });
+    setVoice(null);
+  };
+  const voiceSellNow = async () => {
+    if (!voice?.lines.length) return;
+    setSaving(true);
+    try {
+      const vl = voice.lines.map(l => ({ ...items.find(i=>i.rid===l.rid), qty: l.qty }));
+      await api.postQuickSale({ items: voice.lines });
+      toast(`${tl("Sold")}: ${vl.map(l=>`${l.qty} × ${l.name}`).join(", ")} — ${vl.reduce((s,l)=>s+l.qty*Number(l.price),0).toLocaleString()} ${vl[0]?.currency||"AMD"}`);
+      setVoice(null); await load();
+    } catch(e){ toast(e.message,"error"); }
+    finally { setSaving(false); }
+  };
+
+  const load = useCallback(async () => {
+    try { const d = await api.getQuickSale(); setItems(d.items||[]); setRecent(d.recent||[]); }
+    catch(e){ toast(e.message,"error"); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(()=>{ load(); },[]);
+
+  const bump = (rid, d) => setCart(c => {
+    const q = Math.max(0, (c[rid]||0) + d);
+    const n = { ...c }; if (q) n[rid] = q; else delete n[rid];
+    return n;
+  });
+  const lines = items.filter(i => cart[i.rid]).map(i => ({ ...i, qty: cart[i.rid] }));
+  const total = lines.reduce((s,l)=>s+l.qty*Number(l.price),0);
+  const currency = lines[0]?.currency || items[0]?.currency || "AMD";
+  const shown = items.filter(i => !filter.trim() || i.name.toLowerCase().includes(filter.trim().toLowerCase()));
+
+  const sell = async () => {
+    if (!lines.length) return;
+    setSaving(true);
+    try {
+      await api.postQuickSale({ items: lines.map(l=>({rid:l.rid, qty:l.qty})), sold_at: earlier && soldAt ? new Date(soldAt).toISOString() : undefined });
+      toast(`${tl("Sold")}: ${lines.map(l=>`${l.qty} × ${l.name}`).join(", ")} — ${total.toLocaleString()} ${currency}`);
+      setCart({}); setEarlier(false); setSoldAt("");
+      await load();
+    } catch(e){ toast(e.message,"error"); }
+    finally { setSaving(false); }
+  };
+  const undo = async oid => {
+    try { await api.undoQuickSale(oid); toast(tl("Sale undone")); await load(); }
+    catch(e){ toast(e.message,"error"); }
+  };
+
+  return (
+    <Page title={tl("Quick Sale")}>
+      {loading ? <Spinner/> : (
         <div style={{display:"flex",gap:20,alignItems:"flex-start",flexWrap:"wrap"}}>
           {/* Tiles */}
           <div style={{flex:"1 1 420px",minWidth:0}}>
@@ -3415,9 +3433,52 @@ function QuickSalePage({ toast }) {
             )}
           </div>
         </div>
-      ))}
-      {mode==="count" && loading && <Spinner/>}
+      )}
     </Page>
+  );
+}
+
+// Segmented toggle used by the Orders and Inventory hubs
+function SegToggle({ options, value, onChange }) {
+  return (
+    <div style={{display:"inline-flex",border:`1px solid ${G.border}`,borderRadius:10,overflow:"hidden"}}>
+      {options.map(([k,l])=>(
+        <button key={k} onClick={()=>onChange(k)} style={{padding:"9px 20px",border:"none",cursor:"pointer",fontSize:14,fontFamily:G.mono,background:value===k?G.caramel:G.white,color:value===k?G.white:G.muted}}>{l}</button>
+      ))}
+    </div>
+  );
+}
+
+// Orders = Online (customer / Board of Arrivals orders) | Offline (walk-in Quick Sale)
+function OrdersHub({ toast }) {
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+  const [view, setView] = useState("online");
+  return (
+    <>
+      <div style={{maxWidth:1100,margin:"0 auto",padding:"24px 24px 0"}}>
+        <SegToggle options={[["online",tl("Online")],["offline",tl("Offline")]]} value={view} onChange={setView}/>
+      </div>
+      {view==="online" ? <OrdersManufPage toast={toast}/> : <QuickSalePage toast={toast}/>}
+    </>
+  );
+}
+
+// Inventory = Products | Items | Closing count
+function InventoryHub({ toast, initial }) {
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+  const [view, setView] = useState(initial || "products");
+  useEffect(()=>{ if (initial) setView(initial); },[initial]);
+  return (
+    <>
+      <div style={{maxWidth:1100,margin:"0 auto",padding:"24px 24px 0"}}>
+        <SegToggle options={[["products",tl("Products")],["items",tl("Items")],["count",tl("Closing count")]]} value={view} onChange={setView}/>
+      </div>
+      {view==="products" && <ProductsPage toast={toast}/>}
+      {view==="items"    && <RecipesPage toast={toast}/>}
+      {view==="count"    && <ClosingCountPage toast={toast}/>}
+    </>
   );
 }
 
@@ -3607,7 +3668,7 @@ function OrdersManufPage({
 
   const toolbar = (
     <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"nowrap" }}>
-      <Btn size="sm" onClick={()=>setShowNewOrder(true)}>{tl("+ New order")}</Btn>
+      <Btn size="sm" onClick={()=>setShowNewOrder(true)}>{tl("+ Order")}</Btn>
       <div style={{ position:"relative", display:"inline-flex", alignItems:"center" }}>
         <input value={searchInput} onChange={e=>setSearchInput(e.target.value)} placeholder={tl("Search")+"…"}
           style={{ padding:"6px 28px 6px 10px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, width:160, outline:"none" }}
@@ -4666,7 +4727,7 @@ function ProcurementPage({
           catch(e){ toast(e.message,"error"); }
           finally{ setSaving(false); }
         }}>From forecast</Btn>
-        <Btn size="sm" onClick={()=>setShowNew(s=>!s)}>+ New Order</Btn>
+        <Btn size="sm" onClick={()=>setShowNew(s=>!s)}>{tl("+ Order")}</Btn>
       </div>
     }>
 
@@ -9943,8 +10004,7 @@ export default function App() {
                 color:G.caramel,letterSpacing:"-0.3px",lineHeight:1}}>tanelu</span>
             </span>
           </div>
-          {page==="products"     &&<ProductsPage toast={toast}/>}
-          {page==="items"        &&<RecipesPage  toast={toast}/>}
+          {(page==="inventory"||page==="products"||page==="items") &&<InventoryHub toast={toast} initial={page==="items"?"items":page==="products"?"products":undefined}/>}
           {page==="recipes"      &&<RecipesPage  toast={toast}/>}
           {page==="menus"        &&<MenusPage    toast={toast} storeSchedule={storeSchedule} setStoreSchedule={setStoreSchedule}/>}
           {page==="procurement"  &&<ProcurementPage toast={toast}/>}
@@ -9957,8 +10017,7 @@ export default function App() {
           {page==="roster-emp"   &&<RosterPage            user={user} toast={toast}/>}
           {page==="processes-emp"&&<EmployeeProcessesPage user={user} setPage={setPage} toast={toast}/>}
           {page==="embed"        &&<EmbedMenuPage toast={toast}/>}
-          {page==="orders-manuf" &&<OrdersManufPage toast={toast}/>}
-          {page==="quick-sale"   &&<QuickSalePage toast={toast}/>}
+          {(page==="orders-manuf"||page==="quick-sale") &&<OrdersHub toast={toast}/>}
           {page==="restaurants"  &&<RestaurantsPage setPage={setPage} setActiveMenu={setActiveMenu}/>}
           {page==="order"        &&<OrderPage menu={activeMenu} user={user} setPage={setPage} toast={toast}/>}
           {page==="orders-cust"  &&<OrdersCustPage toast={toast}/>}

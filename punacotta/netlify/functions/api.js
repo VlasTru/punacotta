@@ -714,10 +714,125 @@ async function refreshUnlistedNotification(ownerUid) {
   } catch (e) { console.error('refreshUnlistedNotification failed', e.message) }
 }
 
+// ── Owner-local time helpers ──────────────────────────────────────────────────
+async function ownerTimezone(ownerUid) {
+  const [u] = await dbq('SELECT schedule FROM "user" WHERE uid=$1', [ownerUid])
+  try {
+    const sch = typeof u?.schedule === 'string' ? JSON.parse(u.schedule) : (u?.schedule || {})
+    return sch.timezone || 'UTC'
+  } catch { return 'UTC' }
+}
+// Local calendar parts for a timestamp in a time zone, plus the zone's UTC offset in ms
+function tzParts(tz, ms = Date.now()) {
+  try {
+    const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz, hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      .formatToParts(new Date(ms)).map(x => [x.type, x.value]))
+    const asUtc = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second)
+    return { y: +p.year, m: +p.month, d: +p.day, offset: Math.round((asUtc - Math.floor(ms / 1000) * 1000) / 60000) * 60000 }
+  } catch {
+    const d = new Date(ms); return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate(), offset: 0 }
+  }
+}
+const localDateStr = (tz, ms = Date.now()) => { const t = tzParts(tz, ms); return `${t.y}-${String(t.m).padStart(2, '0')}-${String(t.d).padStart(2, '0')}` }
+
+// Keep exactly one active notification for (owner, kind, period): a changed text closes the old one
+// and opens a new one (so it shows as unread again); no text closes it.
+async function syncSingleNotification(ownerUid, kind, period, text, payload) {
+  const [cur] = await dbq(
+    `SELECT nid, text FROM stock_notification WHERE owner_uid=$1 AND kind=$2 AND pid=0 AND period=$3 AND resolved_at IS NULL`,
+    [ownerUid, kind, period])
+  if (!text) { if (cur) await dbr(`UPDATE stock_notification SET resolved_at=NOW() WHERE nid=$1`, [cur.nid]); return }
+  if (cur && cur.text === text) return
+  if (cur) await dbr(`UPDATE stock_notification SET resolved_at=NOW() WHERE nid=$1`, [cur.nid])
+  await upsertNotification(ownerUid, kind, 0, period, text, payload)
+}
+
+// 🚛 One notification listing every submitted supply order whose expected delivery date is today
+async function refreshDeliveriesNotification(ownerUid) {
+  try {
+    if (!ownerUid) return
+    const today = localDateStr(await ownerTimezone(ownerUid))
+    const rows = await dbq(
+      `SELECT so.order_id, s.name AS supplier FROM supplier_order so JOIN supplier s ON s.sid=so.sid
+       WHERE so.owner_uid=$1 AND so.status='Submitted' AND so.etd IS NOT NULL AND so.etd::date = $2::date
+       ORDER BY lower(s.name), so.order_id`, [ownerUid, today])
+    let text = null
+    if (rows.length) {
+      const by = new Map()
+      for (const r of rows) by.set(r.supplier, [...(by.get(r.supplier) || []), r.order_id])
+      text = `🚛 Deliveries expected: ${[...by].map(([sup, ids]) => `${ids.join(', ')} by ${sup}`).join('; ')}.`
+    }
+    await syncSingleNotification(ownerUid, 'deliveries', 'auto:deliveries', text, { count: rows.length })
+  } catch (e) { console.error('refreshDeliveriesNotification failed', e.message) }
+}
+
+// 📉/📈 Equipment utilization per unit: busy hours of the latest finished period compared with the
+// mean ± 1 standard deviation of up to 8 earlier periods (normal-distribution test). Runs are
+// attributed to the units whose item list contains one of the run's items (split evenly).
+async function refreshEquipmentUtilization(ownerUid) {
+  try {
+    if (!ownerUid) return
+    const tz = await ownerTimezone(ownerUid)
+    const t = tzParts(tz)
+    const todayStart = Date.UTC(t.y, t.m - 1, t.d) - t.offset          // local midnight, as UTC ms
+    const DAY = 86400000, BUCKETS = 9                                   // latest + 8 earlier
+    const eqs = await dbq(`SELECT eid, name FROM equipment WHERE owner_uid=$1 AND COALESCE(status,'idle') <> 'inactive'`, [ownerUid])
+    if (!eqs.length) return
+    for (const [period, P] of Object.entries(PERIOD_DAYS)) {
+      const from = todayStart - BUCKETS * P * DAY
+      const runs = await dbq(
+        `SELECT prid, started_at, COALESCE(completed_at, NOW()) AS ended_at FROM process_run
+         WHERE owner_uid=$1 AND started_at < $3 AND COALESCE(completed_at, NOW()) > $2`,
+        [ownerUid, new Date(from), new Date(todayStart)])
+      const hours = new Map(eqs.map(e => [e.eid, new Array(BUCKETS).fill(0)]))
+      if (runs.length) {
+        const links = await dbq(
+          `SELECT DISTINCT pri.prid, ei.eid FROM process_run_item pri
+           JOIN equipment_item ei ON ei.rid=pri.rid JOIN equipment e ON e.eid=ei.eid AND e.owner_uid=$1
+           WHERE pri.prid = ANY($2::int[])`, [ownerUid, runs.map(r => r.prid)])
+        const unitsOf = new Map()
+        for (const l of links) unitsOf.set(l.prid, [...(unitsOf.get(l.prid) || []), l.eid])
+        for (const r of runs) {
+          const units = (unitsOf.get(r.prid) || []).filter(e => hours.has(e))
+          if (!units.length) continue
+          const a = new Date(r.started_at).getTime(), b = new Date(r.ended_at).getTime()
+          for (let k = 0; k < BUCKETS; k++) {
+            const bs = todayStart - (k + 1) * P * DAY, be = todayStart - k * P * DAY
+            const ov = Math.max(0, Math.min(b, be) - Math.max(a, bs)) / 3600000
+            if (ov > 0) for (const e of units) hours.get(e)[k] += ov / units.length
+          }
+        }
+      }
+      const keep = new Set()
+      for (const eq of eqs) {
+        const v = hours.get(eq.eid), prevs = v.slice(1)
+        if (prevs.filter(x => x > 0).length < 3 || !(v[1] > 0)) continue          // not enough history
+        const mean = prevs.reduce((x, y) => x + y, 0) / prevs.length
+        const sd = Math.sqrt(prevs.reduce((x, y) => x + (y - mean) ** 2, 0) / prevs.length)
+        if (!(sd > 0) || Math.abs(v[0] - mean) <= sd) continue                    // within one SD: normal
+        const up = v[0] > mean
+        if ((v[0] > v[1]) !== up || v[0] === v[1]) continue                       // keep wording consistent
+        const pct = Math.round(Math.abs(v[0] - v[1]) / v[1] * 100)
+        if (pct < 1) continue
+        keep.add(eq.eid)
+        await upsertNotification(ownerUid, 'equip_util', eq.eid, period,
+          `${up ? '📈' : '📉'} ${eq.name} utilization is **${up ? 'up' : 'down'}** ${pct}% compared with the previous period.`,
+          { hours: v[0], prev: v[1], mean, sd })
+      }
+      await dbr(
+        `UPDATE stock_notification SET resolved_at=NOW()
+         WHERE owner_uid=$1 AND kind='equip_util' AND period=$2 AND resolved_at IS NULL AND NOT (pid = ANY($3::int[]))`,
+        [ownerUid, period, [...keep]])
+    }
+  } catch (e) { console.error('refreshEquipmentUtilization failed', e.message) }
+}
+
 async function refreshStockNotifications(ownerUid) {
   try {
     if (!ownerUid) return
     await refreshUnlistedNotification(ownerUid)
+    await refreshDeliveriesNotification(ownerUid)
+    await refreshEquipmentUtilization(ownerUid)
     for (const period of Object.keys(PERIOD_DAYS)) {
       const pic = await computeStockPicture(ownerUid, period)
       const keep = { shortage: new Set(), wastage: new Set() }
@@ -815,12 +930,14 @@ async function route(method, segments, body, headers, event) {
         const [calc] = await dbq('SELECT computed_at FROM stock_notif_calc WHERE owner_uid=$1', [ownerUid])
         if (!calc || Date.now() - new Date(calc.computed_at).getTime() > 15 * 60000) await refreshStockNotifications(ownerUid)
         else await refreshUnlistedNotification(ownerUid)
+        await refreshDeliveriesNotification(ownerUid)
         const rows = await dbq(
           `SELECT n.nid, n.kind, n.pid, n.text, n.created_at, s.seen_at
            FROM stock_notification n
            LEFT JOIN stock_notification_state s ON s.nid=n.nid AND s.uid=$2
            WHERE n.owner_uid=$1 AND s.dismissed_at IS NULL
-             AND ((n.kind IN ('shortage','wastage') AND n.period=$3 AND n.resolved_at IS NULL)
+             AND ((n.kind IN ('shortage','wastage','equip_util') AND n.period=$3 AND n.resolved_at IS NULL)
+               OR (n.kind='deliveries' AND n.resolved_at IS NULL)
                OR (n.kind='auto_wastage' AND n.created_at >= NOW() - INTERVAL '3 days')
                OR (n.kind='unlisted' AND n.resolved_at IS NULL))
            ORDER BY n.created_at DESC`, [ownerUid, user.uid, period])
