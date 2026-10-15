@@ -499,13 +499,20 @@ async function applyPackagingForOrder(oid, ownerUid, items) {
 
 async function applyOrderDoneStock(oid) {
   const [o] = await dbq(
-    `SELECT o.oid, o.mid, o.prid, o.fulfillment, m.owner_uid AS seller
+    `SELECT o.oid, o.mid, o.prid, o.fulfillment, m.owner_uid AS seller, o.owner_uid, o.guest_email, o.status
      FROM "order" o LEFT JOIN menu m ON m.mid=o.mid WHERE o.oid=$1`, [oid])
-  if (!o || !o.seller) return                    // Board of Arrivals orders have no menu: handled with their batch
+  if (!o) return
   const items = await dbq(
     `SELECT oi.rid, oi.qty, r.allow_submultiples, r.moq, un.name AS unit_name
      FROM order_item oi JOIN recipe r ON r.rid=oi.rid LEFT JOIN units un ON un.unid=r.unid
      WHERE oi.oid=$1`, [oid])
+  if (!o.seller) {
+    // Board of Arrivals order (guest order tied to a batch): its units are handled with the batch,
+    // but the packaging it needs is written off when it is handed over like any other order.
+    if (!o.mid && o.prid && o.guest_email && o.owner_uid && ['Done', 'Dispatched', 'Delivered'].includes(o.status))
+      await applyPackagingForOrder(oid, o.owner_uid, items.map(it => ({ rid: it.rid, units: lineUnits(it.qty, it) })))
+    return
+  }
   if (o.fulfillment === 'stock') {
     if (o.prid) return                           // created by a run: credited when the run completes
     for (const it of items) await setStockEntry(o.seller, it.rid, 'stock_order', oid, lineUnits(it.qty, it))
