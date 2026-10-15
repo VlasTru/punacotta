@@ -127,6 +127,7 @@ const RU = {
   "Are you sure you want to cancel order":"Вы уверены, что хотите отменить заказ",
   "No restaurants open right now":"Сейчас нет открытых ресторанов",
   "Check back soon!":"Загляните позже!",
+  "Packaging":"Упаковка","+ Package":"+ Упаковка","Max. capacity":"Макс. вместимость","Type to search items…":"Введите название блюда…","Max. capacity must be greater than 0":"Макс. вместимость должна быть больше 0","Edit Package":"Редактировать упаковку","New Package":"Новая упаковка","Delete package?":"Удалить упаковку?","Remove":"Убрать","Packaging adjusted":"Упаковка скорректирована","used beyond the automatic write-off — recorded in Profit & Loss":"использовано сверх автоматического списания — учтено в отчёте о доходах и расходах","Deleted":"Удалено","Select a supplier":"Выберите поставщика","Supplier…":"Поставщик…","Price":"Цена","Link":"Привязать","Confirm":"Подтвердить","Cancel wastage":"Отменить списание","The following packaging will be wasted, and stock levels shall be changed accordingly. The action is irreversible. Are you sure you wish to proceed?":"Следующая упаковка будет списана, остатки изменятся. Действие необратимо. Продолжить?","Supplier linked":"Поставщик привязан","Wastage applied":"Списание выполнено","Confirm wastage":"Подтверждение списания","Add supplier":"Добавить поставщика","Items":"Блюда","Name required":"Укажите название",
   "Quick Sale":"Быстрая продажа","Online":"Онлайн","Offline":"Офлайн","Inventory":"Склад","Search items…":"Поиск позиций…","No items found":"Позиции не найдены","in stock":"в наличии","no stock":"нет в наличии","Current sale":"Текущая продажа","Tap items to add them.":"Нажимайте на позиции, чтобы добавить.","Sold":"Продано","Sold earlier":"Продано ранее","Clear":"Очистить","Recent sales":"Последние продажи","Undo":"Отменить","Sale undone":"Продажа отменена","Sell":"Продажа","Closing count":"Закрытие смены","Enter what is left of each item. Anything missing is recorded as sold; mark units as wasted if they were thrown away. Items you leave as they are stay unchanged.":"Введите остаток каждой позиции. Недостающее записывается как проданное; отметьте единицы, которые были списаны. Позиции без изменений остаются как есть.","No items with stock on hand.":"Нет позиций в наличии.","Expected":"Ожидается","sold":"продано","of which wasted":"из них списано","more than expected — stock will be raised":"больше ожидаемого — остаток будет увеличен","Add another item…":"Добавить другую позицию…","No differences yet.":"Расхождений пока нет.","Wasted":"Списано","Surplus added to stock":"Излишек добавлен в остаток","Count saved: no differences":"Подсчёт сохранён: расхождений нет","Save count":"Сохранить подсчёт","Voice input is not supported in this browser. Try Chrome or Safari.":"Голосовой ввод не поддерживается в этом браузере. Попробуйте Chrome или Safari.","Microphone access is blocked. Allow it in the browser settings.":"Доступ к микрофону заблокирован. Разрешите его в настройках браузера.","Voice error":"Ошибка голоса","Nothing was heard":"Ничего не услышано","Voice language":"Язык голоса","Stop":"Стоп","Speak a sale":"Продиктовать продажу","Listening…":"Слушаю…","I heard":"Я услышал","No items recognised. Try again or tap the items.":"Позиции не распознаны. Повторите или выберите нажатием.","Not recognised":"Не распознано","Confirm sale":"Подтвердить продажу","Add to ticket":"Добавить в чек","Discard":"Отмена","Speak again":"Повторить",
   "Reports":"Отчёты","Week":"Неделя","Month":"Месяц","Year":"Год",
   "Revenue":"Выручка","ABC Analysis":"ABC-анализ","Association Rules":"Правила ассоциации",
@@ -3098,6 +3099,8 @@ function ClosingCountPage({ toast }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
   const [items, setItems]   = useState([]);
+  const [packs, setPacks]   = useState([]);            // packaging with stock
+  const [pCounted, setPCounted] = useState({});        // pid -> counted packages (string, as typed)
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [earlier, setEarlier] = useState(false);
@@ -3108,7 +3111,7 @@ function ClosingCountPage({ toast }) {
   const fmtN = v => String(Number(Number(v).toFixed(2)));
   const currency = items[0]?.currency || "AMD";
   const load = useCallback(async () => {
-    try { const d = await api.getQuickSale(); setItems(d.items||[]); }
+    try { const d = await api.getQuickSale(); setItems(d.items||[]); setPacks(d.packages||[]); }
     catch(e){ toast(e.message,"error"); }
     finally { setLoading(false); }
   }, []);
@@ -3124,7 +3127,10 @@ function ClosingCountPage({ toast }) {
     else if (d < 0) a.surplus += -d;
     return a;
   }, { sold: 0, revenue: 0, wasted: 0, surplus: 0 });
-  const cChanged = countItems.some(i => cDiff(i) !== 0);
+  const pVal = p => pCounted[p.pid] === undefined || pCounted[p.pid] === "" ? p.stock : Number(pCounted[p.pid]);
+  const pDiff = p => Math.round((p.stock - pVal(p)) * 1000) / 1000;           // > 0 used up, < 0 surplus
+  const countPacks = packs.filter(p => p.stock > 0);
+  const cChanged = countItems.some(i => cDiff(i) !== 0) || countPacks.some(p => pDiff(p) !== 0);
   const setCount = (i, v) => setCounted(c => ({ ...c, [i.rid]: v }));
   const stepCount = (i, d) => setCount(i, String(Math.max(0, Math.round((cVal(i) + d) * 1000) / 1000)));
   const saveCount = async () => {
@@ -3132,14 +3138,16 @@ function ClosingCountPage({ toast }) {
     try {
       const res = await api.postClosingCount({
         counts: countItems.filter(i => cDiff(i) !== 0).map(i => ({ rid: i.rid, counted: cVal(i), wasted: cWaste(i) })),
+        package_counts: countPacks.filter(p => pDiff(p) !== 0).map(p => ({ pid: p.pid, counted: pVal(p) })),
         sold_at: earlier && soldAt ? new Date(soldAt).toISOString() : undefined,
       });
       const parts = [];
       if (res.sale) parts.push(`${tl("Sold")}: ${res.sale.items.map(l=>`${l.qty} × ${l.name}`).join(", ")} — ${Number(res.sale.total).toLocaleString()} ${currency}`);
       if (res.wasted.length) parts.push(`${tl("Wasted")}: ${res.wasted.map(w=>`${fmtN(w.qty)} × ${w.name}`).join(", ")}`);
       if (res.surplus.length) parts.push(`${tl("Surplus added to stock")}: ${res.surplus.map(w=>`${fmtN(w.qty)} × ${w.name}`).join(", ")}`);
+      if ((res.packs||[]).length) parts.push(`${tl("Packaging adjusted")}: ${res.packs.map(w=>`${w.diff>0?"−":"+"}${fmtN(Math.abs(w.diff))} × ${w.name}`).join(", ")}`);
       toast(parts.join(" · ") || tl("Count saved: no differences"));
-      setCounted({}); setWasteQ({}); setExtraRids([]); setEarlier(false); setSoldAt("");
+      setCounted({}); setPCounted({}); setWasteQ({}); setExtraRids([]); setEarlier(false); setSoldAt("");
       await load();
     } catch(e){ toast(e.message,"error"); }
     finally { setSaving(false); }
@@ -3190,6 +3198,30 @@ function ClosingCountPage({ toast }) {
               </div>
             )}
           </div>
+          {countPacks.length>0 && (
+            <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,overflow:"hidden",marginTop:16}}>
+              <div style={{padding:"10px 16px",fontSize:12,fontWeight:700,color:G.muted,background:G.sand}}>{tl("Packaging")}</div>
+              {countPacks.map(p=>{
+                const d = pDiff(p);
+                return (
+                  <div key={p.pid} style={{padding:"12px 16px",borderTop:`1px solid ${G.border}`,background:d!==0?G.sand:"transparent"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                      <div style={{flex:"1 1 160px",minWidth:0}}>
+                        <div style={{fontFamily:G.font,fontSize:16,fontWeight:600,color:G.dark}}>{p.name}</div>
+                        <div style={{fontSize:12,color:G.muted,fontFamily:G.mono}}>{tl("Expected")}: {fmtN(p.stock)}</div>
+                      </div>
+                      <button onClick={()=>setPCounted(c=>({...c,[p.pid]:String(Math.max(0,pVal(p)-1))}))} style={{width:40,height:40,borderRadius:10,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",fontSize:20}}>−</button>
+                      <input type="number" inputMode="decimal" min="0" step="any" value={pCounted[p.pid]===undefined?String(p.stock):pCounted[p.pid]} onChange={e=>setPCounted(c=>({...c,[p.pid]:e.target.value}))} onFocus={e=>e.target.select()}
+                        style={{width:84,height:40,boxSizing:"border-box",textAlign:"center",fontSize:18,fontWeight:700,fontFamily:G.mono,borderRadius:10,border:`2px solid ${d!==0?G.caramel:G.border}`,background:G.white,color:G.dark,outline:"none"}}/>
+                      <button onClick={()=>setPCounted(c=>({...c,[p.pid]:String(pVal(p)+1)}))} style={{width:40,height:40,borderRadius:10,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",fontSize:20}}>+</button>
+                    </div>
+                    {d>0 && <div style={{marginTop:8,fontSize:13,color:G.dark}}>{fmtN(d)} {tl("used beyond the automatic write-off — recorded in Profit & Loss")}</div>}
+                    {d<0 && <div style={{marginTop:8,fontSize:13,color:G.green}}>＋{fmtN(-d)} {tl("more than expected — stock will be raised")}</div>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
           <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,padding:18,marginTop:16}}>
             <div style={{fontSize:14,color:G.dark,lineHeight:1.7}}>
               {!cChanged ? <span style={{color:G.muted}}>{tl("No differences yet.")}</span> : (<>
@@ -3438,6 +3470,263 @@ function QuickSalePage({ toast }) {
   );
 }
 
+// ─── PACKAGING ────────────────────────────────────────────────────────────────
+// Default "Max. capacity" of an item in a package, by the item's unit
+const defaultPkgCap = unit => String(unit||"").toLowerCase() === "grams" ? 100 : 1;
+
+function MiniSpark({ series=[], tg=0 }) {
+  if (!series.length) return <span style={{color:G.muted,fontSize:12}}>—</span>;
+  const W=80, H=28, pad=2;
+  const min = Math.min(...series), max = Math.max(...series), range = max - min || 1;
+  const pts = series.map((v,i)=>`${pad + (i/(series.length-1||1))*(W-pad*2)},${H - pad - ((v-min)/range)*(H-pad*2)}`).join(" ");
+  const color = tg >= 0 ? G.green : G.red;
+  return (
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1}}>
+      <span style={{fontSize:11,fontWeight:700,color}}>{tg>0?"+":""}{Math.round(tg)}</span>
+      <svg width={W} height={H} style={{overflow:"visible"}}>
+        <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round"/>
+      </svg>
+    </div>
+  );
+}
+
+// Searchable list of items not yet in the package (alphabetical, filtered while typing)
+function PackageItemPicker({ recipes, chosen, onPick, tl }) {
+  const [q, setQ] = useState(""); const [open, setOpen] = useState(false);
+  const avail = recipes.filter(r=>!chosen.includes(r.rid) && r.name.toLowerCase().includes(q.trim().toLowerCase()))
+    .sort((a,b)=>a.name.localeCompare(b.name));
+  const pick = r => { onPick(r); setQ(""); setOpen(false); };
+  return (
+    <div style={{position:"relative"}}>
+      <input value={q} onChange={e=>{setQ(e.target.value);setOpen(true);}} onFocus={()=>setOpen(true)} onBlur={()=>setTimeout(()=>setOpen(false),150)}
+        onKeyDown={e=>{ if(e.key==="Escape") setOpen(false); if(e.key==="Enter"&&avail.length){ e.preventDefault(); pick(avail[0]); } }}
+        placeholder={tl("Type to search items…")}
+        style={{width:"100%",boxSizing:"border-box",padding:"9px 12px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none",background:G.white,color:G.dark}}/>
+      {open&&avail.length>0&&(
+        <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,background:G.white,border:`1px solid ${G.border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(44,24,16,0.12)",zIndex:500,maxHeight:240,overflowY:"auto"}}>
+          {avail.map(r=>(
+            <button key={r.rid} onMouseDown={()=>pick(r)}
+              style={{width:"100%",textAlign:"left",padding:"9px 14px",background:"none",border:"none",cursor:"pointer",fontSize:13,fontFamily:G.mono,color:G.dark}}
+              onMouseEnter={e=>e.currentTarget.style.background=G.sand} onMouseLeave={e=>e.currentTarget.style.background="none"}>
+              {r.name}{r.units&&<span style={{color:G.muted}}> · {r.units}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PackagingPage({ toast, onBack }) {
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
+  const [packages, setPackages] = useState([]); const [recipes, setRecipes] = useState([]);
+  const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false);
+  const [selected, setSelected] = useState([]); const [sortKey, setSortKey] = useState("name"); const [sortDir, setSortDir] = useState("asc");
+  const [form, setForm] = useState(null);                 // null | { pid?, name, sku, rows:[{rid,name,unit,max_cap}] }
+  const [procLinks, setProcLinks] = useState([]); const [suppliers, setSuppliers] = useState([]);
+  const [linkPid, setLinkPid] = useState(null); const [linkSid, setLinkSid] = useState(""); const [linkPrice, setLinkPrice] = useState(""); const [linkCurrency, setLinkCurrency] = useState("AMD");
+  const [stock, setStock] = useState({}); const [forecast, setForecast] = useState({}); const [refreshingForecast, setRefreshingForecast] = useState(false);
+  const [wastageMode, setWastageMode] = useState(false); const [wastageDeltas, setWastageDeltas] = useState({});
+  const [wastageConfirm, setWastageConfirm] = useState(false); const [applyingWastage, setApplyingWastage] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(false);
+
+  const load = useCallback(async()=>{ setLoading(true); try{
+    const [pk, rc, proc, sups, stk, fc] = await Promise.all([
+      api.getPackages(), api.getRecipes(), api.getProcurement(), api.getSuppliers(), api.getStock(), api.getPackageForecast().catch(()=>({})),
+    ]);
+    setPackages(pk||[]); setRecipes(rc||[]); setProcLinks(proc.links||[]); setSuppliers(sups||[]); setForecast(fc||{});
+    const m = {}; (stk||[]).forEach(s=>{ m[s.pid]=(m[s.pid]||0)+Number(s.qty); }); setStock(m);
+  } catch(e){ toast(e.message,"error"); } finally{ setLoading(false); } },[]);
+  useEffect(()=>{ load(); },[]);
+
+  const sorted = [...packages].sort((a,b)=>{ const x=String(a[sortKey]||""), y=String(b[sortKey]||""); const v=x<y?-1:x>y?1:0; return sortDir==="asc"?v:-v; });
+  const toggleSort = k => { if(sortKey===k) setSortDir(d=>d==="asc"?"desc":"asc"); else { setSortKey(k); setSortDir("asc"); } };
+  const toggleSel = id => setSelected(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
+
+  const openNew = () => setForm({ name:"", sku:"", rows:[] });
+  const openEdit = p => setForm({ pid:p.pid, name:p.name, sku:p.sku||"", rows:(p.items||[]).map(i=>({ rid:i.rid, name:i.name, unit:i.unit, max_cap:String(Number(i.max_cap)) })) });
+  const addRow = r => setForm(f=>({ ...f, rows:[...f.rows, { rid:r.rid, name:r.name, unit:r.units, max_cap:String(defaultPkgCap(r.units)) }] }));
+  const removeRow = rid => setForm(f=>({ ...f, rows:f.rows.filter(r=>r.rid!==rid) }));
+  const setCap = (rid, v) => setForm(f=>({ ...f, rows:f.rows.map(r=>r.rid===rid?{...r,max_cap:v}:r) }));
+  const badCap = r => !(Number(r.max_cap) > 0);
+
+  const save = async () => {
+    if (!form.name.trim()) { toast(tl("Name required"),"error"); return; }
+    if (form.rows.some(badCap)) { toast(tl("Max. capacity must be greater than 0"),"error"); return; }
+    setSaving(true);
+    try {
+      const data = { name:form.name, sku:form.sku||null, items:form.rows.map(r=>({ rid:r.rid, max_cap:Number(r.max_cap) })) };
+      const p = form.pid ? await api.updatePackage(form.pid, data) : await api.createPackage(data);
+      setPackages(prev=>form.pid ? prev.map(x=>x.pid===p.pid?p:x) : [...prev,p]);
+      toast(`"${p.name}" ${tl("saved")}`); setForm(null);
+    } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
+  };
+
+  const doDelete = async () => {
+    try { await api.deletePackages(selected); setPackages(prev=>prev.filter(p=>!selected.includes(p.pid))); setSelected([]); setConfirmDel(false); toast(tl("Deleted")); }
+    catch(e){ toast(e.message,"error"); }
+  };
+  const linkSupplier = async () => {
+    if (!linkSid) { toast(tl("Select a supplier"),"error"); return; }
+    try { await api.linkSupplierProduct(linkSid, { pid:linkPid, price:linkPrice?Number(linkPrice):null, currency:linkCurrency });
+      await load(); setLinkPid(null); setLinkSid(""); setLinkPrice(""); toast(tl("Supplier linked")); }
+    catch(e){ toast(e.message,"error"); }
+  };
+  const unlinkSupplier = async (sid, psid) => { try { await api.unlinkSupplierProduct(sid, psid); await load(); } catch(e){ toast(e.message,"error"); } };
+  const refreshForecast = async () => {
+    setRefreshingForecast(true);
+    try { setForecast(await api.getPackageForecast() || {}); toast(tl("Forecast updated")); }
+    catch(e){ toast(e.message,"error"); } finally{ setRefreshingForecast(false); }
+  };
+
+  const inp = {padding:"3px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none",background:G.white,color:G.dark};
+  const cols = [
+    {key:"name", label:tl("Name"), sortable:true, render:r=>(
+      <button onClick={()=>openEdit(r)} style={{background:"none",border:"none",cursor:"pointer",fontFamily:G.mono,fontSize:14,color:G.dark,padding:0,textAlign:"left",textDecoration:"underline dotted",textUnderlineOffset:3}}>{r.name}</button>
+    )},
+    {key:"sku", label:tl("SKU"), sortable:true, render:r=>r.sku||<span style={{color:G.muted}}>—</span>},
+    {key:"items", label:tl("Items"), sortable:false, render:r=>(r.items||[]).length
+      ? <div style={{display:"flex",flexDirection:"column",gap:2,fontSize:12}}>{r.items.map(i=><span key={i.rid}>{i.name} <span style={{color:G.muted}}>≤ {Number(i.max_cap)} {i.unit||""}</span></span>)}</div>
+      : <span style={{color:G.muted}}>—</span>},
+    {key:"suppliers", label:tl("Suppliers"), sortable:false, render:r=>{
+      const links = procLinks.filter(l=>l.pid===r.pid);
+      return (
+        <div style={{display:"flex",flexDirection:"column",gap:3}}>
+          {links.map(l=>(
+            <div key={l.psid} style={{display:"flex",alignItems:"center",gap:6,fontSize:12}}>
+              <span style={{flex:1}}>{l.supplier_name}</span>
+              {l.price&&<span style={{color:G.caramel,fontWeight:600}}>{l.price} {l.currency}</span>}
+              <button onClick={()=>unlinkSupplier(l.sid,l.psid)} style={{background:"none",border:"none",color:G.muted,cursor:"pointer",fontSize:12,lineHeight:1}}>×</button>
+            </div>
+          ))}
+          {linkPid===r.pid ? (
+            <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap",marginTop:4}}>
+              <select value={linkSid} onChange={e=>setLinkSid(e.target.value)} style={inp}>
+                <option value="">{tl("Supplier…")}</option>
+                {suppliers.map(s=><option key={s.sid} value={s.sid}>{s.name}</option>)}
+              </select>
+              <input type="number" value={linkPrice} onChange={e=>setLinkPrice(e.target.value)} placeholder={tl("Price")} style={{...inp,width:60}}/>
+              <select value={linkCurrency} onChange={e=>setLinkCurrency(e.target.value)} style={inp}>{["AMD","USD","EUR","RUR"].map(c=><option key={c}>{c}</option>)}</select>
+              <Btn size="sm" onClick={linkSupplier}>{tl("Link")}</Btn>
+              <button onClick={()=>setLinkPid(null)} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:14}}>×</button>
+            </div>
+          ) : (
+            <button onClick={()=>{setLinkPid(r.pid);setLinkSid("");setLinkPrice("");}} style={{background:"none",border:"none",cursor:"pointer",fontSize:11,color:G.caramel,fontFamily:G.mono,fontWeight:600,textAlign:"left"}}>+ {tl("Add supplier")}</button>
+          )}
+        </div>
+      );
+    }},
+    {key:"stock", label:tl("Stock"), sortable:false, render:r=>{
+      const qty = stock[r.pid] ?? 0, delta = wastageDeltas[r.pid] ?? 0, displayed = qty + delta;
+      const step = d => setWastageDeltas(p=>{
+        const next = d>0 ? Math.min(0,(p[r.pid]??0)+1) : Math.max(-qty,(p[r.pid]??0)-1);
+        return next===0 ? Object.fromEntries(Object.entries(p).filter(([k])=>k!==String(r.pid))) : {...p,[r.pid]:next};
+      });
+      if (wastageMode) return (
+        <div style={{display:"flex",alignItems:"center",gap:5}}>
+          <button onClick={()=>step(1)} disabled={delta===0} style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.sand,cursor:delta===0?"not-allowed":"pointer",opacity:delta===0?0.4:1}}>+</button>
+          <span style={{minWidth:32,textAlign:"center",fontSize:13,fontFamily:G.mono,fontWeight:600,color:displayed<qty?G.red:G.dark}}>{displayed}</span>
+          <button onClick={()=>step(-1)} disabled={displayed<=0} style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.sand,cursor:displayed<=0?"not-allowed":"pointer",opacity:displayed<=0?0.4:1}}>−</button>
+          {delta<0&&<span style={{fontSize:11,color:G.red,fontFamily:G.mono}}>{delta}</span>}
+        </div>
+      );
+      return <span style={{fontWeight:600,color:qty>0?G.dark:G.red}}>{Number(qty.toFixed(2))}</span>;
+    }},
+    {key:"forecast", label:tl("Forecast"), sortable:false, render:r=><MiniSpark series={forecast[r.pid]?.series||[]} tg={forecast[r.pid]?.tg??0}/>},
+  ];
+
+  const chosen = form ? form.rows.map(r=>r.rid) : [];
+  return (
+    <Page title={tl("Packaging")} actions={<div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+      <Btn variant="secondary" size="sm" onClick={onBack}>{"<- "}{tl("Products")}</Btn>
+      {selected.length>0&&!wastageMode&&<Btn variant="danger" size="sm" onClick={()=>setConfirmDel(true)}>{tl("Delete")} ({selected.length})</Btn>}
+      {wastageMode && Object.keys(wastageDeltas).length>0 && <Btn size="sm" onClick={()=>setWastageConfirm(true)}>{tl("Confirm")}</Btn>}
+      {wastageMode
+        ? <Btn variant="secondary" size="sm" onClick={()=>{ setWastageMode(false); setWastageDeltas({}); }}>✕ {tl("Cancel wastage")}</Btn>
+        : <Btn variant="secondary" size="sm" onClick={()=>setWastageMode(true)}>{tl("Wastage")}</Btn>}
+      <Btn variant="secondary" size="sm" onClick={refreshForecast} loading={refreshingForecast}>↻ {tl("Forecast")}</Btn>
+      {!wastageMode&&<Btn size="sm" onClick={openNew}>{tl("+ Package")}</Btn>}
+    </div>}>
+      {form&&(
+        <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,padding:24,marginBottom:20,animation:"fadeIn 0.2s ease"}}>
+          <h3 style={{fontFamily:G.font,fontSize:17,marginBottom:16}}>{form.pid?tl("Edit Package"):tl("New Package")}</h3>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+            <Input label={tl("Name")} value={form.name} onChange={v=>setForm(f=>({...f,name:v}))} required/>
+            <Input label={tl("SKU")} value={form.sku} onChange={v=>setForm(f=>({...f,sku:v}))} placeholder="Optional"/>
+          </div>
+          <div style={{marginBottom:12}}>
+            <label style={{fontSize:12,fontWeight:600,color:G.muted,display:"block",marginBottom:6}}>{tl("Items")}</label>
+            <PackageItemPicker recipes={recipes} chosen={chosen} onPick={addRow} tl={tl}/>
+          </div>
+          {form.rows.length>0&&(
+            <div style={{border:`1px solid ${G.border}`,borderRadius:10,overflow:"hidden",marginBottom:14}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 180px 32px",gap:10,padding:"8px 12px",background:G.sand,fontSize:12,fontWeight:700,color:G.muted}}>
+                <span>{tl("Name")}</span><span>{tl("Max. capacity")}</span><span/>
+              </div>
+              {form.rows.map(r=>(
+                <div key={r.rid} style={{display:"grid",gridTemplateColumns:"1fr 180px 32px",gap:10,padding:"8px 12px",alignItems:"center",borderTop:`1px solid ${G.border}`}}>
+                  <span style={{fontSize:14,color:G.dark}}>{r.name}</span>
+                  <span style={{display:"flex",alignItems:"center",gap:6}}>
+                    <input type="number" min="0" step="any" value={r.max_cap} onChange={e=>setCap(r.rid,e.target.value)}
+                      style={{width:80,padding:"6px 8px",borderRadius:6,border:`1px solid ${badCap(r)?G.red:G.border}`,fontFamily:G.mono,fontSize:13,background:G.white,color:G.dark}}/>
+                    <span style={{fontSize:12,color:G.muted}}>{r.unit||""}</span>
+                  </span>
+                  <button onClick={()=>removeRow(r.rid)} title={tl("Remove")} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:16}}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{display:"flex",gap:10}}>
+            <Btn size="sm" onClick={save} loading={saving}>{tl("Save")}</Btn>
+            <Btn variant="ghost" size="sm" onClick={()=>setForm(null)}>{tl("Cancel")}</Btn>
+          </div>
+        </div>
+      )}
+      {loading?<Spinner/>:<DataTable columns={cols} rows={sorted.map(p=>({...p,_id:p.pid}))} selected={selected} onSelect={toggleSel} onSelectAll={setSelected} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort}/>}
+      {confirmDel&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.45)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{background:G.white,borderRadius:16,padding:32,maxWidth:460,width:"90%",boxShadow:"0 20px 60px rgba(44,24,16,0.2)"}}>
+            <h3 style={{fontFamily:G.font,fontSize:20,marginBottom:12}}>{tl("Delete package?")}</h3>
+            <p style={{color:G.muted,lineHeight:1.6,marginBottom:24,fontSize:15}}>{tl("Are you sure you wish to delete")} <b>{selected.map(id=>packages.find(p=>p.pid===id)?.name).filter(Boolean).join(", ")}</b>? {tl("This action may not be undone.")}</p>
+            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+              <Btn variant="ghost" onClick={()=>setConfirmDel(false)}>{tl("Cancel")}</Btn>
+              <Btn variant="danger" onClick={doDelete}>{tl("Yes")}</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+      {wastageConfirm&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.45)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{background:G.white,borderRadius:16,padding:32,maxWidth:520,width:"90%",boxShadow:"0 20px 60px rgba(44,24,16,0.2)"}}>
+            <h3 style={{fontFamily:G.font,fontSize:18,marginBottom:16}}>{tl("Confirm wastage")}</h3>
+            <p style={{fontSize:14,color:G.dark,lineHeight:1.6,marginBottom:16}}>{tl("The following packaging will be wasted, and stock levels shall be changed accordingly. The action is irreversible. Are you sure you wish to proceed?")}</p>
+            <div style={{background:G.sand,borderRadius:10,padding:"12px 16px",marginBottom:20}}>
+              {Object.entries(wastageDeltas).filter(([,d])=>d<0).map(([pid,delta])=>(
+                <div key={pid} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",fontSize:13}}>
+                  <span style={{fontWeight:600,color:G.dark}}>{packages.find(p=>String(p.pid)===pid)?.name||pid}</span>
+                  <span style={{color:G.red,fontFamily:G.mono,fontWeight:600}}>{delta}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+              <Btn size="sm" loading={applyingWastage} onClick={async()=>{
+                setApplyingWastage(true);
+                try {
+                  const upd = await api.applyWastage({changes:Object.entries(wastageDeltas).filter(([,d])=>d<0).map(([pid,delta])=>({pid:Number(pid),delta}))});
+                  const m = {}; (upd||[]).forEach(s=>{ m[s.pid]=Number(s.qty); }); setStock(m);
+                  setWastageMode(false); setWastageDeltas({}); setWastageConfirm(false); toast(tl("Wastage applied"));
+                } catch(e){ toast(e.message,"error"); } finally{ setApplyingWastage(false); }
+              }}>OK</Btn>
+              <Btn variant="ghost" size="sm" onClick={()=>setWastageConfirm(false)}>{tl("Cancel")}</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+    </Page>
+  );
+}
+
 // Segmented toggle used by the Orders and Inventory hubs
 function SegToggle({ options, value, onChange }) {
   return (
@@ -3464,7 +3753,7 @@ function OrdersHub({ toast }) {
   );
 }
 
-// Inventory = Products | Items | Closing count
+// Inventory = Products | Items | Packaging | Closing count
 function InventoryHub({ toast, initial }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
@@ -3473,10 +3762,11 @@ function InventoryHub({ toast, initial }) {
   return (
     <>
       <div style={{maxWidth:1100,margin:"0 auto",padding:"24px 24px 0"}}>
-        <SegToggle options={[["products",tl("Products")],["items",tl("Items")],["count",tl("Closing count")]]} value={view} onChange={setView}/>
+        <SegToggle options={[["products",tl("Products")],["items",tl("Items")],["packaging",tl("Packaging")],["count",tl("Closing count")]]} value={view} onChange={setView}/>
       </div>
       {view==="products" && <ProductsPage toast={toast}/>}
       {view==="items"    && <RecipesPage toast={toast}/>}
+      {view==="packaging"&& <PackagingPage toast={toast} onBack={()=>setView("products")}/>}
       {view==="count"    && <ClosingCountPage toast={toast}/>}
     </>
   );
@@ -4613,7 +4903,7 @@ function ProcurementPage({
         api.getProcurement(),
       ]);
       setOrders(o||[]); setSuppliers(s||[]);
-      setProducts(proc.products||[]); setProcLinks(proc.links||[]);
+      setProducts([...(proc.products||[]), ...(proc.packages||[])]); setProcLinks(proc.links||[]);
     } catch(e){ toast(e.message,"error"); }
     finally{ setLoading(false); }
   },[]);
@@ -5686,6 +5976,7 @@ function buildPnl(data, expanded, tl) {
     { id: "e-del",  label: tl("Products delivery"), value: Number(ex.delivery || 0), color: pal[0] },
     { id: "e-pw",   label: tl("Products wastage"),  value: Number(ex.product_waste?.total || 0), color: pal[1] },
     { id: "e-iw",   label: tl("Items wastage"),     value: Number(ex.item_waste?.total || 0), color: pal[2] },
+    { id: "e-pk",   label: tl("Packaging"),         value: Number(ex.packaging?.total || 0), color: pal[3] },
   ].filter(e => e.value > 0.005);
   const E = expTypes.reduce((s, e) => s + e.value, 0);
 
@@ -5827,6 +6118,10 @@ function PnlSection({ toast }) {
     ex.product_waste.rows.forEach(r => tableRows.push({ kind: 'r', a: `${r.name} × ${parseFloat(r.qty.toFixed(2))}`, v: r.cost }));
     tableRows.push({ kind: 'h', a: tl("Items wastage"), v: Number(ex.item_waste.total) });
     ex.item_waste.rows.forEach(r => tableRows.push({ kind: 'r', a: `${r.name} × ${parseFloat(r.qty.toFixed(2))}`, v: r.cost }));
+    if (ex.packaging?.rows?.length) {
+      tableRows.push({ kind: 'h', a: tl("Packaging"), v: Number(ex.packaging.total) });
+      ex.packaging.rows.forEach(r => tableRows.push({ kind: 'r', a: `${r.name} × ${parseFloat(r.qty.toFixed(2))}`, v: r.cost }));
+    }
   }
 
   return (

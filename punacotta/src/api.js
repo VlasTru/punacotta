@@ -48,6 +48,13 @@ export const api = {
   updateProduct:     (pid, data) => req('PATCH', `/products/${pid}`, data),
   deleteProducts:    (ids, cascade_recipes) => req('DELETE', '/products', { ids, cascade_recipes }),
 
+  // Packaging
+  getPackages:       ()           => req('GET',    '/packages'),
+  getPackageForecast:()           => req('GET',    '/packages/forecast'),
+  createPackage:     (data)       => req('POST',   '/packages', data),
+  updatePackage:     (pid, data)  => req('PATCH',  `/packages/${pid}`, data),
+  deletePackages:    (ids)        => req('DELETE', '/packages', { ids }),
+
   // Suppliers
   getSuppliers:      ()          => req('GET',    '/suppliers'),
   getSupplier:       (sid)       => req('GET',    `/suppliers/${sid}`),

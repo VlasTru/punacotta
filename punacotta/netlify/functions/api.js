@@ -29,6 +29,12 @@ async function ensureMigrations() {
   _migrated = true
   try {
     await dbr(`ALTER TABLE menu ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT false`)
+    // Packaging: a package is a product row flagged is_package (so purchasing, supplier links and stock reuse the product machinery)
+    await dbr(`ALTER TABLE product ADD COLUMN IF NOT EXISTS is_package BOOLEAN NOT NULL DEFAULT false`)
+    await dbr(`ALTER TABLE product ADD COLUMN IF NOT EXISTS owner_uid INTEGER`)
+    await dbr(`CREATE TABLE IF NOT EXISTS package_item (
+      pid INTEGER NOT NULL, rid INTEGER NOT NULL, max_cap NUMERIC(10,3) NOT NULL DEFAULT 1,
+      PRIMARY KEY (pid, rid))`)
     await dbr(`ALTER TABLE "order" ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'app'`)
     await dbr(`ALTER TABLE recipe ADD COLUMN IF NOT EXISTS min_inventory NUMERIC(10,3)`)
     await dbr(`DELETE FROM menu_recipe WHERE rid IN (SELECT rid FROM recipe WHERE deleted=true)`)
@@ -409,6 +415,86 @@ async function creditRunStock(prid) {
     await setStockEntry(run.owner_uid, it.rid, 'run', prid, Math.max(0, Number(it.qty) - Number(it.boa_qty)))
 }
 
+
+// ─── PACKAGING WRITE-OFFS ─────────────────────────────────────────────────────
+// A package (product row with is_package) lists the items it can hold, each with a "max capacity" M
+// in the item's own units: q units of that item fill q/M of one package. Items of one order share
+// packages (2/6 + 4/8 fit one box). When the remainder does not fit, the cheapest way to cover it
+// wins (price first, then the smaller capacity). Only packages in stock are considered, if any are.
+//   packages: [{pid, price, stock, caps: {rid: M}}]   lines: [{rid, qty}]   -> Map pid -> count
+function planPackaging(lines, packages) {
+  const EPS = 1e-9
+  const capOf = (pk, rid) => Number(pk.caps[rid]) || 0
+  const cand = rid => packages.filter(pk => capOf(pk, rid) > 0)
+  const todo = lines.map(l => ({ rid: Number(l.rid), left: Number(l.qty) }))
+    .filter(l => l.left > EPS && cand(l.rid).length)
+    .sort((a, b) => cand(a.rid).length - cand(b.rid).length || b.left - a.left || a.rid - b.rid)
+  const bins = []                                  // {pk, free}
+  const used = new Map()
+  for (const l of todo) {
+    // 1) top up bins already open
+    for (const b of bins) {
+      if (l.left <= EPS) break
+      const M = capOf(b.pk, l.rid)
+      if (!M || b.free <= EPS) continue
+      const take = Math.min(l.left, b.free * M)
+      l.left -= take; b.free -= take / M
+    }
+    // 2) open new packages for what is left
+    while (l.left > EPS) {
+      let cs = cand(l.rid)
+      const instock = cs.filter(pk => Number(pk.stock) > 0)
+      if (instock.length) cs = instock
+      let best = null
+      for (const pk of cs) {
+        const M = capOf(pk, l.rid)
+        const n = Math.ceil(l.left / M - EPS)
+        const cost = n * (Number(pk.price) || 0)
+        if (!best || cost < best.cost - EPS || (Math.abs(cost - best.cost) <= EPS && (M < best.M || (M === best.M && pk.pid < best.pk.pid))))
+          best = { pk, M, cost }
+      }
+      const take = Math.min(l.left, best.M)
+      bins.push({ pk: best.pk, free: 1 - take / best.M })
+      used.set(best.pk.pid, (used.get(best.pk.pid) || 0) + 1)
+      l.left -= take
+    }
+  }
+  return used
+}
+
+async function loadPackages(ownerUid, exclOid) {
+  const pk = await dbq(
+    `SELECT p.pid,
+            COALESCE((SELECT SUM(COALESCE(soi.qty_actual, soi.qty_ordered) * soi.unit_price)
+                             / NULLIF(SUM(COALESCE(soi.qty_actual, soi.qty_ordered)),0)
+                      FROM supplier_order_item soi JOIN supplier_order so ON so.soid=soi.soid
+                      WHERE soi.pid=p.pid AND so.owner_uid=$1 AND so.status='Accepted'),
+                     (SELECT MIN(x.price) FROM product_supplier x WHERE x.pid=p.pid), 0) AS price,
+            COALESCE((SELECT SUM(qty) FROM product_stock ps WHERE ps.pid=p.pid AND ps.owner_uid=$1
+                      AND NOT (ps.source='pack' AND ps.source_id IS NOT DISTINCT FROM $2::int)), 0) AS stock
+     FROM product p WHERE p.is_package=true AND p.deleted=false AND p.owner_uid=$1`, [ownerUid, exclOid ?? null])
+  if (!pk.length) return []
+  const caps = await dbq(
+    `SELECT pi.pid, pi.rid, pi.max_cap FROM package_item pi JOIN recipe r ON r.rid=pi.rid AND r.deleted=false
+     WHERE pi.pid = ANY($1::int[])`, [pk.map(p => p.pid)])
+  return pk.map(p => ({ pid: p.pid, price: Number(p.price), stock: Number(p.stock),
+    caps: Object.fromEntries(caps.filter(c => c.pid === p.pid).map(c => [c.rid, Number(c.max_cap)])) }))
+}
+
+// Packages written off for a Done order, recorded in product_stock (source 'pack', source_id = order).
+async function applyPackagingForOrder(oid, ownerUid, items) {
+  const packages = await loadPackages(ownerUid, oid)
+  const used = packages.length ? planPackaging(items.map(i => ({ rid: i.rid, qty: i.units })), packages) : new Map()
+  await dbr(`DELETE FROM product_stock WHERE source='pack' AND source_id=$1 AND owner_uid=$2`, [oid, ownerUid])
+  for (const [pid, n] of used) {
+    const have = Math.max(0, packages.find(p => p.pid === pid)?.stock || 0)
+    const q = Math.min(n, have)                    // like items: never below zero stock
+    if (q > 0)
+      await dbr(`INSERT INTO product_stock (pid, owner_uid, qty, source, source_id, created_at) VALUES ($1,$2,$3,'pack',$4,NOW())`,
+        [pid, ownerUid, -q, oid])
+  }
+}
+
 async function applyOrderDoneStock(oid) {
   const [o] = await dbq(
     `SELECT o.oid, o.mid, o.prid, o.fulfillment, m.owner_uid AS seller
@@ -428,6 +514,7 @@ async function applyOrderDoneStock(oid) {
     const have = await stockOnHand(o.seller, it.rid, 'order', oid)
     await setStockEntry(o.seller, it.rid, 'order', oid, -Math.min(want, have))
   }
+  await applyPackagingForOrder(oid, o.seller, items.map(it => ({ rid: it.rid, units: lineUnits(it.qty, it) })))
 }
 
 // Walk-in (counter) sale: a Done order on the seller's hidden "Walk-in sales" menu.
@@ -454,6 +541,7 @@ async function createWalkinSale(ownerUid, lines, soldAt) {
 
 async function reverseOrderStock(oid) {          // a Done order was declined or cancelled
   await dbr(`DELETE FROM recipe_stock WHERE source IN ('order','stock_order') AND source_id=$1`, [oid])
+  await dbr(`DELETE FROM product_stock WHERE source='pack' AND source_id=$1`, [oid])
 }
 
 // A Board of Arrivals order is placed as a guest (owner_uid = seller). It belongs to the
@@ -1169,6 +1257,76 @@ async function route(method, segments, body, headers, event) {
     }
   }
 
+  // ── PACKAGES (packaging stock: product rows flagged is_package) ───────────────
+  if (r0 === 'packages') {
+    if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+    const listSql = `
+      SELECT p.pid, p.name, p.sku,
+             COALESCE((SELECT json_agg(json_build_object('rid', pi.rid, 'name', r.name, 'unit', un.name, 'max_cap', pi.max_cap) ORDER BY r.name)
+                       FROM package_item pi JOIN recipe r ON r.rid=pi.rid AND r.deleted=false
+                       LEFT JOIN units un ON un.unid=r.unid WHERE pi.pid=p.pid), '[]') AS items
+      FROM product p WHERE p.is_package=true AND p.deleted=false AND p.owner_uid=$1`
+    const saveItems = async (pid, items) => {
+      await dbr('DELETE FROM package_item WHERE pid=$1', [pid])
+      const seen = new Set()
+      for (const it of (Array.isArray(items) ? items : [])) {
+        const rid = Number(it.rid), cap = Number(it.max_cap)
+        if (!rid || seen.has(rid)) continue
+        seen.add(rid)
+        await dbr('INSERT INTO package_item (pid,rid,max_cap) VALUES ($1,$2,$3)', [pid, rid, cap > 0 ? cap : 1])
+      }
+    }
+    // GET /packages/forecast — daily write-offs of the last 14 days (series) and the projected balance
+    // after 7 days: stock + submitted deliveries − average daily use × 7.
+    if (r1 === 'forecast' && method === 'GET') {
+      const rows = await dbq(
+        `SELECT p.pid,
+                COALESCE((SELECT SUM(qty) FROM product_stock ps WHERE ps.pid=p.pid AND ps.owner_uid=$1),0) AS stock,
+                COALESCE((SELECT SUM(soi.qty_ordered) FROM supplier_order_item soi JOIN supplier_order so ON so.soid=soi.soid
+                          WHERE soi.pid=p.pid AND so.owner_uid=$1 AND so.status='Submitted'),0) AS incoming,
+                COALESCE((SELECT json_agg(x.q ORDER BY x.d) FROM (
+                            SELECT g.d, COALESCE(-SUM(ps.qty) FILTER (WHERE ps.source IN ('pack','packcount')),0) AS q
+                            FROM generate_series((NOW() - INTERVAL '13 days')::date, NOW()::date, '1 day') g(d)
+                            LEFT JOIN product_stock ps ON ps.pid=p.pid AND ps.owner_uid=$1 AND ps.created_at::date = g.d::date
+                            GROUP BY g.d) x), '[]') AS series
+         FROM product p WHERE p.is_package=true AND p.deleted=false AND p.owner_uid=$1`, [user.uid])
+      const map = {}
+      for (const r of rows) {
+        const series = (r.series || []).map(Number)
+        const avg = series.reduce((a, b) => a + b, 0) / (series.length || 1)
+        map[r.pid] = { series, tg: Number(r.stock) + Number(r.incoming) - avg * 7 }
+      }
+      return [200, map]
+    }
+    if (!r1 && method === 'GET') return [200, await dbq(listSql + ' ORDER BY p.name', [user.uid])]
+    if (!r1 && method === 'POST') {
+      const { name, sku, items } = body
+      if (!name?.trim()) return [400, { error: 'Name required' }]
+      const r = await dbr('INSERT INTO product (name,sku,is_package,owner_uid) VALUES ($1,$2,true,$3) RETURNING pid',
+        [name.trim(), sku?.trim() || null, user.uid])
+      await saveItems(r.rows[0].pid, items)
+      const [row] = await dbq(listSql + ' AND p.pid=$2', [user.uid, r.rows[0].pid])
+      return [201, row]
+    }
+    if (!r1 && method === 'DELETE') {
+      const ids = Array.isArray(body?.ids) ? body.ids.map(Number).filter(Boolean) : []
+      if (!ids.length) return [400, { error: 'ids required' }]
+      await dbr('UPDATE product SET deleted=true WHERE pid=ANY($1::int[]) AND is_package=true AND owner_uid=$2', [ids, user.uid])
+      return [200, { deleted: ids }]
+    }
+    if (r1 && method === 'PATCH') {
+      const [own] = await dbq('SELECT pid FROM product WHERE pid=$1 AND is_package=true AND owner_uid=$2', [r1, user.uid])
+      if (!own) return [404, { error: 'Not found' }]
+      const { name, sku, items } = body
+      if (name !== undefined && !name?.trim()) return [400, { error: 'Name required' }]
+      if (name !== undefined) await dbr('UPDATE product SET name=$1 WHERE pid=$2', [name.trim(), r1])
+      if (sku !== undefined) await dbr('UPDATE product SET sku=$1 WHERE pid=$2', [sku?.trim() || null, r1])
+      if (items !== undefined) await saveItems(r1, items)
+      const [row] = await dbq(listSql + ' AND p.pid=$2', [user.uid, r1])
+      return [200, row]
+    }
+  }
+
   // ── PRODUCTS ──────────────────────────────────────────────────────────────
   if (r0 === 'products') {
     if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
@@ -1185,7 +1343,7 @@ async function route(method, segments, body, headers, event) {
         FROM product p
         LEFT JOIN units u ON u.unid=p.unid
         LEFT JOIN product_category c ON c.caid=p.caid
-        WHERE p.deleted=false ORDER BY p.name`)]
+        WHERE p.deleted=false AND p.is_package=false ORDER BY p.name`)]
       if (method === 'POST') {
         const { name, sku, unid, caid } = body
         if (!name?.trim()) return [400, { error: 'Name required' }]
@@ -1725,7 +1883,11 @@ async function route(method, segments, body, headers, event) {
         `SELECT o.oid FROM "order" o JOIN menu m ON m.mid=o.mid AND m.owner_uid=$1
          WHERE o.source='walkin' AND o.created_at >= NOW() - INTERVAL '24 hours'
          ORDER BY o.created_at DESC LIMIT 15`, [user.uid])
-      return [200, { items: items.map(i => ({ ...i, stock: Math.max(0, Number(i.stock)), sold_30d: Number(i.sold_30d) })),
+      const packages = await dbq(
+        `SELECT p.pid, p.name, COALESCE((SELECT SUM(qty) FROM product_stock ps WHERE ps.pid=p.pid AND ps.owner_uid=$1),0) AS stock
+         FROM product p WHERE p.is_package=true AND p.deleted=false AND p.owner_uid=$1 ORDER BY lower(p.name)`, [user.uid])
+      return [200, { packages: packages.map(p => ({ ...p, stock: Math.max(0, Number(p.stock)) })),
+                     items: items.map(i => ({ ...i, stock: Math.max(0, Number(i.stock)), sold_30d: Number(i.sold_30d) })),
                      recent: await orderTotals(recent.map(r => r.oid)) }]
     }
 
@@ -1752,7 +1914,10 @@ async function route(method, segments, body, headers, event) {
       const counts = (Array.isArray(body?.counts) ? body.counts : [])
         .map(c => ({ rid: Number(c.rid), counted: Number(c.counted), wasted: Math.max(0, Number(c.wasted) || 0) }))
         .filter(c => c.rid && Number.isFinite(c.counted) && c.counted >= 0)
-      if (!counts.length) return [400, { error: 'Nothing counted' }]
+      const pcounts = (Array.isArray(body?.package_counts) ? body.package_counts : [])
+        .map(c => ({ pid: Number(c.pid), counted: Number(c.counted) }))
+        .filter(c => c.pid && Number.isFinite(c.counted) && c.counted >= 0)
+      if (!counts.length && !pcounts.length) return [400, { error: 'Nothing counted' }]
       let soldAt = new Date()
       if (body?.sold_at) {
         const d = new Date(body.sold_at)
@@ -1787,13 +1952,27 @@ async function route(method, segments, body, headers, event) {
           surplus.push({ rid: r.rid, name: r.name, qty: add })
         }
       }
+      // Packaging: fewer than expected = used differently from the app's logic -> written off ('packcount',
+      // shown in the P&L); more than expected raises the stock.
+      const packs = []
+      for (const c of pcounts) {
+        const [pk] = await dbq(
+          `SELECT p.pid, p.name, COALESCE((SELECT SUM(qty) FROM product_stock ps WHERE ps.pid=p.pid AND ps.owner_uid=$2),0) AS stock
+           FROM product p WHERE p.pid=$1 AND p.is_package=true AND p.deleted=false AND p.owner_uid=$2`, [c.pid, user.uid])
+        if (!pk) continue
+        const diff = Math.round((Math.max(0, Number(pk.stock)) - c.counted) * 1000) / 1000
+        if (!diff) continue
+        await dbr(`INSERT INTO product_stock (pid, owner_uid, qty, source, created_at) VALUES ($1,$2,$3,$4,$5)`,
+          [pk.pid, user.uid, -diff, diff > 0 ? 'packcount' : 'count', soldAt])
+        packs.push({ pid: pk.pid, name: pk.name, diff })
+      }
       let sale = null
       if (saleLines.length) {
         const oid = await createWalkinSale(user.uid, saleLines, soldAt)
         sale = (await orderTotals([oid]))[0]
       }
       await notifyStockChange(user.uid)
-      return [201, { sale, wasted, surplus }]
+      return [201, { sale, wasted, surplus, packs }]
     }
 
     // DELETE /quicksale/:oid — undo a walk-in sale (kept in history as Declined, stock restored)
@@ -2234,14 +2413,16 @@ async function route(method, segments, body, headers, event) {
         FROM product p
         LEFT JOIN units u ON u.unid=p.unid
         LEFT JOIN product_category c ON c.caid=p.caid
-        WHERE p.deleted=false ORDER BY p.name`)
+        WHERE p.deleted=false AND p.is_package=false ORDER BY p.name`)
       const links = await dbq(`
         SELECT ps.psid, ps.pid, ps.price, ps.currency,
                s.sid, s.name AS supplier_name
         FROM product_supplier ps
         JOIN supplier s ON s.sid=ps.sid
         WHERE s.owner_uid=$1`, [user.uid])
-      return [200, { products, links }]
+      const packages = await dbq(`SELECT p.pid, p.name, p.sku, NULL::numeric AS expiry_hours, NULL::text AS units, NULL::text AS category, true AS is_package
+        FROM product p WHERE p.is_package=true AND p.deleted=false AND p.owner_uid=$1 ORDER BY p.name`, [user.uid])
+      return [200, { products, links, packages }]
     }
     // PATCH /procurement/:pid — update expiry_hours
     if (r1 && method === 'PATCH') {
@@ -4114,8 +4295,16 @@ async function route(method, segments, body, headers, event) {
               AND pr.completed_at >= NOW() - INTERVAL '${interval}'
         ) w JOIN recipe r ON r.rid = w.rid LEFT JOIN mat ON mat.rid = w.rid
         GROUP BY w.rid, r.name, mat.m ORDER BY r.name`, [uid])
+      // Packaging written off with sales (and closing-count corrections)
+      const packRows = await dbq(`${COST}
+        SELECT ps.pid, p.name, -SUM(ps.qty) AS qty,
+               COALESCE(c.unit_cost, (SELECT MIN(x.price) FROM product_supplier x WHERE x.pid = ps.pid), 0) AS unit_cost
+        FROM product_stock ps JOIN product p ON p.pid = ps.pid LEFT JOIN cost c ON c.pid = ps.pid
+        WHERE ps.owner_uid=$1 AND ps.source IN ('pack','packcount')
+          AND ps.created_at >= NOW() - INTERVAL '${interval}'
+        GROUP BY ps.pid, p.name, c.unit_cost HAVING -SUM(ps.qty) > 0 ORDER BY p.name`, [uid])
       const money = rows => rows.map(r => ({ ...r, qty: Number(r.qty), unit_cost: Number(r.unit_cost), cost: Number(r.qty) * Number(r.unit_cost) }))
-      const pw = money(productWaste), iw = money(itemWaste)
+      const pw = money(productWaste), iw = money(itemWaste), pk = money(packRows)
       return [200, {
         period,
         revenue: revenue.map(r => ({ ...r, revenue: Number(r.revenue) })),
@@ -4123,6 +4312,7 @@ async function route(method, segments, body, headers, event) {
           delivery: Number(goods?.v || 0) + Number(fees?.v || 0),
           product_waste: { total: pw.reduce((a, r) => a + r.cost, 0), rows: pw },
           item_waste:    { total: iw.reduce((a, r) => a + r.cost, 0), rows: iw },
+          packaging:     { total: pk.reduce((a, r) => a + r.cost, 0), rows: pk },
         },
       }]
     }
