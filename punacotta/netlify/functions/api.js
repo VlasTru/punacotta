@@ -403,14 +403,19 @@ async function applyRunAcceptance(prid, accepted) {
   }
 }
 
+// Units of an order line (order_item.qty counts MOQ steps for submultiple items): needs aliases oi, r, un
+const OIU = `(oi.qty * CASE WHEN r.allow_submultiples AND COALESCE(r.moq,0) > 0
+  THEN r.moq / CASE un.name WHEN 'kilograms' THEN 1000 WHEN 'litres' THEN 1000 WHEN 'pounds' THEN 16 ELSE 1 END ELSE 1 END)`
+
 async function creditRunStock(prid) {
   const [run] = await dbq('SELECT owner_uid FROM process_run WHERE prid=$1', [prid])
   if (!run) return
   const items = await dbq(
     `SELECT pri.rid, COALESCE(pri.accepted_qty, pri.qty) AS qty,
-            COALESCE((SELECT SUM(oi.qty) FROM boa_reservation br
+            COALESCE((SELECT SUM(${OIU}) FROM boa_reservation br
                       JOIN "order" o ON o.oid=br.oid AND o.status NOT IN ('Declined','Cancelled')
                       JOIN order_item oi ON oi.oid=o.oid AND oi.rid=br.rid
+                      JOIN recipe r ON r.rid=oi.rid LEFT JOIN units un ON un.unid=r.unid
                       WHERE br.prid=pri.prid AND br.rid=pri.rid AND br.status='confirmed'), 0) AS boa_qty
      FROM process_run_item pri WHERE pri.prid=$1`, [prid])
   for (const it of items)
@@ -853,9 +858,10 @@ async function settleRunShortfall(prid) {
   const items = await dbq('SELECT rid, COALESCE(accepted_qty, qty) AS made FROM process_run_item WHERE prid=$1', [prid])
   for (const it of items) {
     const res = await dbq(
-      `SELECT br.resid, oi.qty FROM boa_reservation br
+      `SELECT br.resid, ${OIU} AS qty FROM boa_reservation br
        JOIN "order" o ON o.oid=br.oid AND o.status NOT IN ('Declined','Cancelled')
        JOIN order_item oi ON oi.oid=o.oid AND oi.rid=br.rid
+       JOIN recipe r ON r.rid=oi.rid LEFT JOIN units un ON un.unid=r.unid
        WHERE br.prid=$1 AND br.rid=$2 AND br.status='confirmed' ORDER BY br.resid`, [prid, it.rid])
     let left = Number(it.made)
     for (const r of res) {
@@ -3214,11 +3220,12 @@ async function route(method, segments, body, headers, event) {
          JOIN equipment e ON e.eid=ei.eid AND e.owner_uid=$2 AND COALESCE(e.status,'idle') <> 'inactive'
          WHERE ei.rid = ANY($1::int[]) ORDER BY ei.eid`, [rids, user.uid]) : []
       const resv = prids.length ? await dbq(
-        `SELECT br.resid, br.prid, br.rid, br.oid, oi.qty, br.shortfall, br.shortfall_state,
+        `SELECT br.resid, br.prid, br.rid, br.oid, ${OIU} AS qty, br.shortfall, br.shortfall_state,
                 br.guest_name, br.guest_email, br.guest_phone, o.status
          FROM boa_reservation br
          JOIN "order" o ON o.oid=br.oid AND o.status NOT IN ('Declined','Cancelled')
          JOIN order_item oi ON oi.oid=o.oid AND oi.rid=br.rid
+         JOIN recipe r ON r.rid=oi.rid LEFT JOIN units un ON un.unid=r.unid
          WHERE br.prid = ANY($1::int[]) AND br.status='confirmed' ORDER BY br.resid`, [prids]) : []
       const out = runs.map(run => {
         const finished = !['in_progress', 'on_hold'].includes(run.status)
@@ -3927,7 +3934,7 @@ async function route(method, segments, body, headers, event) {
     try {
       rows = await dbq(`
         SELECT
-          r.rid, r.name AS item_name, r.price, r.currency,
+          r.rid, r.name AS item_name, r.price, r.currency, r.allow_submultiples, r.moq,
           u.name AS units,
           owner.business_name AS sold_by,
           owner.uid AS owner_uid,
@@ -3975,7 +3982,7 @@ async function route(method, segments, body, headers, event) {
         // Columns not yet migrated — run without location fields
         rows = await dbq(`
           SELECT
-            r.rid, r.name AS item_name, r.price, r.currency,
+            r.rid, r.name AS item_name, r.price, r.currency, r.allow_submultiples, r.moq,
             u.name AS units,
             owner.business_name AS sold_by,
             owner.uid AS owner_uid,
@@ -4048,6 +4055,8 @@ async function route(method, segments, body, headers, event) {
         price:       row.price,
         currency:    row.currency||'AMD',
         units:       row.units||'pcs',
+        allow_submultiples: !!row.allow_submultiples,
+        moq:         row.moq ? Number(row.moq) : null,
         eta_pickup:  etaHHMM,
         eta_delivery:etaDelivery,
         mins_left:   minsLeft,
@@ -4112,7 +4121,16 @@ async function route(method, segments, body, headers, event) {
 
     const results = []
     for (const it of items) {
-      const { prid, rid, qty, owner_uid } = it
+      const { prid, rid, owner_uid } = it
+      // Submultiple items (e.g. 250 g steps of an item counted in kg): the customer buys whole steps.
+      const [rec0] = await dbq(
+        `SELECT r.price, r.allow_submultiples, r.moq, un.name AS unit_name FROM recipe r LEFT JOIN units un ON un.unid=r.unid WHERE r.rid=$1`, [rid])
+      const sub = !!(rec0?.allow_submultiples && Number(rec0.moq) > 0)
+      const stepU = sub ? Number(rec0.moq) / (UNIT_CONV[rec0.unit_name] || 1) : 1       // item units per step
+      const qty = sub
+        ? Math.round((it.steps != null ? Number(it.steps) : Number(it.qty) / stepU)) * stepU
+        : Number(it.qty)
+      if (!(qty > 0)) { results.push({ prid, rid, status:'invalid_qty' }); continue }
       // Check remaining capacity
       const [runItem] = await dbq('SELECT qty FROM process_run_item WHERE prid=$1 AND rid=$2', [prid, rid])
       if (!runItem) { results.push({ prid, rid, status:'not_found' }); continue; }
@@ -4120,8 +4138,10 @@ async function route(method, segments, body, headers, event) {
         `SELECT COALESCE(SUM(qty),0) AS reserved FROM boa_reservation
          WHERE prid=$1 AND rid=$2 AND status IN ('pending','confirmed')`, [prid, rid])
       const remaining = Number(runItem.qty) - Number(resRow.reserved)
-      const canFulfill = Math.min(Number(qty), Math.max(0, remaining))
-      const waiting = Number(qty) - canFulfill
+      let canFulfill = Math.min(Number(qty), Math.max(0, remaining))
+      if (sub) canFulfill = Math.floor(canFulfill / stepU + 1e-9) * stepU                // whole steps only
+      canFulfill = Math.round(canFulfill * 1000) / 1000
+      const waiting = Math.round((Number(qty) - canFulfill) * 1000) / 1000
 
       // Create reservation
       const resRes = await dbr(
@@ -4132,15 +4152,15 @@ async function route(method, segments, body, headers, event) {
       const resid = resRes.rows[0].resid
 
       // Create order in existing orders table
-      const [recipe] = await dbq('SELECT price FROM recipe WHERE rid=$1', [rid])
-      const price = recipe?.price||0
+      // order_item.qty counts steps for submultiple items, at the price of one step (as menu orders do)
+      const price = sub ? Math.round((rec0?.price||0) * stepU) : (rec0?.price||0)
       const orderRes = await dbr(
         `INSERT INTO "order" (owner_uid, status, fulfillment, guest_name, guest_email, guest_phone, delivery_address, prid)
          VALUES ($1,'New',$2,$3,$4,$5,$6,$7) RETURNING oid`,
         [owner_uid, fulfillment||'pickup', guest_name, guest_email, guest_phone||null, delivery_address||null, prid])
       const oid = orderRes.rows[0].oid
       await dbr(`INSERT INTO order_item (oid,rid,qty,price) VALUES ($1,$2,$3,$4)`,
-        [oid, rid, Math.ceil(canFulfill), price])
+        [oid, rid, sub ? Math.round(canFulfill / stepU) : Math.ceil(canFulfill), price])
       await dbr(`UPDATE boa_reservation SET oid=$1 WHERE resid=$2`, [oid, resid])
 
       // Reserved after the batch was already finished: those units were credited to item stock,
@@ -4682,11 +4702,11 @@ async function route(method, segments, body, headers, event) {
           // Per finished batch item: share reserved before ready vs logged waste
           dbq(`SELECT pr.prid, pri.rid, r.name AS item, pr.completed_at,
                       pri.qty AS run_qty, pri.wasted_qty,
-                      COALESCE(SUM(oi.qty) FILTER (WHERE br.created_at < pr.completed_at), 0) AS pre_qty,
-                      COALESCE(SUM(oi.qty), 0) AS boa_qty
+                      COALESCE(SUM(${OIU}) FILTER (WHERE br.created_at < pr.completed_at), 0) AS pre_qty,
+                      COALESCE(SUM(${OIU}), 0) AS boa_qty
                FROM process_run pr
                JOIN process_run_item pri ON pri.prid=pr.prid
-               JOIN recipe r ON r.rid=pri.rid
+               JOIN recipe r ON r.rid=pri.rid LEFT JOIN units un ON un.unid=r.unid
                LEFT JOIN boa_reservation br ON br.prid=pr.prid AND br.rid=pri.rid AND br.status='confirmed'
                LEFT JOIN "order" o ON o.oid=br.oid AND o.status NOT IN ('Declined','Cancelled')
                LEFT JOIN order_item oi ON oi.oid=o.oid AND oi.rid=pri.rid

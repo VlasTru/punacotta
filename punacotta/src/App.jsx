@@ -6878,11 +6878,16 @@ function BoardOfArrivals({ toast }) {
 
   const cartKey = (a) => `${a.prid}-${a.rid}`;
 
+  // Items sold in sub-unit steps (e.g. 250 g of an item counted in kg): one click = one MOQ step.
+  const stepOf = a => (a.allow_submultiples && Number(a.moq)>0) ? Number(a.moq)/conv(a.units) : 1;
+  const rnd = n => Math.round(n*1000)/1000;
+  const maxOf = a => { const st=stepOf(a); const m=a.remaining_qty ?? a.run_qty ?? 999; return rnd(Math.floor(m/st+1e-9)*st); };
+  const fmtQ = (a,q) => stepOf(a)<1 ? `${rnd(q*conv(a.units))} ${subAbbr(a.units)}` : `${rnd(q)}`;
   const setQty = (arrival, delta) => setCart(p=>{
     const key = cartKey(arrival);
     const cur = p[key]?.qty || 0;
-    const max = arrival.remaining_qty ?? arrival.run_qty ?? 999;
-    const next = Math.max(0, Math.min(max, cur + delta));
+    const max = maxOf(arrival);
+    const next = rnd(Math.max(0, Math.min(max, cur + delta*stepOf(arrival))));
     if (next === 0) {
       const { [key]: _, ...rest } = p;
       return rest;
@@ -6900,7 +6905,7 @@ function BoardOfArrivals({ toast }) {
   };
 
   const cartEntries = Object.values(cart);
-  const cartTotal = cartEntries.reduce((sum, entry) => sum + (entry.item?.price||0) * entry.qty, 0);
+  const cartTotal = cartEntries.reduce((sum, entry) => sum + (entry.item?.price||0) * entry.qty, 0);  // price is per unit, qty in units
   const cartCurrency = cartEntries[0]?.item?.currency || 'AMD';
 
   const SortTh = ({label, k, style={}}) => (
@@ -7077,7 +7082,7 @@ function BoardOfArrivals({ toast }) {
                         const remaining = a.remaining_qty ?? a.run_qty ?? 0;
                         const isReady = a.run_status==='completed';
                         const rowBg   = freshnessColor(a.freshness);
-                        const atMax   = qty >= remaining;
+                        const atMax   = qty >= maxOf(a) - 1e-9;
                         return (
                           <tr key={`${a.rid}-${a.prid}`}
                             style={{borderBottom:i<pageRows.length-1?`1px solid ${G.border}`:"none",background:rowBg,transition:"background 0.5s"}}>
@@ -7093,11 +7098,11 @@ function BoardOfArrivals({ toast }) {
                               <div style={{display:"flex",alignItems:"center",gap:6}}>
                                 <button onClick={()=>setQty(a,-1)} disabled={qty===0}
                                   style={{width:24,height:24,borderRadius:6,border:`1px solid ${G.border}`,background:G.sand,cursor:qty===0?"not-allowed":"pointer",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",opacity:qty===0?0.4:1}}>−</button>
-                                <span style={{minWidth:28,textAlign:"center",fontSize:14,fontFamily:G.mono,fontWeight:600}}>{qty}</span>
+                                <span style={{minWidth:stepOf(a)<1?52:28,textAlign:"center",fontSize:14,fontFamily:G.mono,fontWeight:600}}>{qty>0||stepOf(a)>=1?fmtQ(a,qty):`0 ${subAbbr(a.units)}`}</span>
                                 <button onClick={()=>setQty(a,1)} disabled={atMax}
                                   style={{width:24,height:24,borderRadius:6,border:`1px solid ${G.border}`,background:G.sand,cursor:atMax?"not-allowed":"pointer",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",opacity:atMax?0.4:1}}>+</button>
                                 {remaining < (a.run_qty||0) && (
-                                  <span style={{fontSize:11,color:G.red,fontFamily:G.mono}}>{remaining} left</span>
+                                  <span style={{fontSize:11,color:G.red,fontFamily:G.mono}}>{fmtQ(a,remaining)} left</span>
                                 )}
                               </div>
                             </td>
@@ -7167,14 +7172,14 @@ function BoardOfArrivals({ toast }) {
                     <div key={`${entry.prid}-${entry.rid}`} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${G.border}`}}>
                       <div>
                         <p style={{fontSize:13,fontWeight:600,color:G.dark,marginBottom:2}}>{a.item_name}</p>
-                        <p style={{fontSize:12,color:G.muted}}>{entry.qty} × {a.price} {a.currency}</p>
-                        {entry.qty >= a.remaining_qty && <p style={{fontSize:11,color:G.red}}>Max available</p>}
+                        <p style={{fontSize:12,color:G.muted}}>{fmtQ(a,entry.qty)} × {a.price} {a.currency}/{a.units}</p>
+                        {entry.qty >= maxOf(a)-1e-9 && <p style={{fontSize:11,color:G.red}}>Max available</p>}
                       </div>
                       <div style={{display:"flex",alignItems:"center",gap:4}}>
                         <button onClick={()=>setQty(a,-1)} style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.sand,cursor:"pointer",fontSize:12}}>−</button>
-                        <span style={{fontSize:13,fontFamily:G.mono,fontWeight:600,minWidth:20,textAlign:"center"}}>{entry.qty}</span>
-                        <button onClick={()=>setQty(a,1)} disabled={entry.qty>=a.remaining_qty}
-                          style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.sand,cursor:entry.qty>=a.remaining_qty?"not-allowed":"pointer",fontSize:12,opacity:entry.qty>=a.remaining_qty?0.4:1}}>+</button>
+                        <span style={{fontSize:13,fontFamily:G.mono,fontWeight:600,minWidth:20,textAlign:"center"}}>{fmtQ(a,entry.qty)}</span>
+                        <button onClick={()=>setQty(a,1)} disabled={entry.qty>=maxOf(a)-1e-9}
+                          style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.sand,cursor:entry.qty>=maxOf(a)-1e-9?"not-allowed":"pointer",fontSize:12,opacity:entry.qty>=maxOf(a)-1e-9?0.4:1}}>+</button>
                       </div>
                     </div>
                   );
@@ -7238,7 +7243,8 @@ function BoardOfArrivals({ toast }) {
                     setPlacing(true);
                     try {
                       const items = cartEntries.map(e=>({
-                        prid:e.prid, rid:e.rid, qty:e.qty, owner_uid:e.item.owner_uid
+                        prid:e.prid, rid:e.rid, qty:e.qty, owner_uid:e.item.owner_uid,
+                        ...(stepOf(e.item)<1 ? {steps:Math.round(e.qty/stepOf(e.item))} : {})
                       }));
                       const result = await api.placeArrivalOrder({
                         items, guest_name:guest.name, guest_email:guest.email,
