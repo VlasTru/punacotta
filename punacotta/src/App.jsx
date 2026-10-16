@@ -9026,7 +9026,7 @@ function ProcessesPage({ user, setPage, toast }) {
               <table style={{ width:"100%", borderCollapse:"collapse" }}>
                 <thead>
                   <tr style={{ background:G.sand }}>
-                    {["#","Skill / Step","Duration","Repeat","Times","Dep. type","Depends on",""].map(h=>(
+                    {["#","Skill / Step","Duration","Repeat every","Times","Dep. type","Depends on",""].map(h=>(
                       <th key={h} style={{padding:"8px 12px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,whiteSpace:"nowrap"}}>{h}</th>
                     ))}
                   </tr>
@@ -9051,7 +9051,6 @@ function ProcessesPage({ user, setPage, toast }) {
                       </td>
                       <td style={{padding:"8px 12px"}}>
                         <div style={{display:"flex",gap:5,alignItems:"center"}}>
-                          <span style={{fontSize:11,color:G.muted,whiteSpace:"nowrap"}}>every</span>
                           <input type="number" min="1" value={sk.recur_every||""} onChange={e=>updateRow(i,"recur_every",e.target.value?Math.max(1,parseInt(e.target.value)||1):"")} placeholder="—"
                             style={{width:44,padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}/>
                           <select value={sk.recur_unit||"hours"} onChange={e=>updateRow(i,"recur_unit",e.target.value)}
