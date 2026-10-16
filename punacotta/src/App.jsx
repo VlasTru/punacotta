@@ -127,7 +127,7 @@ const RU = {
   "Are you sure you want to cancel order":"Вы уверены, что хотите отменить заказ",
   "No restaurants open right now":"Сейчас нет открытых ресторанов",
   "Check back soon!":"Загляните позже!",
-  "Production":"Производство","Run":"Партия","No equipment":"Без оборудования","Produced, not reserved":"Произведено, не зарезервировано","Reserved on the Board of Arrivals":"Зарезервировано на табло","Unfulfilled":"Не выполнено","No batches in production.":"Нет партий в производстве.","Production capacity chart":"Диаграмма загрузки оборудования","not reserved":"не зарезервировано","unfulfilled":"не выполнен","units":"ед.","reserved":"резерв","Order":"Заказ","cancelled":"отменён","Start":"Запустите","again for":"ещё раз на","could not be produced":"не удалось произвести","Re-produce":"Произвести заново","Contact customer & cancel":"Связаться с клиентом и отменить","Cancel order":"Отменить заказ","Please let the customer know first:":"Сначала сообщите клиенту:","Back":"Назад",
+  "Production":"Производство","Click a revenue category or Profit to drill down.":"Нажмите на категорию дохода или на прибыль, чтобы увидеть детали.","Board of Arrivals":"Табло прибытия","Offline sales":"Офлайн-продажи","Online sales":"Онлайн-продажи","Profit by channel":"Прибыль по каналам","Run":"Партия","No equipment":"Без оборудования","Produced, not reserved":"Произведено, не зарезервировано","Reserved on the Board of Arrivals":"Зарезервировано на табло","Unfulfilled":"Не выполнено","No batches in production.":"Нет партий в производстве.","Production capacity chart":"Диаграмма загрузки оборудования","not reserved":"не зарезервировано","unfulfilled":"не выполнен","units":"ед.","reserved":"резерв","Order":"Заказ","cancelled":"отменён","Start":"Запустите","again for":"ещё раз на","could not be produced":"не удалось произвести","Re-produce":"Произвести заново","Contact customer & cancel":"Связаться с клиентом и отменить","Cancel order":"Отменить заказ","Please let the customer know first:":"Сначала сообщите клиенту:","Back":"Назад",
   "Packaging":"Упаковка","+ Package":"+ Упаковка","Max. capacity":"Макс. вместимость","Type to search items…":"Введите название блюда…","Max. capacity must be greater than 0":"Макс. вместимость должна быть больше 0","Edit Package":"Редактировать упаковку","New Package":"Новая упаковка","Delete package?":"Удалить упаковку?","Remove":"Убрать","Packaging adjusted":"Упаковка скорректирована","used beyond the automatic write-off — recorded in Profit & Loss":"использовано сверх автоматического списания — учтено в отчёте о доходах и расходах","Deleted":"Удалено","Select a supplier":"Выберите поставщика","Supplier…":"Поставщик…","Price":"Цена","Link":"Привязать","Confirm":"Подтвердить","Cancel wastage":"Отменить списание","The following packaging will be wasted, and stock levels shall be changed accordingly. The action is irreversible. Are you sure you wish to proceed?":"Следующая упаковка будет списана, остатки изменятся. Действие необратимо. Продолжить?","Supplier linked":"Поставщик привязан","Wastage applied":"Списание выполнено","Confirm wastage":"Подтверждение списания","Add supplier":"Добавить поставщика","Items":"Блюда","Name required":"Укажите название",
   "Quick Sale":"Быстрая продажа","Online":"Онлайн","Offline":"Офлайн","Inventory":"Склад","Search items…":"Поиск позиций…","No items found":"Позиции не найдены","in stock":"в наличии","no stock":"нет в наличии","Current sale":"Текущая продажа","Tap items to add them.":"Нажимайте на позиции, чтобы добавить.","Sold":"Продано","Sold earlier":"Продано ранее","Clear":"Очистить","Recent sales":"Последние продажи","Undo":"Отменить","Sale undone":"Продажа отменена","Sell":"Продажа","Closing count":"Закрытие смены","Enter what is left of each item. Anything missing is recorded as sold; mark units as wasted if they were thrown away. Items you leave as they are stay unchanged.":"Введите остаток каждой позиции. Недостающее записывается как проданное; отметьте единицы, которые были списаны. Позиции без изменений остаются как есть.","No items with stock on hand.":"Нет позиций в наличии.","Expected":"Ожидается","sold":"продано","of which wasted":"из них списано","more than expected — stock will be raised":"больше ожидаемого — остаток будет увеличен","Add another item…":"Добавить другую позицию…","No differences yet.":"Расхождений пока нет.","Wasted":"Списано","Surplus added to stock":"Излишек добавлен в остаток","Count saved: no differences":"Подсчёт сохранён: расхождений нет","Save count":"Сохранить подсчёт","Voice input is not supported in this browser. Try Chrome or Safari.":"Голосовой ввод не поддерживается в этом браузере. Попробуйте Chrome или Safari.","Microphone access is blocked. Allow it in the browser settings.":"Доступ к микрофону заблокирован. Разрешите его в настройках браузера.","Voice error":"Ошибка голоса","Nothing was heard":"Ничего не услышано","Voice language":"Язык голоса","Stop":"Стоп","Speak a sale":"Продиктовать продажу","Listening…":"Слушаю…","I heard":"Я услышал","No items recognised. Try again or tap the items.":"Позиции не распознаны. Повторите или выберите нажатием.","Not recognised":"Не распознано","Confirm sale":"Подтвердить продажу","Add to ticket":"Добавить в чек","Discard":"Отмена","Speak again":"Повторить",
   "Reports":"Отчёты","Week":"Неделя","Month":"Месяц","Year":"Год",
@@ -6206,6 +6206,18 @@ function buildPnl(data, expanded, tl) {
     if (E > R) links.push({ s: "def", t: "exp", v: E - R, color: ink });
     if (R > E) links.push({ s: "rev", t: "pro", v: R - E, color: ink });
     expTypes.forEach(e => { add({ id: e.id, col: 3, kind: "exp", label: e.label, value: e.value, color: e.color }); links.push({ s: "exp", t: e.id, v: e.value, color: e.color }); });
+    // Profit drill-down: its share by sales channel (negative channels keep a hairline node; tooltip shows the loss)
+    const chans = (data?.channels || []).filter(c => Math.abs(c.revenue) > 0.005 || Math.abs(c.profit) > 0.005);
+    if (R > E && chans.length) {
+      const names = { boa: tl("Board of Arrivals"), offline: tl("Offline sales"), online: tl("Online sales") };
+      const posSum = chans.reduce((a, c) => a + Math.max(0, c.profit), 0);
+      if (expanded.has("profit") && posSum > 0) chans.forEach((c, i) => {
+        const flow = Math.max(0, c.profit) / posSum * (R - E);
+        const color = pal[(i + 4) % pal.length];
+        add({ id: `ch-${c.key}`, col: 3, kind: "chan", label: names[c.key], value: flow, actual: c.profit, rev: c.revenue, color });
+        links.push({ s: "pro", t: `ch-${c.key}`, v: flow, color });
+      });
+    }
   }
   return { nodes, links, R, E };
 }
@@ -6276,7 +6288,8 @@ function PnlSection({ toast }) {
   const net = R - E;
   const pct = (v, base) => base > 0 ? `${(v / base * 100).toFixed(1)}%` : '';
   const toggleCat = n => {
-    if (n.kind === 'total' || n.kind === 'exp') return;
+    if (n.id === 'pro') { setExpanded(prev => { const nx = new Set(prev); nx.has('profit') ? nx.delete('profit') : nx.add('profit'); return nx; }); setTip(null); return; }
+    if (n.kind === 'total' || n.kind === 'exp' || n.kind === 'chan') return;
     setExpanded(prev => { const nx = new Set(prev); nx.has(n.caid) ? nx.delete(n.caid) : nx.add(n.caid); return nx; });
     setTip(null);
   };
@@ -6313,6 +6326,11 @@ function PnlSection({ toast }) {
       tableRows.push({ kind: 'h', a: tl("Packaging"), v: Number(ex.packaging.total) });
       ex.packaging.rows.forEach(r => tableRows.push({ kind: 'r', a: `${r.name} × ${parseFloat(r.qty.toFixed(2))}`, v: r.cost }));
     }
+    if ((data.channels || []).length) {
+      const names = { boa: tl("Board of Arrivals"), offline: tl("Offline sales"), online: tl("Online sales") };
+      tableRows.push({ kind: 'h', a: tl("Profit by channel"), v: R - E });
+      data.channels.forEach(c => tableRows.push({ kind: 'r', a: `${names[c.key]} (${tl("Revenue")} ${fmt(c.revenue)})`, v: c.profit }));
+    }
   }
 
   return (
@@ -6334,7 +6352,7 @@ function PnlSection({ toast }) {
         {tile(net >= 0 ? tl("Profit") : tl("Loss"), `${net < 0 ? "−" : ""}${fmt(Math.abs(net))} AMD`, net >= 0 ? G.green : G.red)}
       </div>
       <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 12, color: G.muted }}>{tl("Click a revenue category to drill down into items.")}</span>
+        <span style={{ fontSize: 12, color: G.muted }}>{tl("Click a revenue category or Profit to drill down.")}</span>
         {expanded.size > 0 && <button onClick={() => setExpanded(new Set())} style={{ background: "none", border: `1px solid ${G.border}`, borderRadius: 6, cursor: "pointer", fontSize: 12, fontFamily: G.mono, color: G.muted, padding: "3px 10px" }}>{tl("Collapse all")}</button>}
         <button onClick={() => setView(v => v === 'chart' ? 'table' : 'chart')} style={{ marginLeft: "auto", background: "none", border: `1px solid ${G.border}`, borderRadius: 6, cursor: "pointer", fontSize: 12, fontFamily: G.mono, color: G.muted, padding: "3px 10px" }}>{view === 'chart' ? tl("Table view") : tl("Chart view")}</button>
       </div>
@@ -6360,9 +6378,12 @@ function PnlSection({ toast }) {
                 onMouseMove={e => showTip(e, [`${l.sn.label} → ${l.tn.label}`, `${fmt(l.v)} AMD`])} onMouseLeave={() => setTip(null)} />
             ))}
             {nodes.map(n => {
-              const clickable = n.kind === 'cat' || n.kind === 'item';
-              const share = n.col === 0 ? pct(n.value, R) : n.col === 3 ? pct(n.value, E) : '';
-              const lines = [n.label + (n.category && n.kind === 'item' ? ` · ${n.category}` : ''), `${fmt(n.value)} AMD${share ? ` · ${share}` : ''}`];
+              const canDrill = n.id === 'pro' && (data?.channels || []).length > 0;
+              const clickable = n.kind === 'cat' || n.kind === 'item' || canDrill;
+              const share = n.kind === 'chan' ? pct(n.actual, net) : n.col === 0 ? pct(n.value, R) : n.col === 3 ? pct(n.value, E) : '';
+              const lines = n.kind === 'chan'
+                ? [n.label, `${n.actual < 0 ? "−" : ""}${fmt(Math.abs(n.actual))} AMD${share ? ` · ${share}` : ''}`, `${tl("Revenue")}: ${fmt(n.rev)} AMD`]
+                : [n.label + (n.category && n.kind === 'item' ? ` · ${n.category}` : ''), `${fmt(n.value)} AMD${share ? ` · ${share}` : ''}`];
               return (
                 <g key={n.id} style={{ cursor: clickable ? "pointer" : "default" }}
                   role={clickable ? "button" : undefined} tabIndex={clickable ? 0 : undefined}
@@ -6378,7 +6399,7 @@ function PnlSection({ toast }) {
                   )}
                   {n.col === 3 && (
                     <text x={n.x + n.w + 8} y={(n.ly ?? n.y + n.h / 2) + 4} fontSize={11} fill={G.dark}>
-                      {n.label}<tspan fill={G.muted}> {fmtK(n.value)}</tspan>
+                      {n.label}<tspan fill={G.muted}> {n.kind === 'chan' ? `${n.actual < 0 ? "−" : ""}${fmtK(Math.abs(n.actual))} · ${pct(n.actual, net)}` : fmtK(n.value)}</tspan>
                     </text>
                   )}
                   {(n.col === 1 || n.col === 2) && (() => {
@@ -6388,7 +6409,7 @@ function PnlSection({ toast }) {
                       : { x: n.x + n.w + 8, y: n.y + n.h / 2 + 4, textAnchor: "start" };
                     return (
                       <text {...props} fontSize={11} fontWeight={700} fill={G.dark}>
-                        {n.label}<tspan fill={G.muted} fontWeight={400}> {fmtK(n.value)}</tspan>
+                        {canDrill ? (expanded.has("profit") ? "▾ " : "▸ ") : ""}{n.label}<tspan fill={G.muted} fontWeight={400}> {fmtK(n.value)}</tspan>
                       </text>
                     );
                   })()}

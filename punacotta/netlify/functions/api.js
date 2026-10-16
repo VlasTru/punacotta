@@ -1871,11 +1871,11 @@ async function route(method, segments, body, headers, event) {
       const fulfillmentVal = fulfillment || (pickup ? 'pickup' : 'delivery')
 
       const res = await dbr(
-        `INSERT INTO "order" (owner_uid, mid, pickup, fulfillment, delivery_address, walkin_name, delivery_comments)
-         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING oid`,
+        `INSERT INTO "order" (owner_uid, mid, pickup, fulfillment, delivery_address, walkin_name, delivery_comments, source)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING oid`,
         [ownerUid, mid, fulfillmentVal!=='delivery', fulfillmentVal, delivery_address||null,
          isManualOrder && !customer_uid ? (walkin_name||'Walk-in') : null,
-         delivery_comments||null]
+         delivery_comments||null, isManualOrder ? 'manual' : 'app']
       )
       const oid = res.rows[0].oid
 
@@ -4443,9 +4443,55 @@ async function route(method, segments, body, headers, event) {
         GROUP BY ps.pid, p.name, c.unit_cost HAVING -SUM(ps.qty) > 0 ORDER BY p.name`, [uid])
       const money = rows => rows.map(r => ({ ...r, qty: Number(r.qty), unit_cost: Number(r.unit_cost), cost: Number(r.qty) * Number(r.unit_cost) }))
       const pw = money(productWaste), iw = money(itemWaste), pk = money(packRows)
+
+      // ── Profit by channel: BoA | Offline (Quick Sale + orders created by the restaurant) | Online ──
+      // Revenue is exact. Packaging written off with an order goes to that order's channel. The remaining
+      // expenses (deliveries, wastage, closing-count packaging) are shared between channels in proportion to
+      // the material cost of what each channel sold (by revenue when that cost is unknown).
+      const CH = `CASE WHEN o.mid IS NULL THEN 'boa'
+                       WHEN o.source IN ('walkin','manual') OR o.walkin_name IS NOT NULL THEN 'offline'
+                       ELSE 'online' END`
+      const ORD = `(m.owner_uid = $1 OR (o.mid IS NULL AND o.prid IS NOT NULL AND o.guest_email IS NOT NULL AND o.owner_uid = $1))
+          AND COALESCE(o.fulfillment,'pickup') <> 'stock' AND o.status NOT IN ('Declined','Cancelled')
+          AND o.created_at >= NOW() - INTERVAL '${interval}'`
+      const chRev = await dbq(`
+        SELECT ${CH} AS ch, SUM(oi.price * oi.qty) AS revenue,
+               SUM(CASE WHEN r.allow_submultiples AND COALESCE(r.moq,0) > 0
+                        THEN oi.qty * r.moq / CASE un.name WHEN 'kilograms' THEN 1000 WHEN 'litres' THEN 1000 WHEN 'pounds' THEN 16 ELSE 1 END
+                        ELSE oi.qty END * COALESCE(mat.m,0)) AS cogs
+        FROM order_item oi JOIN "order" o ON o.oid=oi.oid LEFT JOIN menu m ON m.mid=o.mid
+        JOIN recipe r ON r.rid=oi.rid LEFT JOIN units un ON un.unid=r.unid
+        LEFT JOIN (SELECT rp.rid, SUM(rp.qty * COALESCE((SELECT SUM(COALESCE(soi.qty_actual, soi.qty_ordered) * soi.unit_price)
+                                   / NULLIF(SUM(COALESCE(soi.qty_actual, soi.qty_ordered)),0)
+                            FROM supplier_order_item soi JOIN supplier_order so ON so.soid=soi.soid
+                            WHERE soi.pid=rp.pid AND so.owner_uid=$1 AND so.status='Accepted'),
+                           (SELECT MIN(x.price) FROM product_supplier x WHERE x.pid=rp.pid), 0)) AS m
+                   FROM recipe_product rp GROUP BY rp.rid) mat ON mat.rid=oi.rid
+        WHERE ${ORD} GROUP BY 1`, [uid])
+      const chPack = await dbq(`
+        SELECT ${CH} AS ch, SUM(-ps.qty * COALESCE((SELECT SUM(COALESCE(soi.qty_actual, soi.qty_ordered) * soi.unit_price)
+                                   / NULLIF(SUM(COALESCE(soi.qty_actual, soi.qty_ordered)),0)
+                            FROM supplier_order_item soi JOIN supplier_order so ON so.soid=soi.soid
+                            WHERE soi.pid=ps.pid AND so.owner_uid=$1 AND so.status='Accepted'),
+                           (SELECT MIN(x.price) FROM product_supplier x WHERE x.pid=ps.pid), 0)) AS cost
+        FROM product_stock ps JOIN "order" o ON o.oid=ps.source_id LEFT JOIN menu m ON m.mid=o.mid
+        WHERE ps.owner_uid=$1 AND ps.source='pack' AND ps.created_at >= NOW() - INTERVAL '${interval}' GROUP BY 1`, [uid])
+      const totalExp = Number(goods?.v || 0) + Number(fees?.v || 0) + pw.reduce((a, r) => a + r.cost, 0)
+        + iw.reduce((a, r) => a + r.cost, 0) + pk.reduce((a, r) => a + r.cost, 0)
+      const chKeys = ['boa', 'offline', 'online']
+      const rv = k => Number(chRev.find(r => r.ch === k)?.revenue || 0)
+      const cg = k => Number(chRev.find(r => r.ch === k)?.cogs || 0)
+      const pc = k => Number(chPack.find(r => r.ch === k)?.cost || 0)
+      const shared = totalExp - chKeys.reduce((a, k) => a + pc(k), 0)
+      const cogsSum = chKeys.reduce((a, k) => a + cg(k), 0), revSum = chKeys.reduce((a, k) => a + rv(k), 0)
+      const channels = chKeys.map(k => {
+        const w = cogsSum > 0 ? cg(k) / cogsSum : revSum > 0 ? rv(k) / revSum : 0
+        return { key: k, revenue: rv(k), packaging: pc(k), shared: shared * w, profit: rv(k) - pc(k) - shared * w }
+      })
       return [200, {
         period,
         revenue: revenue.map(r => ({ ...r, revenue: Number(r.revenue) })),
+        channels,
         expenses: {
           delivery: Number(goods?.v || 0) + Number(fees?.v || 0),
           product_waste: { total: pw.reduce((a, r) => a + r.cost, 0), rows: pw },
