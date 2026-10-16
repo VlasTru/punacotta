@@ -399,6 +399,9 @@ function Lightbox({ src, description, onClose }) {
 }
 
 // ─── UI PRIMITIVES ────────────────────────────────────────────────────────────
+// Step durations are whole numbers (the API returns NUMERIC as e.g. "30.00")
+const intDur = v => (v === null || v === undefined || v === "") ? v : Math.round(Number(v)) || 0;
+
 function Btn({ children, onClick, variant="primary", disabled, size="md", style:s, loading, title }) {
   const base = { border:"none", borderRadius:8, cursor:disabled||loading?"not-allowed":"pointer", fontFamily:G.mono, fontWeight:600, transition:"all 0.15s", opacity:disabled||loading?0.6:1, fontSize:size==="sm"?13:size==="lg"?16:14, padding:size==="sm"?"6px 14px":size==="lg"?"14px 28px":"9px 20px" };
   const variants = { primary:{background:G.caramel,color:G.white}, secondary:{background:G.sand,color:G.dark,border:`1px solid ${G.border}`}, ghost:{background:"transparent",color:G.muted,border:`1px solid ${G.border}`}, danger:{background:G.red,color:G.white}, success:{background:G.green,color:G.white} };
@@ -7610,7 +7613,7 @@ function SkillCombo({ allSkills, selected, excluded=[], onChange, onCreateSkill,
 function SkillEditDialog({ skill, allSkills, onSave, onClose }) {
   const [form, setForm] = useState({
     name: skill.name,
-    duration: skill.duration||"",
+    duration: intDur(skill.duration)||"",
     duration_unit: skill.duration_unit||"minutes",
     dep_type: skill.dep_type||"",
     dep_skid: skill.dep_skid||"",
@@ -7641,7 +7644,7 @@ function SkillEditDialog({ skill, allSkills, onSave, onClose }) {
         <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
           <Input label="Name" value={form.name} onChange={v=>set("name",v)} required />
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-            <Input label="Duration" type="number" min="0" value={String(form.duration)} onChange={v=>set("duration", Math.max(0, parseFloat(v)||0))} placeholder="e.g. 30" />
+            <Input label="Duration" type="number" min="0" value={String(form.duration)} onChange={v=>set("duration", Math.max(0, parseInt(v,10)||0))} placeholder="e.g. 30" />
             <div>
               <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Unit</label>
               <select value={form.duration_unit} onChange={e=>set("duration_unit",e.target.value)}
@@ -8203,7 +8206,7 @@ function RolesPage({ roles, skills, setRoles, setSkills, createSkill, toast, onB
               {skills.map((s,i)=>{
                 const col      = s.color||G.muted;
                 const inRoles  = skillRoles[s.skid]||[];
-                const durStr   = s.duration ? `${s.duration} ${durAbbr(s.duration_unit)}` : "—";
+                const durStr   = s.duration ? `${intDur(s.duration)} ${durAbbr(s.duration_unit)}` : "—";
                 const inProcess = false; // would need process data — blocked at API level
                 return (
                   <tr key={s.skid} style={{borderBottom:i<skills.length-1?`1px solid ${G.border}`:"none"}}>
@@ -8376,7 +8379,7 @@ function RunDetailSidebar({ run, user, onClose, onRunUpdated, toast }) {
                     )}
                     {step.duration && (
                       <span style={{fontSize:12,color:G.muted}}>
-                        ⏱ {step.duration} {step.duration_unit||"min"}
+                        ⏱ {intDur(step.duration)} {step.duration_unit||"min"}
                       </span>
                     )}
                     {step.elapsed_secs>0 && (
@@ -8722,7 +8725,7 @@ function ProcessesPage({ user, setPage, toast }) {
     setEditProc(proc); setFormName(proc.name);
     setFormSkills((proc.skills||[]).map((sk, _i, arr)=>({
       skid:sk.skid, name:sk.name, color:sk.color,
-      duration:sk.duration, duration_unit:sk.duration_unit||"minutes",
+      duration:intDur(sk.duration), duration_unit:sk.duration_unit||"minutes",
       dep_type:sk.dep_type||"",
       // Resolve dep_psid → dep_seq (1-based position in the list)
       dep_seq: sk.dep_psid ? String(arr.findIndex(s=>s.psid===sk.dep_psid)+1||"") : "",
@@ -8736,14 +8739,14 @@ function ProcessesPage({ user, setPage, toast }) {
   const addToForm = item => {
     if (item._isRole) {
       const fullRole = roles.find(r=>r.rid===item.rid);
-      const roleSkills = (fullRole?.skills||[]).map(s=>({...s,duration:s.duration||null,duration_unit:s.duration_unit||"minutes",dep_type:"",dep_seq:"",recur_every:"",recur_unit:"hours",recur_times:""}));
+      const roleSkills = (fullRole?.skills||[]).map(s=>({...s,duration:intDur(s.duration)||null,duration_unit:s.duration_unit||"minutes",dep_type:"",dep_seq:"",recur_every:"",recur_unit:"hours",recur_times:""}));
       setFormSkills(p=>{ const ex=new Set(p.map(x=>x.skid)); return [...p,...roleSkills.filter(s=>!ex.has(s.skid))]; });
     } else if (item._isProcess) {
       // Expand a process into its skills, grouped together
       const fullProc = processes.find(pr=>pr.procid===item.procid);
       const procSkills = (fullProc?.skills||[]).map(s=>({
         skid:s.skid, name:s.name, color:s.color,
-        duration:s.duration, duration_unit:s.duration_unit||"minutes",
+        duration:intDur(s.duration), duration_unit:s.duration_unit||"minutes",
         dep_type:s.dep_type||"", dep_seq:"",
         recur_every:s.recur_every||"", recur_unit:s.recur_unit||"hours", recur_times:s.recur_times||"",
         _procRef:fullProc.name,
@@ -8753,7 +8756,7 @@ function ProcessesPage({ user, setPage, toast }) {
         return [...p, ...procSkills.filter(s=>!ex.has(s.skid))];
       });
     } else {
-      setFormSkills(p=>p.find(x=>x.skid===item.skid)?p:[...p,{...item,duration:item.duration||null,duration_unit:item.duration_unit||"minutes",dep_type:"",dep_seq:"",recur_every:"",recur_unit:"hours",recur_times:""}]);
+      setFormSkills(p=>p.find(x=>x.skid===item.skid)?p:[...p,{...item,duration:intDur(item.duration)||null,duration_unit:item.duration_unit||"minutes",dep_type:"",dep_seq:"",recur_every:"",recur_unit:"hours",recur_times:""}]);
     }
   };
 
@@ -8769,7 +8772,7 @@ function ProcessesPage({ user, setPage, toast }) {
     try {
       const skillPayload = formSkills.map((s,i)=>({
         skid:s.skid, seq:i+1,
-        duration:s.duration||null, duration_unit:s.duration_unit||"minutes",
+        duration:intDur(s.duration)||null, duration_unit:s.duration_unit||"minutes",
         dep_type:s.dep_type||null, dep_seq:s.dep_seq||null,
         recur_every: s.recur_every ? Number(s.recur_every) : null,
         recur_unit: s.recur_unit||"hours",
@@ -8969,7 +8972,7 @@ function ProcessesPage({ user, setPage, toast }) {
                   {b.pw > 32 && (
                     <text x={b.px1+5} y={b.y+barH/2+1} fontSize={8} fill={color}
                       fontWeight="600" dominantBaseline="middle">
-                      {sk.duration}{durAbbr(sk.duration_unit)}
+                      {intDur(sk.duration)}{durAbbr(sk.duration_unit)}
                     </text>
                   )}
                 </g>
@@ -9038,7 +9041,7 @@ function ProcessesPage({ user, setPage, toast }) {
                       </td>
                       <td style={{padding:"8px 12px"}}>
                         <div style={{display:"flex",gap:5,alignItems:"center"}}>
-                          <input type="number" min="0" value={sk.duration||""} onChange={e=>updateRow(i,"duration", Math.max(0, parseFloat(e.target.value)||0))} placeholder="0"
+                          <input type="number" min="0" step="1" value={intDur(sk.duration)||""} onChange={e=>updateRow(i,"duration", Math.max(0, parseInt(e.target.value,10)||0))} placeholder="0"
                             style={{width:52,padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",borderColor:Number(sk.duration)<0?G.red:G.border}}/>
                           <select value={sk.duration_unit||"minutes"} onChange={e=>updateRow(i,"duration_unit",e.target.value)}
                             style={{padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
@@ -9123,7 +9126,7 @@ function ProcessesPage({ user, setPage, toast }) {
               <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginTop:8 }}>
                 {(proc.skills||[]).map(sk=>(
                   <span key={sk.psid} style={{ fontSize:12, padding:"2px 10px", borderRadius:20, background:`${sk.color||G.muted}18`, color:sk.color||G.muted, border:`1px solid ${sk.color||G.muted}40`, display:"flex", alignItems:"center", gap:4 }}>
-                    {sk.name}{sk.duration?` · ${sk.duration}${durAbbr(sk.duration_unit)}`:""}
+                    {sk.name}{sk.duration?` · ${intDur(sk.duration)}${durAbbr(sk.duration_unit)}`:""}
                     {sk.dep_type&&<span style={{fontSize:9,opacity:0.75,fontWeight:700}}>{sk.dep_type}</span>}
                   </span>
                 ))}
@@ -9883,7 +9886,7 @@ function EmployeeProcessesPage({ user, toast, setPage }) {
 
   const fmtDur = (d,u) => {
     if (!d) return "—";
-    return `${d} ${durAbbr(u)}`;
+    return `${intDur(d)} ${durAbbr(u)}`;
   };
 
   const timeLeft = (step) => {
