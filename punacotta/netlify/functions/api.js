@@ -2710,8 +2710,19 @@ async function route(method, segments, body, headers, event) {
         if (emp.email_verified || (emp.password_hash && !emp.password_hash.includes('xxxxxxxxxxx'))) {
           await dbr('UPDATE "user" SET employer_uid=NULL, employee_seq=NULL, is_employee=false WHERE uid=$1', [uid])
         } else {
-          // Employee-only record — safe to delete entirely
-          await dbr('DELETE FROM "user" WHERE uid=$1', [uid])
+          // Employee-only record (invited, never signed up): remove what points at it, then delete the row.
+          // If something else still references it (e.g. past orders), just unlink it instead of failing.
+          try {
+            await dbr('DELETE FROM auth_token WHERE uid=$1', [uid])
+            await dbr('DELETE FROM roster_slot WHERE uid=$1', [uid])
+            await dbr('DELETE FROM address_book WHERE uid=$1', [uid])
+            await dbr('UPDATE process_run_step SET uid=NULL WHERE uid=$1', [uid])
+            await dbr('UPDATE process_run SET started_by=NULL WHERE started_by=$1', [uid])
+            await dbr('DELETE FROM "user" WHERE uid=$1', [uid])
+          } catch (e) {
+            if (e?.code !== '23503') throw e
+            await dbr('UPDATE "user" SET employer_uid=NULL, employee_seq=NULL, is_employee=false WHERE uid=$1', [uid])
+          }
         }
       }
       return [200, { deleted: ids }]
