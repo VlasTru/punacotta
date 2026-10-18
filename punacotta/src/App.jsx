@@ -6934,7 +6934,7 @@ function BoardOfArrivals({ toast }) {
       {/* Header */}
       <div style={{background:G.white,borderBottom:`1px solid ${G.border}`,padding:"0 24px",height:56,display:"flex",alignItems:"center",gap:16}}>
         {/* tanelu logo — same as floating balloon */}
-        <span style={{display:"flex",alignItems:"center",gap:5}}>
+        <span style={{display:"flex",alignItems:"center",gap:6}}>
           <span style={{fontFamily:"Georgia, serif",fontSize:20,fontWeight:600,
             color:G.caramel,letterSpacing:"-0.3px",lineHeight:1}}>tanelu</span>
           <svg width="10" height="14" viewBox="0 0 12 16" fill="none" style={{display:"block",marginBottom:1}}>
