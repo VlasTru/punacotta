@@ -131,7 +131,7 @@ const RU = {
   "Packaging":"Упаковка","+ Package":"+ Упаковка","Max. capacity":"Макс. вместимость","Type to search items…":"Введите название блюда…","Max. capacity must be greater than 0":"Макс. вместимость должна быть больше 0","Edit Package":"Редактировать упаковку","New Package":"Новая упаковка","Delete package?":"Удалить упаковку?","Remove":"Убрать","Packaging adjusted":"Упаковка скорректирована","used beyond the automatic write-off — recorded in Profit & Loss":"использовано сверх автоматического списания — учтено в отчёте о доходах и расходах","Deleted":"Удалено","Select a supplier":"Выберите поставщика","Supplier…":"Поставщик…","Price":"Цена","Link":"Привязать","Confirm":"Подтвердить","Cancel wastage":"Отменить списание","The following packaging will be wasted, and stock levels shall be changed accordingly. The action is irreversible. Are you sure you wish to proceed?":"Следующая упаковка будет списана, остатки изменятся. Действие необратимо. Продолжить?","Supplier linked":"Поставщик привязан","Wastage applied":"Списание выполнено","Confirm wastage":"Подтверждение списания","Add supplier":"Добавить поставщика","Items":"Блюда","Name required":"Укажите название",
   "Quick Sale":"Быстрая продажа","Online":"Онлайн","Offline":"Офлайн","Inventory":"Склад","Search items…":"Поиск позиций…","No items found":"Позиции не найдены","in stock":"в наличии","no stock":"нет в наличии","Current sale":"Текущая продажа","Tap items to add them.":"Нажимайте на позиции, чтобы добавить.","Sold":"Продано","Sold earlier":"Продано ранее","Clear":"Очистить","Recent sales":"Последние продажи","Undo":"Отменить","Sale undone":"Продажа отменена","Sell":"Продажа","Closing count":"Закрытие смены","Enter what is left of each item. Anything missing is recorded as sold; mark units as wasted if they were thrown away. Items you leave as they are stay unchanged.":"Введите остаток каждой позиции. Недостающее записывается как проданное; отметьте единицы, которые были списаны. Позиции без изменений остаются как есть.","No items with stock on hand.":"Нет позиций в наличии.","Expected":"Ожидается","sold":"продано","of which wasted":"из них списано","more than expected — stock will be raised":"больше ожидаемого — остаток будет увеличен","Add another item…":"Добавить другую позицию…","No differences yet.":"Расхождений пока нет.","Wasted":"Списано","Surplus added to stock":"Излишек добавлен в остаток","Count saved: no differences":"Подсчёт сохранён: расхождений нет","Save count":"Сохранить подсчёт","Voice input is not supported in this browser. Try Chrome or Safari.":"Голосовой ввод не поддерживается в этом браузере. Попробуйте Chrome или Safari.","Microphone access is blocked. Allow it in the browser settings.":"Доступ к микрофону заблокирован. Разрешите его в настройках браузера.","Voice error":"Ошибка голоса","Nothing was heard":"Ничего не услышано","Voice language":"Язык голоса","Stop":"Стоп","Speak a sale":"Продиктовать продажу","Listening…":"Слушаю…","I heard":"Я услышал","No items recognised. Try again or tap the items.":"Позиции не распознаны. Повторите или выберите нажатием.","Not recognised":"Не распознано","Confirm sale":"Подтвердить продажу","Add to ticket":"Добавить в чек","Discard":"Отмена","Speak again":"Повторить",
   "Reports":"Отчёты","Week":"Неделя","Month":"Месяц","Year":"Год",
-  "Revenue":"Выручка","ABC Analysis":"ABC-анализ","Association Rules":"Правила ассоциации",
+  "Revenue":"Выручка","ABC Analysis":"ABC-анализ","Association Rules":"Правила ассоциации","Display available items only":"Показывать только доступные позиции",
   "No data yet.":"Данных пока нет.",
   "New Item":"Новое блюдо","Edit Item":"Редактировать блюдо",
   "Delete items?":"Удалить блюда?",
@@ -6476,7 +6476,8 @@ function ReportsPage({ toast }) {
   const yPos=rev=>SPT+ScH-(rev/maxRev)*ScH;
 
   // ── Association rules ────────────────────────────────────────────────────
-  const rules = abcData?.rules||[];
+  const [availOnly, setAvailOnly] = useState(false);
+  const rules = (availOnly ? abcData?.rules_available : abcData?.rules)||[];
   const RW=600,RPL=185,RPR=20,RPT=20,RPB=20,RcW=RW-RPL-RPR;
 
   return (
@@ -6614,9 +6615,13 @@ function ReportsPage({ toast }) {
       {/* ASSOCIATION RULES */}
       <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24 }}>
         <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:4 }}>{tl("Association Rules")}</h3>
-        <p style={{ fontSize:13, color:G.muted, marginBottom:16 }}>Top 10 item pairs by confidence — bar width = confidence, colour = lift</p>
+        <p style={{ fontSize:13, color:G.muted, marginBottom:10 }}>Top 10 item pairs by confidence — bar width = confidence, colour = lift</p>
+        <label style={{ display:"inline-flex", alignItems:"center", gap:8, fontSize:13, color:G.dark, marginBottom:16, cursor:"pointer" }}>
+          <input type="checkbox" checked={availOnly} onChange={e=>setAvailOnly(e.target.checked)}/>
+          {tl("Display available items only")}
+        </label>
         {loading?<Spinner/>:!rules.length?(
-          <div style={{padding:40,textAlign:"center",color:G.muted,fontSize:13}}>Not enough order data for association rules (need ≥5 orders with multiple items).</div>
+          <div style={{padding:40,textAlign:"center",color:G.muted,fontSize:13}}>{availOnly?"No association rules for items currently in inventory.":"Not enough order data for association rules (need ≥5 orders with multiple items)."}</div>
         ):(
           <svg width="100%" viewBox={`0 0 ${RW} ${RPT+RPB+rules.length*34}`} style={{maxWidth:RW,display:"block",margin:"0 auto"}}>
             {rules.map((r,i)=>{
