@@ -6468,7 +6468,8 @@ function ReportsPage({ toast }) {
 
   // ── ABC scatter ─────────────────────────────────────────────────────────
   const SW=600,SH=300,SPL=60,SPR=20,SPT=20,SPB=40,ScW=SW-SPL-SPR,ScH=SH-SPT-SPB;
-  const items = abcData?.items||[];
+  const [abcAvailOnly, setAbcAvailOnly] = useState(false);
+  const items = (abcAvailOnly ? abcData?.items_available : abcData?.items)||[];
   const maxRev=Math.max(...items.map(i=>i.revenue),1);
   const maxCv=Math.max(...items.map(i=>i.cv),2);
   const z05=SPL+(0.5/maxCv)*ScW, z1=SPL+(1/maxCv)*ScW;
@@ -6564,6 +6565,10 @@ function ReportsPage({ toast }) {
             <span style={{ fontSize:12, color:G.muted }}>· X(stable) Y(variable) Z(erratic)</span>
           </div>
         </div>
+        <label style={{ display:"inline-flex", alignItems:"center", gap:8, fontSize:13, color:G.dark, marginBottom:16, cursor:"pointer" }}>
+          <input type="checkbox" checked={abcAvailOnly} onChange={e=>setAbcAvailOnly(e.target.checked)}/>
+          {tl("Display available items only")}
+        </label>
         {loading?<Spinner/>:!items.length?(
           <div style={{padding:60,textAlign:"center",color:G.muted}}>{tl("No data yet.")}</div>
         ):(

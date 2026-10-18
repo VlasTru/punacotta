@@ -4600,13 +4600,16 @@ async function route(method, segments, body, headers, event) {
       }
 
       // Same rules restricted to items currently in inventory (stock > 0), whether or not a menu lists them
-      const inStock = new Set((await dbq(
-        `SELECT r.name FROM recipe r
+      const stockRows = await dbq(
+        `SELECT r.rid, r.name FROM recipe r
          JOIN (SELECT rid, SUM(qty) AS q FROM recipe_stock WHERE owner_uid=$1 GROUP BY rid) s ON s.rid=r.rid
-         WHERE s.q > 0 AND COALESCE(r.deleted,false)=false`, [user.uid])).map(x => x.name))
+         WHERE s.q > 0 AND COALESCE(r.deleted,false)=false`, [user.uid])
+      const inStock = new Set(stockRows.map(x => x.name))
+      const inStockRids = new Set(stockRows.map(x => x.rid))
       const rulesAvailable = rules.filter(x => inStock.has(x.antecedent) && inStock.has(x.consequent)).slice(0,10)
 
-      return [200, { items: classified, rules: rules.slice(0,10), rules_available: rulesAvailable }]
+      return [200, { items: classified, rules: rules.slice(0,10), rules_available: rulesAvailable,
+                    items_available: classified.filter(x => inStockRids.has(x.rid)) }]
     }
 
     // ── BoA IMPACT ─────────────────────────────────────────────────────────
