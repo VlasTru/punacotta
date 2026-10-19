@@ -82,7 +82,7 @@ export const api = {
   getInvite:          (token)      => req('GET',  `/invite/${token}`),
   completeInvite:     (token,data) => req('POST', `/invite/${token}`, data),
   resendInvite:       (uid)        => req('POST', `/staff/${uid}/invite`),
-  getRoster:          (week)       => req('GET',  `/roster?week=${week}`),
+  getRoster:          (week,as)    => req('GET',  `/roster?week=${week}${as?`&as=${as}`:''}`),
   initRoster:         (data)       => req('POST', '/roster', data),
   patchRoster:        (roid,data)  => req('PATCH',`/roster/${roid}`, data),
   publishRoster:      (roid)       => req('POST', `/roster/${roid}/publish`),
@@ -90,7 +90,7 @@ export const api = {
   approveRoster:      (roid)       => req('POST', `/roster/${roid}/approve`),
   unapproveRoster:    (roid)       => req('POST', `/roster/${roid}/unapprove`),
   cloneRoster:        (roid)       => req('POST', `/roster/${roid}/clone`),
-  clonePastRoster:    (week)       => req('POST', `/roster/clone-past`, { week_start: week }),
+  clonePastRoster:    (week,as)    => req('POST', `/roster/clone-past`, { week_start: week, as }),
   saveRosterSlots:    (roid,data)  => req('POST', `/roster/${roid}/slots`, data),
   deleteRosterSlot:   (roid,rsid)  => req('DELETE',`/roster/${roid}/slots`, {rsid}),
   // Staff

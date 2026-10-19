@@ -502,6 +502,47 @@ async function applyPackagingForOrder(oid, ownerUid, items) {
   }
 }
 
+// ── Restaurant administrators ────────────────────────────────────────────────
+// "Administrator" is a skill every restaurant has. Its holders may publish/unpublish/approve the roster.
+// The restaurant's owner holds it by default, and at least one active holder must always remain.
+const ADMIN_SKILL = 'Administrator'
+
+async function ensureAdminSkill(ownerUid) {
+  let [sk] = await dbq('SELECT skid FROM skill WHERE owner_uid=$1 AND name=$2', [ownerUid, ADMIN_SKILL])
+  if (!sk) {
+    const ins = await dbr(
+      `INSERT INTO skill (owner_uid,name,color) VALUES ($1,$2,'#4a1d57')
+       ON CONFLICT (owner_uid,name) DO UPDATE SET name=EXCLUDED.name RETURNING skid`, [ownerUid, ADMIN_SKILL])
+    sk = ins.rows[0]
+  }
+  const [held] = await dbq('SELECT 1 AS x FROM employee_skill WHERE skid=$1 LIMIT 1', [sk.skid])
+  if (!held) await dbr('INSERT INTO employee_skill (uid,skid) VALUES ($1,$2) ON CONFLICT DO NOTHING', [ownerUid, sk.skid])
+  return sk.skid
+}
+
+async function isRosterAdmin(uid, ownerUid) {
+  if (!uid || !ownerUid) return false
+  await ensureAdminSkill(ownerUid)
+  const [row] = await dbq(
+    `SELECT 1 AS x FROM employee_skill es JOIN skill s ON s.skid=es.skid
+     WHERE es.uid=$1 AND s.owner_uid=$2 AND s.name=$3
+       AND ($1=$2 OR EXISTS (SELECT 1 FROM "user" u WHERE u.uid=$1 AND u.employer_uid=$2))`,
+    [uid, ownerUid, ADMIN_SKILL])
+  return !!row
+}
+
+// Administrators that can actually sign in (the owner, or an employee with a verified account), optionally ignoring one person
+async function activeAdminCount(ownerUid, exceptUid = null) {
+  const [row] = await dbq(
+    `SELECT COUNT(DISTINCT u.uid) AS n
+     FROM employee_skill es
+     JOIN skill s ON s.skid=es.skid AND s.owner_uid=$1 AND s.name=$2
+     JOIN "user" u ON u.uid=es.uid
+     WHERE (u.uid=$1 OR (u.employer_uid=$1 AND u.email_verified=true))
+       AND ($3::int IS NULL OR u.uid <> $3)`, [ownerUid, ADMIN_SKILL, exceptUid])
+  return Number(row?.n || 0)
+}
+
 async function applyOrderDoneStock(oid) {
   const [o] = await dbq(
     `SELECT o.oid, o.mid, o.prid, o.fulfillment, m.owner_uid AS seller, o.owner_uid, o.guest_email, o.status
@@ -2559,6 +2600,7 @@ async function route(method, segments, body, headers, event) {
     if (r1 === 'self-skills') {
       if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
       if (method === 'GET') {
+        await ensureAdminSkill(user.uid)
         const rows = await dbq(
           `SELECT s.skid, s.name, s.color FROM employee_skill es
            JOIN skill s ON s.skid=es.skid WHERE es.uid=$1`, [user.uid])
@@ -2566,6 +2608,10 @@ async function route(method, segments, body, headers, event) {
       }
       if (method === 'POST') {
         const { skill_ids } = body
+        const admSkid = await ensureAdminSkill(user.uid)
+        const [holds] = await dbq('SELECT 1 AS x FROM employee_skill WHERE uid=$1 AND skid=$2', [user.uid, admSkid])
+        if (holds && !(skill_ids||[]).map(Number).includes(admSkid) && (await activeAdminCount(user.uid, user.uid)) < 1)
+          return [400, { error: 'At least one active administrator is required. Give the Administrator skill to someone else first.' }]
         await dbr('DELETE FROM employee_skill WHERE uid=$1', [user.uid])
         for (const skid of (skill_ids||[])) {
           await dbr('INSERT INTO employee_skill (uid,skid) VALUES ($1,$2) ON CONFLICT DO NOTHING', [user.uid, skid])
@@ -2588,6 +2634,7 @@ async function route(method, segments, body, headers, event) {
     }
 
     if (!r1 && method === 'GET') {
+      await ensureAdminSkill(user.uid)
       const emps = await dbq(`SELECT uid, first_name, last_name, email, is_employee, employee_seq, email_verified FROM "user" WHERE employer_uid=$1 ORDER BY first_name, last_name`, [user.uid])
       const result = []
       for (const e of emps) {
@@ -2692,6 +2739,10 @@ async function route(method, segments, body, headers, event) {
         for (const rid  of role_ids)  await dbr('INSERT INTO employee_role  (uid,rid)  VALUES ($1,$2) ON CONFLICT DO NOTHING', [r1, rid])
       }
       if (Array.isArray(skill_ids)) {
+        const admSkid = await ensureAdminSkill(user.uid)
+        const [holds] = await dbq('SELECT 1 AS x FROM employee_skill WHERE uid=$1 AND skid=$2', [r1, admSkid])
+        if (holds && !skill_ids.map(Number).includes(admSkid) && (await activeAdminCount(user.uid, Number(r1))) < 1)
+          return [400, { error: 'At least one active administrator is required. Give the Administrator skill to someone else first.' }]
         await dbr('DELETE FROM employee_skill WHERE uid=$1', [r1])
         for (const skid of skill_ids) await dbr('INSERT INTO employee_skill (uid,skid) VALUES ($1,$2) ON CONFLICT DO NOTHING', [r1, skid])
       }
@@ -2704,6 +2755,10 @@ async function route(method, segments, body, headers, event) {
       for (const uid of ids) {
         const [emp] = await dbq('SELECT uid, email_verified, password_hash FROM "user" WHERE uid=$1 AND employer_uid=$2', [uid, user.uid])
         if (!emp) continue
+        const admSkid = await ensureAdminSkill(user.uid)
+        const [isAdm] = await dbq('SELECT 1 AS x FROM employee_skill WHERE uid=$1 AND skid=$2', [uid, admSkid])
+        if (isAdm && (await activeAdminCount(user.uid, uid)) < 1)
+          return [400, { error: 'This person is the only active administrator. Give the Administrator skill to someone else before removing them.' }]
         await dbr('DELETE FROM employee_role  WHERE uid=$1', [uid])
         await dbr('DELETE FROM employee_skill WHERE uid=$1', [uid])
         // If this is a real Tanelu account (email verified), just unlink — don't delete the row
@@ -2798,6 +2853,7 @@ async function route(method, segments, body, headers, event) {
   if (r0 === 'skills') {
     if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
     if (method === 'GET') {
+      await ensureAdminSkill(user.uid)
       return [200, await dbq('SELECT * FROM skill WHERE owner_uid=$1 ORDER BY name', [user.uid])]
     }
     if (method === 'POST') {
@@ -2814,6 +2870,10 @@ async function route(method, segments, body, headers, event) {
     if (r1 && method === 'PATCH') {
       const { name, duration, duration_unit, dep_type, dep_skid } = body
       if (duration != null && Number(duration) < 0) return [400, { error: 'Duration may not be negative' }]
+      const [cur] = await dbq('SELECT name FROM skill WHERE skid=$1 AND owner_uid=$2', [r1, user.uid])
+      if (!cur) return [404, { error: 'Not found' }]
+      if (cur.name === ADMIN_SKILL) return [400, { error: 'The Administrator skill is built in and cannot be edited' }]
+      if (name !== undefined && String(name).trim() === ADMIN_SKILL) return [400, { error: '"Administrator" is a reserved skill name' }]
       const sets = [], vals = [r1]
       if (name          !== undefined) { sets.push(`name=$${vals.length+1}`);          vals.push(name.trim()) }
       if (duration      !== undefined) { sets.push(`duration=$${vals.length+1}`);      vals.push(duration||null) }
@@ -2829,6 +2889,8 @@ async function route(method, segments, body, headers, event) {
       if (!Array.isArray(ids)||!ids.length) return [400, { error: 'ids required' }]
       const blocked = []
       for (const skid of ids) {
+        const [sk0] = await dbq('SELECT name FROM skill WHERE skid=$1 AND owner_uid=$2', [skid, user.uid])
+        if (sk0?.name === ADMIN_SKILL) { blocked.push({ skid, reason: 'The Administrator skill is built in and cannot be deleted' }); continue }
         // Check usage in process steps
         const [inProcess] = await dbq(
           `SELECT p.name FROM process_skill ps JOIN process p ON p.procid=ps.procid WHERE ps.skid=$1 LIMIT 1`, [skid])
@@ -3734,6 +3796,12 @@ async function route(method, segments, body, headers, event) {
       return r || null
     }
 
+    // Everyone in the restaurant: its owner plus the employees linked to it
+    const rosterPeople = (ownerUid) => dbq(
+      `SELECT u.uid, u.first_name, u.last_name, (u.uid=$1) AS is_owner,
+              (SELECT r2.name FROM employee_role er JOIN role r2 ON r2.rid=er.rid WHERE er.uid=u.uid ORDER BY r2.name LIMIT 1) AS role_name
+       FROM "user" u WHERE u.employer_uid=$1 OR u.uid=$1 ORDER BY u.first_name`, [ownerUid])
+
     async function fetchRoster(roid) {
       const [r] = await dbq('SELECT * FROM roster WHERE roid=$1', [roid])
       if (!r) return null
@@ -3746,14 +3814,26 @@ async function route(method, segments, body, headers, event) {
                 (SELECT r2.name FROM employee_role er JOIN role r2 ON r2.rid=er.rid WHERE er.uid=rs.uid ORDER BY r2.name LIMIT 1) AS role_name
          FROM roster_slot rs JOIN "user" u ON u.uid=rs.uid
          WHERE rs.roid=$1 ORDER BY rs.slot_date, rs.start_time`, [roid])
-      const employees = await dbq(
-        `SELECT u.uid, u.first_name, u.last_name,
-                (SELECT r2.name FROM employee_role er JOIN role r2 ON r2.rid=er.rid WHERE er.uid=u.uid ORDER BY r2.name LIMIT 1) AS role_name
-         FROM "user" u WHERE u.employer_uid=$1 ORDER BY u.first_name`, [r.owner_uid])
-      return { ...r, slots, employees }
+      const employees = await rosterPeople(r.owner_uid)
+      return { ...r, slots, employees, is_admin: await isRosterAdmin(user.uid, r.owner_uid) }
     }
 
-    const ownerUid = user.is_manufacturer ? user.uid : user.employer_uid
+    // Which restaurant's roster this request is about. A person who owns a restaurant AND is staff
+    // at another one picks a side with ?as=manager (own restaurant) or ?as=employee (their employer).
+    const asSide = event?.queryStringParameters?.as || body?.as
+    const ownerUid = (user.employer_uid && (!user.is_manufacturer || asSide === 'employee'))
+      ? user.employer_uid
+      : (user.is_manufacturer ? user.uid : null)
+
+    // A roster row the caller may act on (member of that restaurant); admin = holds the Administrator skill
+    const loadRoster = async (roid) => {
+      const [r] = await dbq('SELECT * FROM roster WHERE roid=$1', [roid])
+      if (!r) return {}
+      const member = r.owner_uid === user.uid || user.employer_uid === r.owner_uid
+      if (!member) return {}
+      return { r, admin: await isRosterAdmin(user.uid, r.owner_uid) }
+    }
+    const ADMIN_ONLY = [403, { error: 'Only a roster administrator can do this' }]
 
     if (method === 'GET' && !r1) {
       const week = event?.queryStringParameters?.week
@@ -3761,30 +3841,31 @@ async function route(method, segments, body, headers, event) {
       if (!ownerUid) return [403, { error: 'Not associated with a restaurant' }]
       const roster = await getRosterByWeek(ownerUid, week)
       if (!roster) {
-        const employees = await dbq(`SELECT u.uid, u.first_name, u.last_name FROM "user" u WHERE u.employer_uid=$1 ORDER BY u.first_name`, [ownerUid])
-        return [200, { week_start:week, status:'unpublished', slots:[], employees }]
+        return [200, { week_start:week, status:'unpublished', slots:[], employees: await rosterPeople(ownerUid),
+                       owner_uid: ownerUid, is_admin: await isRosterAdmin(user.uid, ownerUid) }]
       }
       return [200, await fetchRoster(roster.roid)]
     }
 
     if (method === 'POST' && !r1) {
-      if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+      if (!ownerUid) return [403, { error: 'Not associated with a restaurant' }]
+      if (!(await isRosterAdmin(user.uid, ownerUid))) return ADMIN_ONLY
       const { week_start, auto_clone, auto_approve } = body
       if (!week_start) return [400, { error: 'week_start required' }]
       const res = await dbr(
         `INSERT INTO roster (owner_uid,week_start,auto_clone,auto_approve)
          VALUES ($1,$2,$3,$4) ON CONFLICT (owner_uid,week_start)
          DO UPDATE SET auto_clone=EXCLUDED.auto_clone,auto_approve=EXCLUDED.auto_approve RETURNING *`,
-        [user.uid, week_start, !!auto_clone, !!auto_approve])
+        [ownerUid, week_start, !!auto_clone, !!auto_approve])
       return [200, await fetchRoster(res.rows[0].roid)]
     }
 
     if (r1 && r2 === 'publish' && method === 'POST') {
-      if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
-      const [r] = await dbq('SELECT * FROM roster WHERE roid=$1 AND owner_uid=$2', [r1, user.uid])
+      const { r, admin } = await loadRoster(r1)
       if (!r) return [404, { error: 'Not found' }]
+      if (!admin) return ADMIN_ONLY
       await dbr(`UPDATE roster SET status='published',published_at=NOW() WHERE roid=$1`, [r1])
-      const emps = await dbq(`SELECT email, first_name FROM "user" WHERE employer_uid=$1 AND email IS NOT NULL`, [user.uid])
+      const emps = await dbq(`SELECT email, first_name FROM "user" WHERE employer_uid=$1 AND email IS NOT NULL`, [r.owner_uid])
       const wk = new Date(r.week_start).toLocaleDateString('en-GB',{day:'numeric',month:'short'})
       for (const e of emps) {
         await sendMail(e.email, `Roster published — week of ${wk}`,
@@ -3795,9 +3876,9 @@ async function route(method, segments, body, headers, event) {
     }
 
     if (r1 && r2 === 'unpublish' && method === 'POST') {
-      if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
-      const [r] = await dbq('SELECT * FROM roster WHERE roid=$1 AND owner_uid=$2', [r1, user.uid])
+      const { r, admin } = await loadRoster(r1)
       if (!r) return [404, { error: 'Not found' }]
+      if (!admin) return ADMIN_ONLY
       const weekStart = new Date(r.week_start)
       const deadline = new Date(weekStart); deadline.setDate(deadline.getDate()-1); deadline.setHours(23,59,59)
       if (new Date() > deadline) return [400, { error: 'Cannot unpublish after roster week starts' }]
@@ -3806,12 +3887,12 @@ async function route(method, segments, body, headers, event) {
     }
 
     if (r1 && r2 === 'approve' && method === 'POST') {
-      if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
-      const [r] = await dbq('SELECT * FROM roster WHERE roid=$1 AND owner_uid=$2', [r1, user.uid])
+      const { r, admin } = await loadRoster(r1)
       if (!r) return [404, { error: 'Not found' }]
+      if (!admin) return ADMIN_ONLY
       if (!['published','unapproved'].includes(r.status)) return [400, { error: 'Must be published first' }]
       await dbr(`UPDATE roster SET status='approved',approved_at=NOW() WHERE roid=$1`, [r1])
-      const emps = await dbq(`SELECT email, first_name FROM "user" WHERE employer_uid=$1 AND email IS NOT NULL`, [user.uid])
+      const emps = await dbq(`SELECT email, first_name FROM "user" WHERE employer_uid=$1 AND email IS NOT NULL`, [r.owner_uid])
       const wk = new Date(r.week_start).toLocaleDateString('en-GB',{day:'numeric',month:'short'})
       for (const e of emps) {
         await sendMail(e.email, `Roster approved — week of ${wk}`,
@@ -3822,9 +3903,9 @@ async function route(method, segments, body, headers, event) {
     }
 
     if (r1 && r2 === 'unapprove' && method === 'POST') {
-      if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
-      const [r] = await dbq('SELECT * FROM roster WHERE roid=$1 AND owner_uid=$2', [r1, user.uid])
+      const { r, admin } = await loadRoster(r1)
       if (!r) return [404, { error: 'Not found' }]
+      if (!admin) return ADMIN_ONLY
       if (r.status !== 'approved') return [400, { error: 'Roster is not approved' }]
       await dbr(`UPDATE roster SET status='unapproved' WHERE roid=$1`, [r1])
       return [200, await fetchRoster(r1)]
@@ -3832,21 +3913,22 @@ async function route(method, segments, body, headers, event) {
 
     // POST /roster/clone-past — clone previous week's roster into a specified week
     if (r1 === 'clone-past' && method === 'POST') {
-      if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+      if (!ownerUid) return [403, { error: 'Not associated with a restaurant' }]
+      if (!(await isRosterAdmin(user.uid, ownerUid))) return ADMIN_ONLY
       const { week_start } = body
       if (!week_start) return [400, { error: 'week_start required' }]
       // Find previous week
       const tgt = new Date(week_start+'T00:00:00Z')
       const prev = new Date(tgt); prev.setUTCDate(prev.getUTCDate()-7)
       const prevStr = prev.toISOString().split('T')[0]
-      const [prevRoster] = await dbq('SELECT * FROM roster WHERE owner_uid=$1 AND week_start=$2', [user.uid, prevStr])
+      const [prevRoster] = await dbq('SELECT * FROM roster WHERE owner_uid=$1 AND week_start=$2', [ownerUid, prevStr])
       if (!prevRoster) return [404, { error: 'No roster found for the previous week to clone from' }]
       // Create or get target roster
       const res = await dbr(
         `INSERT INTO roster (owner_uid,week_start,cloned_from,auto_clone,auto_approve)
          VALUES ($1,$2,$3,$4,$5) ON CONFLICT (owner_uid,week_start)
          DO UPDATE SET cloned_from=$3 RETURNING *`,
-        [user.uid, week_start, prevRoster.roid, prevRoster.auto_clone, prevRoster.auto_approve])
+        [ownerUid, week_start, prevRoster.roid, prevRoster.auto_clone, prevRoster.auto_approve])
       const newRoid = res.rows[0].roid
       // Clear any existing slots and copy from previous week
       await dbr('DELETE FROM roster_slot WHERE roid=$1', [newRoid])
@@ -3861,12 +3943,12 @@ async function route(method, segments, body, headers, event) {
     }
 
     if (r1 && r2 === 'clone' && method === 'POST') {
-      if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
-      const [r] = await dbq('SELECT * FROM roster WHERE roid=$1 AND owner_uid=$2', [r1, user.uid])
+      const { r, admin } = await loadRoster(r1)
       if (!r) return [404, { error: 'Not found' }]
+      if (!admin) return ADMIN_ONLY
       const tgtDate = new Date(r.week_start); tgtDate.setDate(tgtDate.getDate()+7)
       const tgtStr = tgtDate.toISOString().split('T')[0]
-      const [existing] = await dbq('SELECT roid FROM roster WHERE owner_uid=$1 AND week_start=$2', [user.uid, tgtStr])
+      const [existing] = await dbq('SELECT roid FROM roster WHERE owner_uid=$1 AND week_start=$2', [r.owner_uid, tgtStr])
       if (existing) {
         const [hasSlots] = await dbq('SELECT rsid FROM roster_slot WHERE roid=$1 LIMIT 1', [existing.roid])
         if (hasSlots) return [400, { error: 'Target week already has slots — cannot overwrite' }]
@@ -3874,7 +3956,7 @@ async function route(method, segments, body, headers, event) {
       const res = await dbr(
         `INSERT INTO roster (owner_uid,week_start,cloned_from,auto_clone,auto_approve)
          VALUES ($1,$2,$3,$4,$5) ON CONFLICT (owner_uid,week_start) DO UPDATE SET cloned_from=$3 RETURNING *`,
-        [user.uid, tgtStr, r.roid, r.auto_clone, r.auto_approve])
+        [r.owner_uid, tgtStr, r.roid, r.auto_clone, r.auto_approve])
       const newRoid = res.rows[0].roid
       const slots = await dbq('SELECT * FROM roster_slot WHERE roid=$1', [r.roid])
       for (const s of slots) {
@@ -3886,19 +3968,24 @@ async function route(method, segments, body, headers, event) {
     }
 
     if (r1 && r2 === 'slots' && method === 'POST') {
-      if (!ownerUid) return [403, { error: 'Not associated with a restaurant' }]
-      const [r] = await dbq('SELECT * FROM roster WHERE roid=$1 AND owner_uid=$2', [r1, ownerUid])
+      const { r, admin } = await loadRoster(r1)
       if (!r) return [404, { error: 'Not found' }]
-      if (r.status !== 'published' && !user.is_manufacturer) return [400, { error: 'Roster not open for editing' }]
+      // Everyone edits their own slots while the roster is open; an administrator may also edit any time
+      if (r.status !== 'published' && !admin) return [400, { error: 'Roster not open for editing' }]
       const { slots, finalize, uid: slotUid } = body
-      const empUid = user.is_manufacturer ? (slotUid||user.uid) : user.uid
+      let empUid = user.uid
+      if (admin && slotUid && Number(slotUid) !== user.uid) {
+        const [who] = await dbq('SELECT uid FROM "user" WHERE uid=$1 AND (employer_uid=$2 OR uid=$2)', [slotUid, r.owner_uid])
+        if (!who) return [400, { error: 'That person is not on this restaurant\'s staff' }]
+        empUid = who.uid
+      }
       await dbr('DELETE FROM roster_slot WHERE roid=$1 AND uid=$2', [r1, empUid])
       for (const s of (slots||[])) {
         await dbr('INSERT INTO roster_slot (roid,uid,slot_date,start_time,end_time,finalized) VALUES ($1,$2,$3,$4,$5,$6)',
           [r1, empUid, s.slot_date, s.start_time, s.end_time, !!finalize])
       }
-      if (!user.is_manufacturer) {
-        const [owner] = await dbq(`SELECT email FROM "user" WHERE uid=$1`, [ownerUid])
+      if (r.owner_uid !== user.uid && empUid === user.uid) {
+        const [owner] = await dbq(`SELECT email FROM "user" WHERE uid=$1`, [r.owner_uid])
         const wk = new Date(r.week_start).toLocaleDateString('en-GB',{day:'numeric',month:'short'})
         if (owner?.email) {
           await sendMail(owner.email, `${user.first_name} posted roster slots — week of ${wk}`,
@@ -3906,7 +3993,7 @@ async function route(method, segments, body, headers, event) {
             mailHtml('Roster slots posted', `${user.first_name} saved their availability for the week of ${wk}.`, `${BASE_URL}/`, 'View roster'))
         }
         if (finalize) {
-          const allEmps = await dbq('SELECT uid FROM "user" WHERE employer_uid=$1', [ownerUid])
+          const allEmps = await dbq('SELECT uid FROM "user" WHERE employer_uid=$1', [r.owner_uid])
           const fin = await dbq('SELECT DISTINCT uid FROM roster_slot WHERE roid=$1 AND finalized=true', [r1])
           if (fin.length >= allEmps.length && allEmps.length > 0 && owner?.email) {
             await sendMail(owner.email, `All employees finalized — week of ${wk}`,
@@ -3920,15 +4007,22 @@ async function route(method, segments, body, headers, event) {
 
     if (r1 && r2 === 'slots' && method === 'DELETE') {
       const { rsid } = body
-      if (rsid) await dbr('DELETE FROM roster_slot WHERE rsid=$1', [rsid])
+      if (!rsid) return [200, { deleted: rsid }]
+      const [sl] = await dbq('SELECT uid, roid FROM roster_slot WHERE rsid=$1', [rsid])
+      if (!sl) return [200, { deleted: rsid }]
+      const { r, admin } = await loadRoster(sl.roid)
+      if (!r || (!admin && sl.uid !== user.uid)) return [404, { error: 'Not found' }]
+      await dbr('DELETE FROM roster_slot WHERE rsid=$1', [rsid])
       return [200, { deleted: rsid }]
     }
 
     if (r1 && !r2 && method === 'PATCH') {
-      if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+      const { r, admin } = await loadRoster(r1)
+      if (!r) return [404, { error: 'Not found' }]
+      if (!admin) return ADMIN_ONLY
       const { auto_clone, auto_approve } = body
-      if (auto_clone  !== undefined) await dbr('UPDATE roster SET auto_clone=$1  WHERE roid=$2 AND owner_uid=$3', [!!auto_clone,  r1, user.uid])
-      if (auto_approve !== undefined) await dbr('UPDATE roster SET auto_approve=$1 WHERE roid=$2 AND owner_uid=$3', [!!auto_approve, r1, user.uid])
+      if (auto_clone  !== undefined) await dbr('UPDATE roster SET auto_clone=$1  WHERE roid=$2', [!!auto_clone,  r1])
+      if (auto_approve !== undefined) await dbr('UPDATE roster SET auto_approve=$1 WHERE roid=$2', [!!auto_approve, r1])
       return [200, await fetchRoster(r1)]
     }
   }

@@ -8662,7 +8662,7 @@ function ProcessesPage({ user, setPage, toast }) {
     setLoading(true);
     try {
       const [p,s,r,rec] = await Promise.all([api.getProcesses(), api.getSkills(), api.getRoles(), api.getRecipes()]);
-      setProcesses(p||[]); setSkills(s||[]); setRoles(r||[]); setRecipes(rec||[]);
+      setProcesses(p||[]); setSkills((s||[]).filter(x=>x.name!=="Administrator")); setRoles(r||[]); setRecipes(rec||[]);
     } catch(e){ toast(e.message,"error"); } finally{ setLoading(false); }
   },[]);
   useEffect(()=>{ load(); },[]);
@@ -9320,9 +9320,10 @@ function ProcessesPage({ user, setPage, toast }) {
 // ─── ROSTER PAGE ──────────────────────────────────────────────────────────────
 function RosterPage({ user, toast, onBack }) {
   const isBoth   = user?.is_manufacturer && !!user?.employer_uid;
-  const [viewMode, setViewMode] = useState(isBoth ? 'manager' : user?.is_manufacturer ? 'manager' : 'employee');
-  const isManuf  = viewMode === 'manager';
-  // A user who is both manufacturer AND employee can switch between views
+  const [viewMode, setViewMode] = useState(user?.is_manufacturer ? 'manager' : 'employee');
+  // Manager tools (publish, approve, clone) belong to roster administrators: the owner, plus anyone given the
+  // Administrator skill. Everyone else edits only their own slots and sees their colleagues' slots.
+  // The server says who is an administrator (roster.is_admin); viewMode picks the screen.
 
   const toMonday = d => {
     const dt = new Date(d); dt.setHours(0,0,0,0);
@@ -9365,8 +9366,9 @@ function RosterPage({ user, toast, onBack }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await api.getRoster(fmt(weekStart));
+      const r = await api.getRoster(fmt(weekStart), viewMode);
       setRoster(r);
+      if (viewMode === 'manager' && r.is_admin === false) { setViewMode('employee'); return; }   // reloads as employee
       if (viewMode === 'employee') {
         const own = (r.slots||[]).filter(s=>String(s.uid)===String(user.uid));
         setMySlots(own.map((s,i)=>({
@@ -9393,6 +9395,8 @@ function RosterPage({ user, toast, onBack }) {
   const isFuture  = weekStart > today;
   const isCurrent = !isPast && !isFuture;
   const status   = roster?.status || 'unpublished';
+  const isAdmin  = !!roster?.is_admin;
+  const isManuf  = viewMode === 'manager' && isAdmin;
 
   const rAction = async (fn, ...args) => {
     setSaving(true);
@@ -9403,7 +9407,7 @@ function RosterPage({ user, toast, onBack }) {
 
   const ensureRoster = async () => {
     if (roster?.roid) return roster;
-    const r = await api.initRoster({ week_start: fmt(weekStart) });
+    const r = await api.initRoster({ week_start: fmt(weekStart), as: viewMode });
     setRoster(r); return r;
   };
 
@@ -9425,7 +9429,7 @@ function RosterPage({ user, toast, onBack }) {
       btns.push(<Btn key="clonepast" size="sm" variant="secondary" loading={saving}
         onClick={async()=>{
           setSaving(true);
-          try { const r=await api.clonePastRoster(fmt(weekStart)); setRoster(r); toast("Cloned from previous week"); }
+          try { const r=await api.clonePastRoster(fmt(weekStart), viewMode); setRoster(r); toast("Cloned from previous week"); }
           catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
         }}>← Clone past</Btn>);
     if (canClone)
@@ -9439,7 +9443,8 @@ function RosterPage({ user, toast, onBack }) {
   };
 
   // ── Employee slot helpers ───────────────────────────────────────────────────
-  const canEdit = viewMode === 'employee' && status==='published' && !isPast;
+  // Staff edit their own slots while the roster is published; an administrator may also do it before publishing
+  const canEdit = viewMode === 'employee' && !isPast && (status==='published' || isAdmin);
   const isFinalized = mySlots.some(s=>s.finalized);
   const nextTempId = () => `t${Date.now()}${Math.random()}`;
 
@@ -9477,11 +9482,12 @@ function RosterPage({ user, toast, onBack }) {
   const removeSlot = tempId => { setMySlots(p=>p.filter(s=>s.tempId!==tempId)); setTooltip(null); };
 
   const saveSlots = async () => {
-    if (!roster?.roid) { toast("Roster not published yet","error"); return; }
+    if (!roster?.roid && !isAdmin) { toast("Roster not published yet","error"); return; }
     setSaving(true);
     try {
+      const rost = roster?.roid ? roster : await ensureRoster();
       const merged = mergeAllSlots(mySlots);
-      const r = await api.saveRosterSlots(roster.roid, {
+      const r = await api.saveRosterSlots(rost.roid, {
         slots: merged.map(s=>({slot_date:s.slot_date,start_time:s.start_time,end_time:s.end_time})),
         finalize: true,
       });
@@ -9586,7 +9592,7 @@ function RosterPage({ user, toast, onBack }) {
       title={`Roster — week of ${weekStart.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}`}
       actions={
         <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-          {isBoth && (
+          {(isBoth || isAdmin) && (
             <Btn size="sm" variant="secondary" onClick={()=>{
               setViewMode(m=>m==='manager'?'employee':'manager');
               setEmpEditing(false);
@@ -9731,8 +9737,10 @@ function RosterPage({ user, toast, onBack }) {
                     const top = minsToPx(t1-START_H*60);
                     const h   = minsToPx(t2-t1);
                     return (
-                      <div key={s.rsid} style={{position:"absolute",left:2,right:2,top,height:Math.max(h,4),
-                        background:`${col}28`,border:`1.5px solid ${col}`,borderRadius:5,overflow:"hidden",pointerEvents:"none"}}>
+                      <div key={s.rsid} title={`${s.first_name} ${s.last_name||""} · ${s.start_time}–${s.end_time}`}
+                        style={{position:"absolute",left:2,right:2,top,height:Math.max(h,4),
+                        background:`${col}28`,border:`1.5px solid ${col}`,borderRadius:5,overflow:"hidden",pointerEvents:"none",
+                        opacity:isManuf?1:0.55,zIndex:1}}>
                         <span style={{fontSize:9,fontWeight:600,color:col,writingMode:"vertical-rl",lineHeight:1.2,padding:"2px 3px"}}>
                           {s.first_name}{s.role_name?` · ${s.role_name}`:""}
                         </span>
@@ -9822,7 +9830,8 @@ function RosterPage({ user, toast, onBack }) {
           status==='published'&&empEditing?"#854d0e":G.muted,
           marginTop:12,textAlign:"center",fontWeight:status==='approved'?600:400}}>
           {status==='approved'   && "✓ Roster approved — your schedule is final."}
-          {status==='unpublished'&& "Roster not yet published. Check back later."}
+          {status==='unpublished'&& !isAdmin && "Roster not yet published. Check back later."}
+          {status==='unpublished'&& isAdmin && "Roster not yet published. As an administrator you can add your slots now; staff can add theirs once you publish."}
           {status==='published'  && empEditing  && "Drag on any day to add a slot. Drag the bottom edge to extend. Click a slot to edit or remove. Click Save when done."}
           {status==='published'  && !empEditing && !isFinalized && "Click \"Edit my slots\" then drag to select your available hours, then Save."}
           {status==='published'  && !empEditing && isFinalized  && "Slots saved. Click \"Edit\" to make changes before the roster is approved."}
