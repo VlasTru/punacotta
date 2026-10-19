@@ -103,7 +103,7 @@ const RU = {
   "Latest order no later than":"Последний заказ может быть принят не позже",
   "before closing":"до закрытия","Add period":"+ Период","Closed":"Закрыто",
   "Log in":"Зайти","Forgot password?":"Пароль подзабылся?",
-  "Create account":"Зарегистрироваться","Welcome back":"И снова здравствуйте",
+  "Create account":"Зарегистрироваться","Welcome back":"И снова здравствуйте","Restore":"Восстановить","Security area":"Зона безопасности","Delete restaurant":"Удалить ресторан",
   "password":"пароль","Reset password":"Сбросить пароль",
   "Send recovery link":"Отправить ссылку","Back to login":"Обратно к авторизации",
   "Password":"Пароль",
@@ -1498,13 +1498,26 @@ function LoginPage({ onLogin, setPage, setLang }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
   const [email, setEmail] = useState(""); const [pw, setPw] = useState(""); const [err, setErr] = useState(""); const [loading, setLoading] = useState(false);
+  const [gone, setGone] = useState(null);   // deleted restaurant: { restaurant_name, days_left } -> shows the "Restore" slide
+  const restore = async() => {
+    setErr(""); setLoading(true);
+    try {
+      const {token,user} = await api.restoreRestaurant(email,pw);
+      localStorage.setItem("token",token); onLogin(user);
+    } catch(e) { setErr(e.message); }
+    finally { setLoading(false); }
+  };
   const submit = async() => {
     setErr(""); setLoading(true);
     try {
       const {token,user} = await api.login(email,pw);
       localStorage.setItem("token",token); onLogin(user);
     } catch(e) {
-      if (e.message === 'unverified_recent') {
+      if (e.message === 'restaurant_deleted' && e.data?.can_restore) {
+        setGone(e.data);
+      } else if (e.message === 'restaurant_deleted') {
+        setErr(`${e.data?.restaurant_name||'The restaurant'} has been deleted. Please contact its administrator.`);
+      } else if (e.message === 'unverified_recent') {
         setErr("Please verify your email. A message has been sent earlier for you to confirm registration.");
       } else if (e.message === 'unverified_expired') {
         setErr("Your verification link has expired. Please register again.");
@@ -1515,6 +1528,9 @@ function LoginPage({ onLogin, setPage, setLang }) {
   };
   return (
     <AuthLayout>
+      <div style={{ overflow:"hidden", margin:-4, padding:4 }}>
+      <div style={{ display:"flex", width:"200%", transform:gone?"translateX(-50%)":"translateX(0)", transition:"transform 0.45s cubic-bezier(.4,0,.2,1)" }}>
+      <div style={{ width:"50%", paddingRight:4, boxSizing:"border-box", visibility:gone?"hidden":"visible", transition:"visibility 0s linear "+(gone?"0.45s":"0s") }} aria-hidden={!!gone}>
       <h2 style={{ fontFamily:G.font, fontSize:22, marginBottom:24 }}>Welcome back</h2>
       <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
         <Input label={tl("Email")} type="email" value={email} onChange={setEmail} placeholder="you@example.com" required />
@@ -1527,6 +1543,20 @@ function LoginPage({ onLogin, setPage, setLang }) {
         <div style={{ marginTop:8, padding:12, background:G.sand, borderRadius:8, fontSize:12, color:G.muted, lineHeight:1.7 }}>
           <b>Demo:</b> sophie@example.com / password &nbsp;|&nbsp; arman@puncotta.com / password
         </div>
+      </div>
+      </div>
+      <div style={{ width:"50%", paddingLeft:4, boxSizing:"border-box", visibility:gone?"visible":"hidden", transition:"visibility 0s linear "+(gone?"0s":"0.45s") }} aria-hidden={!gone}>
+        <h2 style={{ fontFamily:G.font, fontSize:22, marginBottom:24 }}>{tl("Restore")}</h2>
+        <p style={{ fontSize:14, lineHeight:1.7, color:G.dark, marginBottom:24 }}>
+          <b>{gone?.restaurant_name}</b> will be deleted in {gone?.days_left} {gone?.days_left===1?"day":"days"}. If you wish to resume operation, click Restore button. Otherwise click "Log in →" to login with a different account.
+        </p>
+        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+          <Btn size="lg" onClick={restore} loading={loading}>{tl("Restore")}</Btn>
+          {err&&<span style={{ fontSize:12, color:G.red }}>{err}</span>}
+          <button onClick={()=>{ setGone(null); setPw(""); setErr(""); }} style={{ background:"none", border:"none", color:G.muted, cursor:"pointer", fontSize:13, textAlign:"center" }}>{tl("Log in →")}</button>
+        </div>
+      </div>
+      </div>
       </div>
     </AuthLayout>
   );
@@ -4692,8 +4722,19 @@ function GeneralPage({ user, setUser, toast }) {
   const [loading,  setLoading]  = useState(true);
   const [saving,   setSaving]   = useState(false);
   const [uploading,setUploading]= useState(false);
+  const [delName, setDelName] = useState('');
+  const [deleting, setDeleting] = useState(false);
 
   const set = (k,v) => setForm(p=>({...p,[k]:v}));
+
+  const deleteRestaurant = async () => {
+    setDeleting(true);
+    try {
+      await api.deleteRestaurant(delName);
+      toast('Restaurant marked as deleted');
+      setTimeout(()=>{ localStorage.removeItem('token'); window.location.reload(); }, 1200);
+    } catch(e){ toast(e.message,'error'); setDeleting(false); }
+  };
 
   useEffect(()=>{
     api.getProfile().then(p=>{
@@ -4855,6 +4896,19 @@ function GeneralPage({ user, setUser, toast }) {
           <Input label={tl("Street address")} value={form.street_address||''} onChange={v=>set('street_address',v)} style={{gridColumn:"1/-1"}}/>
         </div>
       </div>
+
+      {/* Security area — only for the restaurant's administrator */}
+      {form.restaurant?.can_delete&&(
+        <div style={{background:G.white,border:`1px solid ${G.red}`,borderRadius:14,padding:24,marginBottom:16}}>
+          <h3 style={{fontFamily:G.font,fontSize:16,marginBottom:14,color:G.red}}>{tl("Security area")}</h3>
+          <Input label={tl("Restaurant name")} value={delName} onChange={setDelName}
+            hint={`The account will be marked as deleted and will be completely deleted in 7 days. Type in the name of your organization - "${form.restaurant.name}"`}/>
+          <div style={{marginTop:14}}>
+            <Btn variant="danger" onClick={deleteRestaurant} loading={deleting}
+              disabled={delName.trim()!==form.restaurant.name.trim()}>{tl("Delete restaurant")}</Btn>
+          </div>
+        </div>
+      )}
 
     </Page>
   );

@@ -123,7 +123,8 @@ async function runForecastForUser(ownerUid) {
 
 export const handler = async () => {
   try {
-    const users = await dbq(`SELECT uid FROM "user" WHERE is_manufacturer=true`)
+    await dbq(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`)
+    const users = await dbq(`SELECT uid FROM "user" WHERE is_manufacturer=true AND deleted_at IS NULL`)
     for (const { uid } of users) {
       await runForecastForUser(uid).catch(err=>console.error(`Forecast failed for uid=${uid}:`,err))
       await syncDraftOrdersScheduled(uid).catch(err=>console.error(`Draft sync failed for uid=${uid}:`,err))

@@ -151,7 +151,8 @@ export async function processRosterForRestaurant(restaurant, nowMs = Date.now())
 
 export const handler = async () => {
   try {
-    const restaurants = await dbq(`SELECT uid, business_name, first_name, schedule FROM "user" WHERE is_manufacturer=true`)
+    await dbq(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`)
+    const restaurants = await dbq(`SELECT uid, business_name, first_name, schedule FROM "user" WHERE is_manufacturer=true AND deleted_at IS NULL`)
     for (const r of restaurants) {
       await processRosterForRestaurant(r).catch(e => console.error(`Roster automation failed for uid=${r.uid}:`, e.message))
     }

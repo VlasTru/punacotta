@@ -14,7 +14,13 @@ async function req(method, path, body) {
   }
   const res = await fetch(BASE + path, opts)
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+  if (!res.ok) {
+    // The restaurant was deleted while this session was open: drop the session and return to the login card
+    if (data.error === 'restaurant_deleted' && !path.startsWith('/auth/') && getToken()) {
+      localStorage.removeItem('token'); window.location.reload()
+    }
+    const err = new Error(data.error || `HTTP ${res.status}`); err.data = data; throw err
+  }
   return data
 }
 
@@ -38,6 +44,8 @@ export const api = {
   reset:           (token, password) => req('POST', '/auth/reset',    { token, password }),
   verify:          (token)           => req('POST', '/auth/verify',   { token }),
   me:              ()                => req('GET',  '/auth/me'),
+  restoreRestaurant: (email, password) => req('POST', '/auth/restore', { email, password }),
+  deleteRestaurant:  (name)            => req('POST', '/profile/delete-restaurant', { name }),
   getSavedAddresses: ()             => req('GET',  '/addresses'),
 
   // Products

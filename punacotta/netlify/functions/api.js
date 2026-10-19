@@ -41,6 +41,7 @@ async function ensureMigrations() {
     await dbr(`ALTER TABLE recipe ADD COLUMN IF NOT EXISTS min_inventory NUMERIC(10,3)`)
     await dbr(`DELETE FROM menu_recipe WHERE rid IN (SELECT rid FROM recipe WHERE deleted=true)`)
     await dbr(`ALTER TABLE recipe ADD COLUMN IF NOT EXISTS procid INTEGER`)
+    await dbr(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`)
     await dbr(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS lat NUMERIC(10,7)`)
     await dbr(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS lng NUMERIC(10,7)`)
     await dbr(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS address_display VARCHAR(300)`)
@@ -163,9 +164,11 @@ function getUser(headers) {
 async function enrichUser(user) {
   if (!user) return null
   const [row] = await dbq(
-    'SELECT employer_uid, is_employee, is_manufacturer, email FROM "user" WHERE uid=$1', [user.uid])
+    `SELECT u.employer_uid, u.is_employee, u.is_manufacturer, u.email,
+            (SELECT o.deleted_at FROM "user" o WHERE o.uid = CASE WHEN u.is_manufacturer THEN u.uid ELSE u.employer_uid END) AS rest_deleted_at
+     FROM "user" u WHERE u.uid=$1`, [user.uid])
   if (!row) return user
-  return { ...user, employer_uid: row.employer_uid, is_employee: row.is_employee, is_manufacturer: row.is_manufacturer, email: row.email }
+  return { ...user, employer_uid: row.employer_uid, is_employee: row.is_employee, is_manufacturer: row.is_manufacturer, email: row.email, rest_deleted_at: row.rest_deleted_at }
 }
 function safe(u) { const { password_hash, ...r } = u; return r }
 
@@ -1056,7 +1059,7 @@ async function autoWasteForOwner(ownerUid, now = Date.now()) {
 }
 
 async function runDailyStockJob(now = Date.now()) {
-  const owners = await dbq(`SELECT uid, schedule FROM "user" WHERE is_manufacturer=true`)
+  const owners = await dbq(`SELECT uid, schedule FROM "user" WHERE is_manufacturer=true AND deleted_at IS NULL`)
   const DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
   for (const o of owners) {
     try {
@@ -1088,12 +1091,74 @@ async function orderSellerUid(oid) {
 }
 
 
+// ─── RESTAURANT DELETION (soft delete, purged after a grace period) ─────────────
+const RESTAURANT_GRACE_DAYS = 7
+
+// If the restaurant this user works for is marked as deleted: { restaurant_name, days_left, can_restore, owner_uid }
+async function deletedRestaurantOf(u) {
+  const ownerUid = u.is_manufacturer ? u.uid : u.employer_uid
+  if (!ownerUid) return null
+  const [o] = await dbq('SELECT business_name, deleted_at FROM "user" WHERE uid=$1', [ownerUid])
+  if (!o?.deleted_at) return null
+  const daysLeft = Math.max(1, Math.ceil((new Date(o.deleted_at).getTime() + RESTAURANT_GRACE_DAYS * 86400000 - Date.now()) / 86400000))
+  return { restaurant_name: o.business_name || 'The restaurant', days_left: daysLeft, owner_uid: ownerUid, can_restore: await isRosterAdmin(u.uid, ownerUid) }
+}
+
+// Deletes rows of `table` where `col` is in `vals`, first dealing with everything that points at them:
+// nullable references are cleared, mandatory ones are deleted (recursively). Runs inside the caller's transaction.
+async function deleteCascade(client, table, col, vals, seen = new Set()) {
+  if (!vals.length) return
+  const key = `${table}.${col}:${vals.join(',')}`
+  if (seen.has(key)) return
+  seen.add(key)
+  const fks = (await client.query(
+    `SELECT c.conrelid::regclass::text AS child, ca.attname AS child_col, pa.attname AS parent_col, NOT ca.attnotnull AS nullable
+     FROM pg_constraint c
+     JOIN pg_attribute ca ON ca.attrelid=c.conrelid AND ca.attnum=c.conkey[1]
+     JOIN pg_attribute pa ON pa.attrelid=c.confrelid AND pa.attnum=c.confkey[1]
+     WHERE c.contype='f' AND c.confrelid=$1::regclass AND array_length(c.conkey,1)=1`, [`"${table}"`])).rows
+  for (const fk of fks) {
+    const parentVals = (await client.query(`SELECT "${fk.parent_col}" AS v FROM "${table}" WHERE "${col}" = ANY($1)`, [vals])).rows.map(r => r.v)
+    if (!parentVals.length) continue
+    const childTable = fk.child.replace(/^"|"$/g, '')
+    if (fk.nullable) await client.query(`UPDATE "${childTable}" SET "${fk.child_col}"=NULL WHERE "${fk.child_col}" = ANY($1)`, [parentVals])
+    else await deleteCascade(client, childTable, fk.child_col, parentVals, seen)
+  }
+  await client.query(`DELETE FROM "${table}" WHERE "${col}" = ANY($1)`, [vals])
+}
+
+// Permanently removes restaurants deleted more than RESTAURANT_GRACE_DAYS ago, with all their data and staff
+async function purgeDeletedRestaurants() {
+  const due = await dbq(`SELECT uid FROM "user" WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - ($1 || ' days')::interval`, [String(RESTAURANT_GRACE_DAYS)])
+  for (const { uid } of due) {
+    const client = await getPool().connect()
+    try {
+      await client.query('BEGIN')
+      const ownedTables = (await client.query(
+        `SELECT DISTINCT table_name FROM information_schema.columns
+         WHERE table_schema='public' AND column_name='owner_uid' AND table_name <> 'user'
+           AND table_name IN (SELECT table_name FROM information_schema.tables WHERE table_type='BASE TABLE')`)).rows.map(r => r.table_name)
+      for (const t of ownedTables) await deleteCascade(client, t, 'owner_uid', [uid])
+      const staff = (await client.query('SELECT uid FROM "user" WHERE employer_uid=$1', [uid])).rows.map(r => r.uid)
+      await deleteCascade(client, 'user', 'uid', staff)
+      await deleteCascade(client, 'user', 'uid', [uid])
+      await client.query('COMMIT')
+      console.log(`🗑️ Purged deleted restaurant uid=${uid} (${staff.length} staff)`)
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {})
+      console.error(`Purge of restaurant uid=${uid} failed:`, e.message)
+    } finally { client.release() }
+  }
+}
+
 // ─── ROUTER ───────────────────────────────────────────────────────────────────
 const TRANSITIONS = { New:'Accepted', Accepted:'Preparing', Preparing:'Done', Done:'Dispatched', Dispatched:'Delivered' }
 
 async function route(method, segments, body, headers, event) {
   const user = await enrichUser(getUser(headers))
   const [r0, r1, r2] = segments
+  // A restaurant marked as deleted is closed to everybody until an administrator restores it
+  if (user?.rest_deleted_at && r0 !== 'auth') return [403, { error: 'restaurant_deleted' }]
 
   // ── STOCK NOTIFICATIONS ─────────────────────────────────────────────────────
   if (r0 === 'notifications') {
@@ -1149,6 +1214,7 @@ async function route(method, segments, body, headers, event) {
     const want = createHash('sha256').update(String(process.env.NETLIFY_DATABASE_URL || process.env.DATABASE_URL || '')).digest('hex')
     if (!headers['x-cron-token'] || headers['x-cron-token'] !== want) return [401, { error: 'Unauthorized' }]
     await runDailyStockJob()
+    await purgeDeletedRestaurants().catch(e => console.error('purge failed', e.message))
     return [200, { ok: true }]
   }
 
@@ -1163,7 +1229,25 @@ async function route(method, segments, body, headers, event) {
                 logo_url, logo_cloudinary_id,
                 lat, lng, address_display, notify_email
          FROM "user" WHERE uid=$1`, [user.uid])
-      return [200, row || {}]
+      // The restaurant this person administers (if any): its name is what has to be typed to delete it
+      const restUid = user.is_manufacturer ? user.uid : user.employer_uid
+      let restaurant = null
+      if (restUid) {
+        const [o] = await dbq('SELECT business_name FROM "user" WHERE uid=$1', [restUid])
+        restaurant = { name: o?.business_name || '', can_delete: !!o?.business_name && await isRosterAdmin(user.uid, restUid) }
+      }
+      return [200, { ...(row || {}), restaurant }]
+    }
+
+    // POST /profile/delete-restaurant { name } — administrator only; marks the restaurant as deleted (purged after 7 days)
+    if (r1 === 'delete-restaurant' && method === 'POST') {
+      const restUid = user.is_manufacturer ? user.uid : user.employer_uid
+      if (!restUid || !(await isRosterAdmin(user.uid, restUid))) return [403, { error: 'Only an administrator can delete the restaurant' }]
+      const [o] = await dbq('SELECT business_name FROM "user" WHERE uid=$1', [restUid])
+      if (!o?.business_name || String(body?.name || '').trim() !== o.business_name.trim())
+        return [400, { error: 'The name does not match the name of the restaurant' }]
+      await dbr('UPDATE "user" SET deleted_at=NOW() WHERE uid=$1', [restUid])
+      return [200, { ok: true, days_left: RESTAURANT_GRACE_DAYS }]
     }
 
     // POST /profile/logo — upload logo image via Cloudinary
@@ -1239,6 +1323,20 @@ async function route(method, segments, body, headers, event) {
         }
         return [403, { error: 'unverified_expired', message: 'Your verification link has expired. Please register again.' }]
       }
+      const gone = await deletedRestaurantOf(u)
+      if (gone) return [403, { error: 'restaurant_deleted', ...gone }]
+      return [200, { token: signToken({ uid:u.uid, email:u.email, is_manufacturer:u.is_manufacturer }), user: safe(u) }]
+    }
+    // POST /auth/restore { email, password } — an administrator brings a deleted restaurant back
+    if (r1 === 'restore' && method === 'POST') {
+      const { email, password } = body
+      const [u] = await dbq('SELECT * FROM "user" WHERE email = $1', [email?.toLowerCase()])
+      if (!u || !(await bcrypt.compare(password || '', u.password_hash)))
+        return [401, { error: 'Invalid email or password' }]
+      const gone = await deletedRestaurantOf(u)
+      if (!gone) return [400, { error: 'This restaurant is not deleted' }]
+      if (!gone.can_restore) return [403, { error: 'Only an administrator can restore the restaurant' }]
+      await dbr('UPDATE "user" SET deleted_at=NULL WHERE uid=$1', [gone.owner_uid])
       return [200, { token: signToken({ uid:u.uid, email:u.email, is_manufacturer:u.is_manufacturer }), user: safe(u) }]
     }
     if (r1 === 'register' && method === 'POST') {
@@ -4074,7 +4172,7 @@ async function route(method, segments, body, headers, event) {
         JOIN process_run_item pri ON pri.prid=pr.prid
         JOIN recipe r ON r.rid=pri.rid
         LEFT JOIN units u ON u.unid=r.unid
-        JOIN "user" owner ON owner.uid=pr.owner_uid
+        JOIN "user" owner ON owner.uid=pr.owner_uid AND owner.deleted_at IS NULL
         WHERE pr.status IN ('in_progress','on_hold','completed')
           AND (
             pr.status IN ('in_progress','on_hold')
@@ -4120,7 +4218,7 @@ async function route(method, segments, body, headers, event) {
           JOIN process_run_item pri ON pri.prid=pr.prid
           JOIN recipe r ON r.rid=pri.rid
           LEFT JOIN units u ON u.unid=r.unid
-          JOIN "user" owner ON owner.uid=pr.owner_uid
+          JOIN "user" owner ON owner.uid=pr.owner_uid AND owner.deleted_at IS NULL
           WHERE pr.status IN ('in_progress','on_hold','completed')
             AND (
               pr.status IN ('in_progress','on_hold')
@@ -4346,7 +4444,7 @@ async function route(method, segments, body, headers, event) {
     if (!apiKey) return [401, { error: 'API key required (?key=...)' }]
     const [settings] = await dbq(
       `SELECT es.*, u.first_name, u.last_name, u.business_name
-       FROM embed_settings es JOIN "user" u ON u.uid=es.uid
+       FROM embed_settings es JOIN "user" u ON u.uid=es.uid AND u.deleted_at IS NULL
        WHERE es.api_key=$1`, [apiKey])
     if (!settings) return [401, { error: 'Invalid API key' }]
     if (!settings.enabled) return [403, { error: 'Embedded menu is disabled' }]
