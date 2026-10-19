@@ -1388,7 +1388,7 @@ function Nav({ user, page, setPage, logout, lang, setLang, notifProps, themePref
       </div>
       <div style={{ position:"relative", flexShrink:0 }}>
         <button onClick={()=>setDropOpen(p=>!p)} style={{ display:"flex", alignItems:"center", gap:7, background:G.sand, border:`1px solid ${G.border}`, borderRadius:8, cursor:"pointer", fontFamily:G.mono, fontSize:13, color:G.dark, padding:"7px 12px", whiteSpace:"nowrap", fontWeight:500 }}>
-          👤 {user?.first_name} {user?.last_name}
+          👤 {user?.first_name||user?.email}{user?.restaurant?.name?` (${user.restaurant.name})`:""}
           <span style={{ fontSize:9, color:G.muted }}>▾</span>
         </button>
         {dropOpen&&(
@@ -10523,11 +10523,12 @@ export default function App() {
     setUser(u);
     setHashPage(null);
     setPage(u.is_manufacturer?"orders-manuf":"restaurants");
-    // Load logo and business_name for Nav
-    if (u.is_manufacturer) {
-      api.getProfile().then(p=>setUser(prev=>({...prev,...p}))).catch(()=>{});
-    }
   };
+  // Load name, logo and restaurant for the Nav (also after a page reload, when only the token is known)
+  useEffect(()=>{
+    if (!user?.uid) return;
+    api.getProfile().then(p=>setUser(prev=>prev&&prev.uid===user.uid?{...prev,...p}:prev)).catch(()=>{});
+  },[user?.uid]);
   // Clear #signup hash from URL after reading it
   useEffect(()=>{
     if (window.location.hash==="#signup") history.replaceState(null,"",window.location.pathname);
