@@ -12,6 +12,9 @@
 [functions."forecast-scheduled"]
   schedule = "0 8 * * *"
 
+[functions."roster-scheduled"]
+  schedule = "0 * * * *"
+
 [functions."stock-scheduled"]
   schedule = "0 * * * *"
 
