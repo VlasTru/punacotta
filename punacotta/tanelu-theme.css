@@ -1,0 +1,159 @@
+/* Tanelu "Mise" theme for coss ui (Tailwind v4 + Base UI)
+ *
+ * Drop into your global stylesheet after `@import "tailwindcss";`
+ * and replace the default :root / .dark token block that coss ui's
+ * setup added. Variable names follow the shadcn-style convention
+ * coss ui uses — if your generated globals.css has extra tokens
+ * (e.g. --info, --success), keep them and map them to the colors below.
+ */
+
+/* Fonts */
+@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Geist:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap");
+
+:root {
+  /* Raw palette */
+  --tn-ink: #16181B;
+  --tn-paper: #F2F3EF;
+  --tn-card: #FFFFFF;
+  --tn-basil: #2E6A43;
+  --tn-basil-hover: #24563A;
+  --tn-basil-soft: #DDEBDF;
+  --tn-saffron: #F0B43C;
+  --tn-saffron-soft: #FBE7BE;
+  --tn-saffron-ink: #8A5A00;
+  --tn-line: #DADCD5;
+  --tn-muted: #5C6159;
+  --tn-body: #3D413B;
+  --tn-danger: #B3261E;
+
+  /* coss ui / shadcn semantic tokens */
+  --background: var(--tn-paper);
+  --foreground: var(--tn-ink);
+  --card: var(--tn-card);
+  --card-foreground: var(--tn-ink);
+  --popover: var(--tn-card);
+  --popover-foreground: var(--tn-ink);
+  --primary: var(--tn-basil);
+  --primary-foreground: #FFFFFF;
+  --secondary: var(--tn-card);
+  --secondary-foreground: var(--tn-ink);
+  --muted: var(--tn-paper);
+  --muted-foreground: var(--tn-muted);
+  --accent: var(--tn-saffron-soft);
+  --accent-foreground: var(--tn-ink);
+  --destructive: var(--tn-danger);
+  --destructive-foreground: #FFFFFF;
+  --border: var(--tn-ink);          /* the signature: ink outlines */
+  --input: var(--tn-ink);
+  --ring: var(--tn-basil);
+  --radius: 0.5rem;                 /* 8px */
+
+  /* Status (badges, stock levels) */
+  --success: var(--tn-basil-soft);
+  --success-foreground: var(--tn-ink);
+  --warning: var(--tn-saffron-soft);
+  --warning-foreground: var(--tn-ink);
+
+  /* Mise extras */
+  --tn-border-width: 1.5px;
+  --tn-shadow-offset: 3px 3px 0 var(--tn-ink);
+}
+
+.dark {
+  --tn-ink: #F2F3EF;
+  --tn-paper: #121417;
+  --tn-card: #1B1E22;
+  --tn-basil: #5FAE7A;
+  --tn-basil-hover: #74BF8D;
+  --tn-basil-soft: #1F3A2A;
+  --tn-saffron-soft: #3D2F12;
+  --tn-line: #2E3237;
+  --tn-muted: #A3A89F;
+  --tn-body: #C9CCC4;
+  --primary-foreground: #121417;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+
+  --color-ink: var(--tn-ink);
+  --color-paper: var(--tn-paper);
+  --color-basil: var(--tn-basil);
+  --color-saffron: var(--tn-saffron);
+  --color-line: var(--tn-line);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-heading: "Bricolage Grotesque", ui-sans-serif, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --shadow-mise: var(--tn-shadow-offset);
+}
+
+@layer base {
+  * { border-color: var(--border); }
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+  }
+  h1, h2, h3 {
+    font-family: var(--font-heading);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+  }
+}
+
+/* Signature utilities — use alongside coss ui components:
+ *   <Button className="shadow-mise">Save recipe</Button>
+ *   <Card className="border-mise">…</Card>
+ *   <span className="ticket-label">ORD-0412</span>
+ *   <div className="tear-line" />
+ *   <Badge className="not-linked">Not set up</Badge>
+ */
+@utility border-mise {
+  border-width: var(--tn-border-width);
+  border-color: var(--tn-ink);
+}
+@utility ticket-label {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+@utility tear-line {
+  border-top: var(--tn-border-width) dashed var(--tn-ink);
+}
+@utility not-linked {
+  border: var(--tn-border-width) dashed var(--muted-foreground);
+  background: transparent;
+  color: var(--tn-body);
+}
