@@ -9589,7 +9589,7 @@ function EquipmentPage({ toast }) {
           </EmptyHeader>
           <EmptyContent><Btn size="sm" onClick={openNew}><PlusIcon/>Equipment</Btn></EmptyContent>
         </Empty>
-      )) : (
+      ) : (
         <TableShell>
           <Table>
             <TableHeader>
