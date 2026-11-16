@@ -23,7 +23,7 @@ import { Dialog as CDialog, DialogPopup, DialogHeader, DialogTitle, DialogDescri
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetPopup, SheetHeader, SheetTitle, SheetPanel } from "@/components/ui/sheet";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { CopyIcon, ImageIcon, ImageUpIcon, Trash2Icon, CheckIcon, MicIcon, SquareIcon, Undo2Icon, LayoutGridIcon, ListIcon, ListFilterIcon, PencilIcon, ArrowDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, ChevronsLeftIcon, ChevronsRightIcon, ChevronsUpDownIcon, MinusIcon, PlusIcon, UploadIcon, WorkflowIcon, PlayIcon, PauseIcon, SkipForwardIcon, TimerIcon, RepeatIcon, CalendarDaysIcon, TagsIcon, UsersIcon, MailIcon } from "lucide-react";
+import { CopyIcon, ImageIcon, ImageUpIcon, Trash2Icon, CheckIcon, MicIcon, SquareIcon, Undo2Icon, LayoutGridIcon, ListIcon, ListFilterIcon, PencilIcon, ArrowDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, ChevronsLeftIcon, ChevronsRightIcon, ChevronsUpDownIcon, MinusIcon, PlusIcon, UploadIcon, WorkflowIcon, CookingPotIcon, PowerIcon, PowerOffIcon, PlayIcon, PauseIcon, SkipForwardIcon, TimerIcon, RepeatIcon, CalendarDaysIcon, TagsIcon, UsersIcon, MailIcon } from "lucide-react";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator, MenuRadioGroup, MenuRadioItem, MenuCheckboxItem } from "@/components/ui/menu";
 import { AlertDialog, AlertDialogPopup, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from "@/components/ui/alert-dialog";
@@ -9471,7 +9471,6 @@ function EquipmentPage({ toast }) {
       .finally(()=>setLoading(false));
   },[]);
 
-  const STATUS_COLORS = { idle:G.green, inactive:G.muted, in_use:G.caramel };
   const STATUS_LABELS = { idle:"Idle", inactive:"Inactive", in_use:"In use" };
 
   const sorted = [...equipment].sort((a,b)=>{
@@ -9505,8 +9504,8 @@ function EquipmentPage({ toast }) {
   };
 
   const del = async (eid) => {
-    if (!window.confirm("Delete this equipment?")) return;
-    try { await api.deleteEquipment(eid); setEquipment(p=>p.filter(e=>e.eid!==eid)); toast("Deleted"); }
+    setDelEq(null);
+    try { await api.deleteEquipment(eid); setEquipment(p=>p.filter(e=>e.eid!==eid)); if (editItem?.eid===eid) setEditItem(null); toast("Deleted"); }
     catch(e){ toast(e.message,"error"); }
   };
 
@@ -9522,116 +9521,119 @@ function EquipmentPage({ toast }) {
   const removeItem = i => setForm(p=>({...p,items:p.items.filter((_,j)=>j!==i)}));
   const setItemField = (i,k,v) => setForm(p=>({...p,items:p.items.map((it,j)=>j===i?{...it,[k]:v}:it)}));
 
+  const [delEq, setDelEq] = useState(null);
+  const pickItem = (i, rid) => {
+    const r = recipes.find(x=>String(x.rid)===String(rid));
+    setForm(p=>({...p, items:p.items.map((it,j)=>j===i?{...it, rid, unit_name:r?.units||"", item_name:r?.name||""}:it)}));
+  };
+  const EQ_BADGE = { idle:"bg-success/16 text-success-foreground", inactive:"bg-secondary text-muted-foreground", in_use:"bg-brand/16 text-accent-foreground" };
+  const H = "h-11 px-4 font-semibold text-[11px] text-muted-foreground uppercase tracking-wider";
+
   if (loading) return <Page title={tl("Equipment")}><Spinner/></Page>;
 
   return (
-    <Page title={tl("Equipment")} actions={<Btn size="sm" onClick={openNew}>+ Equipment</Btn>}>
+    <Page title={tl("Equipment")} actions={<Btn size="sm" onClick={openNew}><PlusIcon/>Equipment</Btn>}>
 
       {/* New / Edit form */}
       {editItem&&(
-        <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,padding:24,marginBottom:20,animation:"fadeIn 0.2s ease"}}>
-          <h3 style={{fontFamily:G.font,fontSize:17,marginBottom:16}}>{editItem==="new"?"New equipment":editItem.name}</h3>
-          <div style={{marginBottom:16}}>
+        <Card className="mb-6" style={{ animation:"fadeIn 0.2s ease" }}>
+          <CardHeader>
+            <CardTitle className="font-heading text-lg">{editItem==="new"?"New equipment":editItem.name}</CardTitle>
+            <CardAction><Button variant="ghost" size="icon-sm" aria-label="Close" onClick={()=>setEditItem(null)}><XIcon/></Button></CardAction>
+          </CardHeader>
+          <CardPanel className="flex flex-col gap-5">
             <Input label="Name / Model" value={form.name} onChange={v=>setForm(p=>({...p,name:v}))} required
               hint="If a unit with this name already exists, a sequence number will be appended automatically."/>
-          </div>
 
-          {/* Items (capacity) */}
-          <div style={{marginBottom:16}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-              <label style={{fontSize:13,fontWeight:600,color:G.dark}}>Items (capacity)</label>
-              <Btn size="sm" variant="secondary" onClick={addItem}>+ Add item</Btn>
-            </div>
-            {form.items.length===0&&<p style={{fontSize:13,color:G.muted,fontStyle:"italic"}}>No items linked yet.</p>}
-            {form.items.map((it,i)=>{
-              const rec = recipes.find(r=>String(r.rid)===String(it.rid));
-              return (
-                <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 120px 32px",gap:10,marginBottom:10,alignItems:"end"}}>
-                  <div>
-                    <label style={{fontSize:12,color:G.muted,display:"block",marginBottom:4}}>Item</label>
-                    <select value={String(it.rid)} onChange={e=>{
-                      const r=recipes.find(x=>String(x.rid)===e.target.value);
-                      setItemField(i,"rid",e.target.value);
-                      setItemField(i,"unit_name",r?.units||"");
-                      setItemField(i,"item_name",r?.name||"");
-                    }} style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}>
-                      <option value="">Select item…</option>
-                      {recipes.map(r=><option key={r.rid} value={r.rid}>{r.name}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={{fontSize:12,color:G.muted,display:"block",marginBottom:4}}>
-                      Capacity{it.unit_name?` (${it.unit_name})`:""}
-                    </label>
-                    <input type="number" min="0" step="any" value={it.volume}
-                      onChange={e=>setItemField(i,"volume",e.target.value)} placeholder="e.g. 2"
-                      style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}/>
-                  </div>
-                  <button onClick={()=>removeItem(i)} style={{background:"none",border:"none",cursor:"pointer",color:G.red,fontSize:18,paddingBottom:8}}>×</button>
+            {/* Items (capacity) */}
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium text-sm">Items (capacity)</span>
+                <Btn size="sm" variant="secondary" onClick={addItem}><PlusIcon/>Add item</Btn>
+              </div>
+              {form.items.length===0&&<p className="text-muted-foreground text-sm italic">No items linked yet.</p>}
+              {form.items.map((it,i)=>(
+                <div key={i} data-slot="equipment-item" className="grid grid-cols-[1fr_7.5rem_auto] items-end gap-2.5">
+                  <Select label={i===0?"Item":undefined} value={String(it.rid)} onChange={v=>pickItem(i,v)} placeholder="Select item…"
+                    options={recipes.map(r=>({ label:r.name, value:r.rid }))}/>
+                  <Field className="gap-1.5">
+                    {i===0&&<FieldLabel>Capacity</FieldLabel>}
+                    <div className="relative">
+                      <CInput type="number" size="lg" value={it.volume} aria-label={`Capacity${it.unit_name?` (${it.unit_name})`:""}`}
+                        onChange={e=>setItemField(i,"volume",e.target.value)} placeholder="e.g. 2" className={it.unit_name?"[&_input]:pe-10":""}/>
+                      {it.unit_name&&<span className="-translate-y-1/2 pointer-events-none absolute end-3 top-1/2 text-muted-foreground text-xs">{it.unit_name}</span>}
+                    </div>
+                  </Field>
+                  <Button variant="ghost" size="icon" aria-label="Remove item" className="text-muted-foreground hover:text-destructive-foreground" onClick={()=>removeItem(i)}><XIcon/></Button>
                 </div>
-              );
-            })}
-          </div>
-
-          <div style={{display:"flex",gap:10}}>
-            <Btn size="sm" onClick={save} loading={saving}>Save</Btn>
-            <Btn variant="ghost" size="sm" onClick={()=>setEditItem(null)}>Cancel</Btn>
-            {editItem!=="new"&&<Btn variant="danger" size="sm" onClick={()=>del(editItem.eid)}>Delete</Btn>}
-          </div>
-        </div>
+              ))}
+            </div>
+          </CardPanel>
+          <CardFooter className="justify-between gap-2 border-border border-t pt-4">
+            <div>{editItem!=="new"&&<Btn variant="ghost" onClick={()=>setDelEq(editItem)} style={{ color:"var(--destructive-foreground)" }}><Trash2Icon/>Delete</Btn>}</div>
+            <div className="flex gap-2">
+              <Btn variant="ghost" onClick={()=>setEditItem(null)}>Cancel</Btn>
+              <Btn onClick={save} loading={saving}>Save</Btn>
+            </div>
+          </CardFooter>
+        </Card>
       )}
 
       {/* Equipment table */}
-      <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,overflow:"hidden"}}>
-        <table style={{width:"100%",borderCollapse:"collapse"}}>
-          <thead>
-            <tr style={{background:G.sand,borderBottom:`1px solid ${G.border}`}}>
-              <th style={{padding:"10px 14px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,width:40}}>#</th>
-              <th style={{padding:"10px 14px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted}}>Name / Model</th>
-              <th style={{padding:"10px 14px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,cursor:"pointer"}}
-                onClick={()=>setSortBy(s=>s==="status"?"name":"status")}>
-                Status {sortBy==="status"?"▴":""}
-              </th>
-              <th style={{padding:"10px 14px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted}}>Items</th>
-              <th style={{width:80}}/>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.length===0?(
-              <tr><td colSpan={5} style={{padding:40,textAlign:"center",color:G.muted}}>No equipment yet. Click "+ Equipment" to add.</td></tr>
-            ):sorted.map((eq,i)=>{
-              const col = STATUS_COLORS[eq.status]||G.muted;
-              return (
-                <tr key={eq.eid} style={{borderBottom:i<sorted.length-1?`1px solid ${G.border}`:"none"}}>
-                  <td style={{padding:"10px 14px",fontSize:13,color:G.muted,fontFamily:G.mono}}>{i+1}</td>
-                  <td style={{padding:"10px 14px"}}>
-                    <button onClick={()=>openEdit(eq)} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,fontWeight:600,color:G.dark,padding:0,textDecoration:"underline dotted",textUnderlineOffset:3}}>
-                      {eq.name}
-                    </button>
-                  </td>
-                  <td style={{padding:"10px 14px"}}>
-                    <span style={{fontSize:12,padding:"3px 10px",borderRadius:20,fontWeight:600,background:`${col}20`,color:col}}>
-                      {STATUS_LABELS[eq.status]||eq.status}
-                    </span>
-                  </td>
-                  <td style={{padding:"10px 14px",fontSize:13,color:G.muted}}>{eq.item_count||0} item{eq.item_count!==1?"s":""}</td>
-                  <td style={{padding:"10px 14px"}}>
-                    <div style={{display:"flex",gap:8}}>
+      {sorted.length===0 ? (editItem ? null : 
+        <Empty className="rounded-2xl border border-border border-dashed bg-card">
+          <EmptyHeader>
+            <EmptyMedia variant="icon"><CookingPotIcon/></EmptyMedia>
+            <EmptyTitle>No equipment yet</EmptyTitle>
+            <EmptyDescription>Add ovens, mixers and other units, and how much of each item they hold.</EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent><Btn size="sm" onClick={openNew}><PlusIcon/>Equipment</Btn></EmptyContent>
+        </Empty>
+      )) : (
+        <TableShell>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className={`${H} w-12`}>#</TableHead>
+                <SortHead label="Name / Model" active={sortBy==="name"} dir="asc" onClick={()=>setSortBy("name")}/>
+                <SortHead label="Status" active={sortBy==="status"} dir="asc" onClick={()=>setSortBy("status")}/>
+                <TableHead className={`${H} max-sm:hidden`}>Items</TableHead>
+                <TableHead className="w-36"/>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {sorted.map((eq,i)=>(
+                <TableRow key={eq.eid}>
+                  <TableCell className={`${CELL} font-mono text-muted-foreground text-xs`}>{i+1}</TableCell>
+                  <TableCell className={CELL}>
+                    <button type="button" data-slot="row-link" onClick={()=>{ openEdit(eq); window.scrollTo({top:0,behavior:"smooth"}); }}
+                      className="text-start font-semibold underline decoration-dotted underline-offset-3 hover:decoration-solid">{eq.name}</button>
+                  </TableCell>
+                  <TableCell className={CELL}>
+                    <CBadge variant="outline" className={`border-transparent font-semibold ${EQ_BADGE[eq.status]||EQ_BADGE.inactive}`}>{STATUS_LABELS[eq.status]||eq.status}</CBadge>
+                  </TableCell>
+                  <TableCell className={`${CELL} text-muted-foreground max-sm:hidden`}>{eq.item_count||0} item{eq.item_count!==1?"s":""}</TableCell>
+                  <TableCell className="px-4 py-2">
+                    <div className="flex items-center justify-end gap-1">
                       {eq.status!=="in_use"&&(
-                        <button onClick={()=>toggleStatus(eq)}
-                          style={{fontSize:11,padding:"3px 8px",borderRadius:5,border:`1px solid ${G.border}`,background:"none",cursor:"pointer",color:G.muted,fontFamily:G.mono}}>
-                          {eq.status==="idle"?"Disable":"Enable"}
-                        </button>
+                        <Button variant="outline" size="xs" onClick={()=>toggleStatus(eq)}>
+                          {eq.status==="idle"?<><PowerOffIcon/>Disable</>:<><PowerIcon/>Enable</>}
+                        </Button>
                       )}
-                      <button onClick={()=>del(eq.eid)} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:16}}>×</button>
+                      <Button variant="ghost" size="icon-sm" aria-label={`Delete ${eq.name}`} title="Delete"
+                        className="text-muted-foreground hover:text-destructive-foreground" onClick={()=>setDelEq(eq)}><Trash2Icon/></Button>
                     </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableShell>
+      )}
+
+      <Dialog open={!!delEq} title={`Delete “${delEq?.name||""}”?`} onConfirm={()=>del(delEq.eid)} onCancel={()=>setDelEq(null)}>
+        This cannot be undone.
+      </Dialog>
     </Page>
   );
 }
