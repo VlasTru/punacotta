@@ -23,7 +23,7 @@ import { Dialog as CDialog, DialogPopup, DialogHeader, DialogTitle, DialogDescri
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetPopup, SheetHeader, SheetTitle, SheetPanel } from "@/components/ui/sheet";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { CopyIcon, ImageIcon, ImageUpIcon, Trash2Icon, CheckIcon, MicIcon, SquareIcon, Undo2Icon, LayoutGridIcon, ListIcon, ListFilterIcon, PencilIcon, ArrowDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, ChevronsLeftIcon, ChevronsRightIcon, ChevronsUpDownIcon, MinusIcon, PlusIcon, CalendarDaysIcon, TagsIcon, UsersIcon, MailIcon } from "lucide-react";
+import { CopyIcon, ImageIcon, ImageUpIcon, Trash2Icon, CheckIcon, MicIcon, SquareIcon, Undo2Icon, LayoutGridIcon, ListIcon, ListFilterIcon, PencilIcon, ArrowDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, ChevronsLeftIcon, ChevronsRightIcon, ChevronsUpDownIcon, MinusIcon, PlusIcon, UploadIcon, CalendarDaysIcon, TagsIcon, UsersIcon, MailIcon } from "lucide-react";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator, MenuRadioGroup, MenuRadioItem, MenuCheckboxItem } from "@/components/ui/menu";
 import { AlertDialog, AlertDialogPopup, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from "@/components/ui/alert-dialog";
@@ -8842,7 +8842,7 @@ function RosterPage({ user, toast, onBack }) {
     if (isPast) return null;
     const btns = [];
     if (['unpublished','unapproved'].includes(status))
-      btns.push(<Btn key="pub" size="sm" loading={saving} onClick={async()=>{ const r=await ensureRoster(); rAction(api.publishRoster,r.roid); }}>Publish</Btn>);
+      btns.push(<Btn key="pub" size="sm" loading={saving} onClick={async()=>{ const r=await ensureRoster(); rAction(api.publishRoster,r.roid); }}><UploadIcon/>Publish</Btn>);
     if (status==='published')
       btns.push(<Btn key="unpub" size="sm" variant="secondary" loading={saving} onClick={()=>rAction(api.unpublishRoster,roster.roid)}>Unpublish</Btn>);
     if (canClonePast)
@@ -8851,11 +8851,11 @@ function RosterPage({ user, toast, onBack }) {
           setSaving(true);
           try { const r=await api.clonePastRoster(fmt(weekStart), viewMode); setRoster(r); toast("Cloned from previous week"); }
           catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
-        }}>← Clone past</Btn>);
+        }}><CopyIcon/>Clone past week</Btn>);
     if (canClone)
-      btns.push(<Btn key="clone" size="sm" variant="secondary" loading={saving} onClick={()=>rAction(api.cloneRoster,roster.roid)}>Clone →</Btn>);
+      btns.push(<Btn key="clone" size="sm" variant="secondary" loading={saving} onClick={()=>rAction(api.cloneRoster,roster.roid)}><CopyIcon/>Clone to next week</Btn>);
     if (['published','unapproved'].includes(status))
-      btns.push(<Btn key="app" size="sm" loading={saving} onClick={()=>rAction(api.approveRoster,roster.roid)}>Approve</Btn>);
+      btns.push(<Btn key="app" size="sm" loading={saving} onClick={()=>rAction(api.approveRoster,roster.roid)}><CheckIcon/>Approve</Btn>);
     if (status==='approved') {
       btns.push(<Btn key="unapp" size="sm" variant="secondary" loading={saving} onClick={()=>rAction(api.unapproveRoster,roster.roid)}>Unapprove</Btn>);
     }
@@ -9007,101 +9007,107 @@ function RosterPage({ user, toast, onBack }) {
   } : null;
 
   // ── Render ──────────────────────────────────────────────────────────────────
+  const STATUS_BADGE = { approved:"success", published:"info", unapproved:"warning", unpublished:"secondary" };
+  const shiftWeek = n => { const d=new Date(weekStart); d.setDate(d.getDate()+7*n); setWeekStart(d); setTooltip(null); };
+  const fmtShort = d => d.toLocaleDateString('en-GB',{day:'numeric',month:'short'});
+  const statusMsg =
+      status==='approved'    ? ["success", CircleCheckIcon, "Roster approved — your schedule is final."]
+    : status==='unpublished' && !isAdmin ? ["default", ClockIcon, "Roster not yet published. Check back later."]
+    : status==='unpublished' ? ["info", InfoIcon, "Roster not yet published. As an administrator you can add your slots now; staff can add theirs once you publish."]
+    : status==='published' && empEditing ? ["warning", PencilIcon, "Drag on any day to add a slot. Drag the bottom edge to extend. Click a slot to edit or remove. Click Save when done."]
+    : status==='published' && !isFinalized ? ["info", InfoIcon, "Click \"Edit my slots\" then drag to select your available hours, then Save."]
+    : status==='published' ? ["info", ClockIcon, "Slots saved. Click \"Edit\" to make changes before the roster is approved."]
+    : null;
+
   return (
     <Page
       title={`Roster — week of ${weekStart.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}`}
-      actions={
-        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-          {(isBoth || isAdmin) && (
-            <Btn size="sm" variant="secondary" onClick={()=>{
-              setViewMode(m=>m==='manager'?'employee':'manager');
-              setEmpEditing(false);
-            }}>
-              {viewMode==='manager' ? '👤 My slots' : '📋 Manage roster'}
-            </Btn>
-          )}
-          {isManuf && manufButtons()}
-          {!isManuf && canEdit && (
-            empEditing
-              ? <>
-                  <Btn size="sm" loading={saving} onClick={saveSlots}>Save</Btn>
-                  <Btn size="sm" variant="ghost" onClick={()=>{ setEmpEditing(false); load(); }}>Cancel</Btn>
-                </>
-              : <Btn size="sm" onClick={()=>setEmpEditing(true)}>
-                  {isFinalized ? "Edit" : "Edit my slots"}
-                </Btn>
-          )}
-          {onBack && <Btn size="sm" variant="ghost" onClick={onBack}>← Staff</Btn>}
-        </div>
-      }>
+      actions={<>
+        {onBack && <Btn size="sm" variant="ghost" onClick={onBack}><ArrowLeftIcon/>Staff</Btn>}
+        {isManuf && manufButtons()}
+        {!isManuf && canEdit && (
+          empEditing
+            ? <>
+                <Btn size="sm" variant="ghost" onClick={()=>{ setEmpEditing(false); setTooltip(null); load(); }}>Cancel</Btn>
+                <Btn size="sm" loading={saving} onClick={saveSlots}><CheckIcon/>Save</Btn>
+              </>
+            : <Btn size="sm" onClick={()=>setEmpEditing(true)}><PencilIcon/>{isFinalized ? "Edit" : "Edit my slots"}</Btn>
+        )}
+      </>}>
 
-      {/* Week navigation + status */}
-      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16,flexWrap:"wrap"}}>
-        <button onClick={()=>{ const d=new Date(weekStart); d.setDate(d.getDate()-7); setWeekStart(d); }}
-          style={{background:"none",border:`1px solid ${G.border}`,borderRadius:7,cursor:"pointer",padding:"5px 14px",fontSize:14}}>←</button>
-        <span style={{fontSize:14,fontWeight:600,color:G.dark,minWidth:150,textAlign:"center"}}>
-          {weekStart.toLocaleDateString('en-GB',{day:'numeric',month:'short'})} – {weekEnd.toLocaleDateString('en-GB',{day:'numeric',month:'short'})}
-        </span>
-        <button onClick={()=>{ const d=new Date(weekStart); d.setDate(d.getDate()+7); setWeekStart(d); }}
-          style={{background:"none",border:`1px solid ${G.border}`,borderRadius:7,cursor:"pointer",padding:"5px 14px",fontSize:14}}>→</button>
-        <span style={{fontSize:12,padding:"3px 12px",borderRadius:20,fontWeight:600,
-          background:status==='approved'?`${G.green}20`:status==='published'?`${G.caramel}20`:status==='unapproved'?'#fef3c7':'#f3f4f6',
-          color:status==='approved'?G.green:status==='published'?G.caramel:status==='unapproved'?'#92400e':G.muted}}>
-          {status.charAt(0).toUpperCase()+status.slice(1)}
-        </span>
+      {/* Week navigation + status + view switch */}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center">
+            <Button variant="outline" size="icon-sm" aria-label="Previous week" className="rounded-e-none" onClick={()=>shiftWeek(-1)}><ChevronLeftIcon/></Button>
+            <span className="flex h-8 min-w-36 items-center justify-center border-input border-y bg-background px-3 font-medium text-sm tabular-nums sm:h-7 dark:bg-input/32">
+              {fmtShort(weekStart)} – {fmtShort(weekEnd)}
+            </span>
+            <Button variant="outline" size="icon-sm" aria-label="Next week" className="rounded-s-none" onClick={()=>shiftWeek(1)}><ChevronRightIcon/></Button>
+          </div>
+          {!isCurrent && <Button variant="ghost" size="sm" onClick={()=>{ setWeekStart(toMonday(new Date())); setTooltip(null); }}>This week</Button>}
+          <CBadge variant={STATUS_BADGE[status]||"secondary"} size="lg">{status.charAt(0).toUpperCase()+status.slice(1)}</CBadge>
+        </div>
+        {(isBoth || isAdmin) && (
+          <SegToggle value={viewMode} onChange={m=>{ if(m!==viewMode){ setViewMode(m); setEmpEditing(false); setTooltip(null); } }}
+            options={[["employee", <span key="e" className="flex items-center gap-1.5"><CircleUserIcon className="size-4"/>My slots</span>],
+                      ["manager",  <span key="m" className="flex items-center gap-1.5"><UsersIcon className="size-4"/>Manage roster</span>]]}/>
+        )}
       </div>
 
       {/* Auto-settings (restaurant, non-past) */}
       {isManuf && roster?.roid && !isPast && (
-        <div style={{background:G.sand,borderRadius:10,padding:"10px 16px",marginBottom:14,display:"flex",gap:20,flexWrap:"wrap"}}>
+        <div className="mb-4 flex flex-wrap gap-x-6 gap-y-2 rounded-xl border border-border bg-muted px-4 py-3">
           {[['auto_clone','Auto-clone next week'],['auto_approve','Auto-approve at week end']].map(([k,label])=>(
-            <label key={k} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,cursor:"pointer"}}>
-              <input type="checkbox" checked={!!roster[k]} style={{accentColor:G.caramel}}
-                onChange={async e=>{ const r=await api.patchRoster(roster.roid,{[k]:e.target.checked}); setRoster(r); }}/>
+            <Label key={k} className="cursor-pointer font-normal">
+              <Checkbox checked={!!roster[k]}
+                onCheckedChange={async v=>{ try { const r=await api.patchRoster(roster.roid,{[k]:!!v}); setRoster(r); } catch(e){ toast(e.message,"error"); } }}/>
               {label}
-            </label>
+            </Label>
           ))}
         </div>
       )}
 
       {/* Employee legend (shown always) */}
       {(roster?.employees||[]).length>0 && (
-        <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:12}}>
-          {roster.employees.map(e=>(
-            <span key={e.uid} style={{display:"flex",alignItems:"center",gap:5,fontSize:12,
-              color:empColors[e.uid]||G.muted, fontWeight:String(e.uid)===String(user?.uid)?700:400}}>
-              <span style={{width:10,height:10,borderRadius:"50%",background:empColors[e.uid]||G.muted,display:"inline-block",flexShrink:0}}/>
-              {e.first_name}{e.role_name?` (${e.role_name})`:""}
-              {String(e.uid)===String(user?.uid)?" (you)":""}
-            </span>
-          ))}
+        <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1.5">
+          {roster.employees.map(e=>{
+            const me = String(e.uid)===String(user?.uid);
+            return (
+              <span key={e.uid} className={`flex items-center gap-1.5 text-xs ${SKILL_INK} ${me?"font-bold":""}`} style={{ "--ink":empColors[e.uid]||G.muted }}>
+                <span className="size-2.5 shrink-0 rounded-full" style={{ background:empColors[e.uid]||G.muted }}/>
+                {e.first_name||"No name"}{e.role_name?` (${e.role_name})`:""}{me?" (you)":""}
+              </span>
+            );
+          })}
         </div>
       )}
 
       {loading ? <Spinner/> : (
-        <div style={{overflowX:"auto",userSelect:"none"}} ref={calRef}>
-          <div style={{display:"grid",gridTemplateColumns:`44px repeat(7,1fr)`,minWidth:680,opacity:calOpacity}}>
+        <div data-slot="roster-calendar" className="select-none overflow-x-auto rounded-2xl border border-border bg-card shadow-xs/5" ref={calRef}>
+          <div className="grid min-w-[680px]" style={{ gridTemplateColumns:"48px repeat(7,1fr)", opacity:calOpacity }}>
             {/* Header */}
-            <div/>
+            <div className="border-border border-b bg-muted"/>
             {weekDays.map(({label,date,dateStr,isToday})=>(
-              <div key={dateStr} style={{padding:"8px 4px",textAlign:"center",fontWeight:600,fontSize:12,
-                color:isToday?G.caramel:G.dark,background:isToday?`${G.caramel}12`:G.sand,
-                borderRight:`1px solid ${G.border}`,borderBottom:`1px solid ${G.border}`,borderTop:`1px solid ${G.border}`}}>
-                {label}<br/><span style={{fontSize:11,fontWeight:400,color:G.muted}}>{date.getDate()}/{date.getMonth()+1}</span>
+              <div key={dateStr} className={`border-border border-s border-b px-1 py-2 text-center ${isToday?"bg-accent text-accent-foreground":"bg-muted"}`}>
+                <div className="font-semibold text-xs">{label}</div>
+                <div className={`mx-auto mt-0.5 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[11px] tabular-nums ${isToday?"bg-brand font-semibold text-brand-foreground":"text-muted-foreground"}`}>
+                  {date.getDate()}/{date.getMonth()+1}
+                </div>
               </div>
             ))}
 
             {/* Time column */}
-            <div style={{position:"relative",height:COL_H,borderRight:`1px solid ${G.border}`}}>
+            <div className="relative" style={{ height:COL_H }}>
               {HOURS.map(h=>(
-                <div key={h} style={{position:"absolute",top:minsToPx((h-START_H)*60)-1,right:4,fontSize:9,color:G.muted,lineHeight:1}}>
+                <div key={h} className="absolute end-1.5 text-[10px] text-muted-foreground tabular-nums leading-none" style={{ top:minsToPx((h-START_H)*60)+3 }}>
                   {h}:00
                 </div>
               ))}
             </div>
 
             {/* Day columns */}
-            {weekDays.map(({dateStr,date})=>{
+            {weekDays.map(({dateStr,isToday})=>{
               const allDaySlots = slotsByDay[dateStr]||[];
               const myDaySlots  = mySlots.filter(s=>s.slot_date===dateStr);
               const otherSlots  = !isManuf
@@ -9113,37 +9119,30 @@ function RosterPage({ user, toast, onBack }) {
               return (
                 <div key={dateStr}
                   data-datestr={dateStr}
-                  style={{position:"relative",height:COL_H,
-                    borderRight:`1px solid ${G.border}`,borderBottom:`1px solid ${G.border}`,
-                    background:isPast?`${G.sand}60`:G.white,
-                    cursor:isEditable?"crosshair":"default"}}
+                  className={`relative border-border border-s ${isPast?"bg-muted":isToday?"bg-accent/30":""} ${isEditable?"cursor-crosshair":""}`}
+                  style={{ height:COL_H }}
                   onMouseDown={e=>onMouseDown(e,dateStr)}>
 
-                  {/* Hour grid */}
+                  {/* Hour grid + 30-min sub-lines */}
                   {HOURS.map(h=>(
-                    <div key={h} style={{position:"absolute",top:minsToPx((h-START_H)*60),left:0,right:0,
-                      borderTop:`1px solid ${h%2===0?G.border:"#f5f0ea"}`,pointerEvents:"none"}}/>
+                    <div key={h} className={`pointer-events-none absolute inset-x-0 border-t ${h===START_H?"border-transparent":h%2===0?"border-border":"border-border/60"}`} style={{ top:minsToPx((h-START_H)*60) }}/>
                   ))}
-
-                  {/* 30-min sub-lines */}
                   {HOURS.map(h=>(
-                    <div key={`${h}h`} style={{position:"absolute",top:minsToPx((h-START_H)*60+30),left:0,right:0,
-                      borderTop:`1px dashed #f0ebe3`,pointerEvents:"none"}}/>
+                    <div key={`${h}h`} className="pointer-events-none absolute inset-x-0 border-border/30 border-t border-dashed" style={{ top:minsToPx((h-START_H)*60+30) }}/>
                   ))}
 
                   {/* Unpublished overlay */}
                   {isFuture && status==='unpublished' && isManuf && (
-                    <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none",opacity:0.3}}>
-                      <span className="material-symbols-outlined" style={{fontSize:36,color:G.muted}}>publish</span>
+                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-muted-foreground opacity-30">
+                      <UploadIcon className="size-8"/>
                     </div>
                   )}
 
                   {/* Drag ghost */}
                   {isEditable && isDragCol && dragGhost && (
-                    <div style={{position:"absolute",left:2,right:2,
-                      top:dragGhost.top,height:Math.max(dragGhost.height,4),
-                      background:`${myColor}30`,border:`2px dashed ${myColor}`,borderRadius:5,pointerEvents:"none"}}>
-                      <span style={{fontSize:9,color:myColor,padding:"2px 4px",display:"block"}}>
+                    <div className={`pointer-events-none absolute inset-x-0.5 rounded-md border-2 border-dashed ${SKILL_INK}`}
+                      style={{ top:dragGhost.top, height:Math.max(dragGhost.height,4), background:`${myColor}30`, borderColor:myColor, "--ink":myColor }}>
+                      <span className="block px-1 py-0.5 font-semibold text-[10px] tabular-nums">
                         {minsToHhmm(drag.startM)}–{minsToHhmm(Math.max(drag.currentM,drag.startM+SNAP))}
                       </span>
                     </div>
@@ -9158,10 +9157,9 @@ function RosterPage({ user, toast, onBack }) {
                     const h   = minsToPx(t2-t1);
                     return (
                       <div key={s.rsid} title={`${s.first_name} ${s.last_name||""} · ${s.start_time}–${s.end_time}`}
-                        style={{position:"absolute",left:2,right:2,top,height:Math.max(h,4),
-                        background:`${col}28`,border:`1.5px solid ${col}`,borderRadius:5,overflow:"hidden",pointerEvents:"none",
-                        opacity:isManuf?1:0.55,zIndex:1}}>
-                        <span style={{fontSize:9,fontWeight:600,color:col,writingMode:"vertical-rl",lineHeight:1.2,padding:"2px 3px"}}>
+                        className={`pointer-events-none absolute inset-x-0.5 z-[1] overflow-hidden rounded-md border-[1.5px] ${SKILL_INK}`}
+                        style={{ top, height:Math.max(h,4), background:`${col}28`, borderColor:col, opacity:isManuf?1:0.55, "--ink":col }}>
+                        <span className="px-[3px] py-0.5 font-semibold text-[10px] leading-tight" style={{ writingMode:"vertical-rl" }}>
                           {s.first_name}{s.role_name?` · ${s.role_name}`:""}
                         </span>
                       </div>
@@ -9176,25 +9174,22 @@ function RosterPage({ user, toast, onBack }) {
                     const ht  = minsToPx(t2-t1);
                     const isOpen = tooltip?.tempId===s.tempId;
                     // Visual state: editing=full border, finalized=solid, approved=full opacity
-                    const borderStyle = empEditing ? `2px solid ${myColor}` : `1.5px solid ${myColor}`;
                     const bgOpacity   = s.finalized ? (status==='approved'?'55':'38') : '35';
                     return (
                       <div key={s.tempId} data-tempid={s.tempId}
-                        style={{position:"absolute",left:2,right:2,top,height:Math.max(ht,4),
-                          background:`${myColor}${bgOpacity}`,
-                          border:borderStyle,
-                          borderRadius:5,
-                          opacity: s.finalized && status!=='approved' ? 0.75 : 1,
-                          cursor:isEditable?"pointer":"default",zIndex:2}}>
-                        <div style={{fontSize:10,color:myColor,fontWeight:600,padding:"2px 4px",lineHeight:1.3}}>
+                        className={`absolute inset-x-0.5 z-[2] rounded-md ${empEditing?"border-2":"border-[1.5px]"} ${isEditable?"cursor-pointer":""} ${isOpen?"z-[30] ring-2 ring-ring":""}`}
+                        style={{ top, height:Math.max(ht,4), background:`${myColor}${bgOpacity}`, borderColor:myColor,
+                          opacity: s.finalized && status!=='approved' ? 0.75 : 1 }}>
+                        <div className={`flex items-center gap-1 px-1 py-0.5 font-semibold text-[10px] tabular-nums leading-tight ${SKILL_INK}`} style={{ "--ink":myColor }}>
                           {s.start_time}–{s.end_time}
-                          {s.finalized && !isEditable && <span style={{marginLeft:4,fontSize:9,opacity:0.7}}>{status==='approved'?'✓':'⏳'}</span>}
+                          {s.finalized && !isEditable && (status==='approved'
+                            ? <CheckIcon className="size-3" aria-label="Approved"/>
+                            : <ClockIcon className="size-3 opacity-70" aria-label="Awaiting approval"/>)}
                         </div>
                         {/* Resize handle — only in edit mode */}
                         {isEditable && (
-                          <div
-                            style={{position:"absolute",bottom:0,left:0,right:0,height:8,cursor:"s-resize",
-                              background:`${myColor}50`,borderRadius:"0 0 4px 4px"}}
+                          <div className="absolute inset-x-0 bottom-0 h-2 cursor-s-resize rounded-b-[4px]"
+                            style={{ background:`${myColor}50` }}
                             onMouseDown={e=>{
                               e.stopPropagation(); e.preventDefault();
                               setDrag({mode:'extend',dateStr,startM:t1,currentM:t2,tempId:s.tempId});
@@ -9202,35 +9197,30 @@ function RosterPage({ user, toast, onBack }) {
                         )}
                         {/* Click to open tooltip — only in edit mode */}
                         {isEditable && (
-                          <div style={{position:"absolute",inset:0,bottom:8}}
+                          <div className="absolute inset-x-0 top-0 bottom-2"
                             onClick={e=>{ e.stopPropagation(); setTooltip(isOpen?null:{tempId:s.tempId}); }}/>
                         )}
-                        {/* Tooltip */}
+                        {/* Slot editor */}
                         {isOpen && isEditable && (
-                          <div onClick={e=>e.stopPropagation()}
-                            style={{position:"absolute",top:-4,left:"calc(100% + 6px)",zIndex:20,
-                              background:G.white,border:`1px solid ${G.border}`,borderRadius:10,
-                              padding:"12px 14px",boxShadow:"0 4px 20px rgba(44,24,16,0.15)",
-                              minWidth:180,fontSize:13}}>
-                            <p style={{fontWeight:600,color:G.dark,marginBottom:10}}>Edit slot</p>
-                            <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                              <label style={{fontSize:12,color:G.muted}}>Start
-                                <input type="time" value={s.start_time}
-                                  onChange={e=>setMySlots(p=>p.map(x=>x.tempId===s.tempId?{...x,start_time:e.target.value}:x))}
-                                  style={{display:"block",width:"100%",padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",marginTop:2}}/>
-                              </label>
-                              <label style={{fontSize:12,color:G.muted}}>End
-                                <input type="time" value={s.end_time}
-                                  onChange={e=>setMySlots(p=>p.map(x=>x.tempId===s.tempId?{...x,end_time:e.target.value}:x))}
-                                  style={{display:"block",width:"100%",padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",marginTop:2}}/>
-                              </label>
-                              <button onClick={()=>removeSlot(s.tempId)}
-                                style={{background:G.red,border:"none",borderRadius:6,color:G.white,cursor:"pointer",padding:"5px 10px",fontSize:12,fontWeight:600,marginTop:2}}>
-                                Remove slot
-                              </button>
+                          <div data-slot="slot-editor" onClick={e=>e.stopPropagation()} onMouseDown={e=>e.stopPropagation()}
+                            className={`absolute -top-1 z-20 flex w-64 cursor-default flex-col gap-3 rounded-xl border border-border bg-popover p-3 text-popover-foreground shadow-lg/5 ${dateStr>=weekDays[5].dateStr?"end-[calc(100%+6px)]":"start-[calc(100%+6px)]"}`}>
+                            <div className="flex items-center justify-between">
+                              <span className="font-semibold text-sm">Edit slot</span>
+                              <Button variant="ghost" size="icon-xs" aria-label="Close" onClick={()=>setTooltip(null)}><XIcon/></Button>
                             </div>
-                            <button onClick={()=>setTooltip(null)}
-                              style={{position:"absolute",top:6,right:8,background:"none",border:"none",cursor:"pointer",fontSize:16,color:G.muted,lineHeight:1}}>×</button>
+                            <div className="grid grid-cols-2 gap-2">
+                              <Field className="gap-1">
+                                <FieldLabel className="text-muted-foreground text-xs">Start</FieldLabel>
+                                <CInput type="time" size="sm" value={s.start_time}
+                                  onChange={e=>setMySlots(p=>p.map(x=>x.tempId===s.tempId?{...x,start_time:e.target.value}:x))}/>
+                              </Field>
+                              <Field className="gap-1">
+                                <FieldLabel className="text-muted-foreground text-xs">End</FieldLabel>
+                                <CInput type="time" size="sm" value={s.end_time}
+                                  onChange={e=>setMySlots(p=>p.map(x=>x.tempId===s.tempId?{...x,end_time:e.target.value}:x))}/>
+                              </Field>
+                            </div>
+                            <Button variant="destructive-outline" size="sm" onClick={()=>removeSlot(s.tempId)}><Trash2Icon/>Remove slot</Button>
                           </div>
                         )}
                       </div>
@@ -9244,23 +9234,15 @@ function RosterPage({ user, toast, onBack }) {
       )}
 
       {/* Status messages */}
-      {!isManuf && !loading && (
-        <p style={{fontSize:13,color:
-          status==='approved'?G.green:
-          status==='published'&&empEditing?"#854d0e":G.muted,
-          marginTop:12,textAlign:"center",fontWeight:status==='approved'?600:400}}>
-          {status==='approved'   && "✓ Roster approved — your schedule is final."}
-          {status==='unpublished'&& !isAdmin && "Roster not yet published. Check back later."}
-          {status==='unpublished'&& isAdmin && "Roster not yet published. As an administrator you can add your slots now; staff can add theirs once you publish."}
-          {status==='published'  && empEditing  && "Drag on any day to add a slot. Drag the bottom edge to extend. Click a slot to edit or remove. Click Save when done."}
-          {status==='published'  && !empEditing && !isFinalized && "Click \"Edit my slots\" then drag to select your available hours, then Save."}
-          {status==='published'  && !empEditing && isFinalized  && "Slots saved. Click \"Edit\" to make changes before the roster is approved."}
-        </p>
-      )}
+      {!isManuf && !loading && statusMsg && (()=>{ const [v, Icon, text] = statusMsg; return (
+        <Alert variant={v} className="mt-4">
+          <Icon/>
+          <AlertDescription>{text}</AlertDescription>
+        </Alert>
+      ); })()}
     </Page>
   );
 }
-
 
 // ─── EMPLOYEE PROCESSES PAGE ──────────────────────────────────────────────────
 // Shows processes as cards, sorted chronologically by when the employee's step
