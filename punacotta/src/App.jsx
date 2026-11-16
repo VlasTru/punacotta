@@ -15,7 +15,13 @@ import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Badge as CBadge } from "@/components/ui/badge";
 import { Select as CSelect, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "@/components/ui/select";
 import { Kbd } from "@/components/ui/kbd";
-import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator, MenuRadioGroup, MenuRadioItem } from "@/components/ui/menu";
+import { SegmentedControl, SegmentedControlItem } from "@/components/ui/segmented-control";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog as CDialog, DialogPopup, DialogHeader, DialogTitle, DialogDescription, DialogPanel, DialogFooter } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { MicIcon, SquareIcon, Undo2Icon, LayoutGridIcon, ListIcon, ListFilterIcon, PencilIcon, ArrowDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, ChevronsLeftIcon, ChevronsRightIcon, ChevronsUpDownIcon, MinusIcon, PlusIcon } from "lucide-react";
+import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator, MenuRadioGroup, MenuRadioItem, MenuCheckboxItem } from "@/components/ui/menu";
 import { AlertDialog, AlertDialogPopup, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from "@/components/ui/alert-dialog";
 import { ArrowLeftIcon, ChefHatIcon, MailCheckIcon, PartyPopperIcon, StoreIcon, TriangleAlertIcon, BellIcon, ChevronDownIcon, CircleAlertIcon, CircleCheckIcon, CircleUserIcon, ClockIcon, GlobeIcon, InfoIcon, Link2Icon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SettingsIcon, SunIcon, XIcon } from "lucide-react";
 
@@ -1717,37 +1723,122 @@ function ForgotPage({
 // ─── DATA TABLE ───────────────────────────────────────────────────────────────
 function DataTable({ columns, rows, selected, onSelect, onSelectAll, sortKey, sortDir, onSort }) {
   const allSel = rows.length>0 && rows.every(r=>selected.includes(r._id));
+  const someSel = !allSel && rows.some(r=>selected.includes(r._id));
   return (
-    <div style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, overflow:"hidden" }}>
-      <table style={{ width:"100%", borderCollapse:"collapse" }}>
-        <thead>
-          <tr style={{ background:G.sand, borderBottom:`1px solid ${G.border}` }}>
-            <th style={{ padding:"12px 16px", width:44 }}>
-              <input type="checkbox" checked={allSel} onChange={()=>onSelectAll(allSel?[]:rows.map(r=>r._id))} style={{ cursor:"pointer", accentColor:G.caramel }} />
-            </th>
+    <TableShell>
+      <Table>
+        <TableHeader>
+          <TableRow className="hover:bg-transparent">
+            <TableHead className="w-11 ps-4">
+              <Checkbox aria-label="Select all" checked={allSel} indeterminate={someSel} onCheckedChange={()=>onSelectAll(allSel?[]:rows.map(r=>r._id))}/>
+            </TableHead>
             {columns.map(c=>(
-              <th key={c.key} onClick={()=>c.sortable!==false&&onSort&&onSort(c.key)}
-                style={{ padding:"12px 16px", textAlign:"left", fontSize:12, fontWeight:700, letterSpacing:"0.06em", textTransform:"uppercase", color:G.muted, cursor:c.sortable!==false?"pointer":"default", userSelect:"none", whiteSpace:"nowrap" }}>
-                {c.label}{c.sortable!==false&&sortKey===c.key&&<span style={{marginLeft:4}}>{sortDir==="asc"?"↑":"↓"}</span>}
-              </th>
+              <SortHead key={c.key} label={c.label} sortable={c.sortable!==false&&!!onSort} active={sortKey===c.key} dir={sortDir} onClick={()=>onSort&&onSort(c.key)}/>
             ))}
-          </tr>
-        </thead>
-        <tbody>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {rows.length===0?(
-            <tr><td colSpan={columns.length+1} style={{ padding:40, textAlign:"center", color:G.muted, fontSize:14 }}>No items yet.</td></tr>
-          ):rows.map((r,i)=>(
-            <tr key={r._id} style={{ borderBottom:i<rows.length-1?`1px solid ${G.border}`:"none", background:selected.includes(r._id)?G.sand:"transparent", transition:"background 0.1s" }}>
-              <td style={{ padding:"12px 16px" }}><input type="checkbox" checked={selected.includes(r._id)} onChange={()=>onSelect(r._id)} style={{ cursor:"pointer", accentColor:G.caramel }} /></td>
+            <TableRow className="hover:bg-transparent"><TableCell colSpan={columns.length+1} className="py-10 text-center text-muted-foreground">No items yet.</TableCell></TableRow>
+          ):rows.map(r=>(
+            <TableRow key={r._id} data-state={selected.includes(r._id)?"selected":undefined}>
+              <TableCell className="ps-4"><Checkbox aria-label="Select row" checked={selected.includes(r._id)} onCheckedChange={()=>onSelect(r._id)}/></TableCell>
               {columns.map(c=>(
-                <td key={c.key} style={{ padding:"12px 16px", fontSize:14, verticalAlign:"middle" }}>
-                  {c.render?c.render(r):r[c.key]}
-                </td>
+                <TableCell key={c.key} className={CELL}>{c.render?c.render(r):r[c.key]}</TableCell>
               ))}
-            </tr>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
+    </TableShell>
+  );
+}
+
+// ── Shared coss building blocks for the app screens ──────────────────────────
+const CELL = "px-4 py-3 whitespace-normal leading-snug text-sm";
+function TableShell({ children, className="" }) {
+  return <div className={`overflow-x-auto rounded-2xl border border-border bg-card shadow-xs/5 [&_thead_tr]:bg-muted ${className}`}>{children}</div>;
+}
+function SortHead({ label, sortable=true, active, dir, onClick, className="" }) {
+  const cls = `h-11 px-4 font-semibold text-[11px] text-muted-foreground uppercase tracking-wider ${className}`;
+  if (!sortable) return <TableHead className={cls}>{label}</TableHead>;
+  return (
+    <TableHead className={cls} aria-sort={active?(dir==="asc"?"ascending":"descending"):undefined}>
+      <button type="button" data-slot="sort-button" onClick={onClick} className="-mx-1 inline-flex items-center gap-1 rounded-sm px-1 uppercase hover:text-foreground">
+        {label}{active ? (dir==="asc"?<ArrowUpIcon className="size-3"/>:<ArrowDownIcon className="size-3"/>) : <ChevronsUpDownIcon className="size-3 opacity-40"/>}
+      </button>
+    </TableHead>
+  );
+}
+// Rows-per-page + first/prev/next/last
+function TablePager({ total, page, pageCount, pageSize, sizes=[10,25,50,100], onPage, onPageSize, label }) {
+  const last = Math.max(0, pageCount-1);
+  return (
+    <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-muted-foreground text-sm">
+      <div className="flex items-center gap-2">
+        <span>Rows per page:</span>
+        <SegmentedControl size="sm">
+          {sizes.map(n=><SegmentedControlItem key={n} data-checked={pageSize===n?"":undefined} onClick={()=>onPageSize(n)} className="px-2.5">{n}</SegmentedControlItem>)}
+        </SegmentedControl>
+      </div>
+      <div className="flex items-center gap-1">
+        <span className="me-2">{label ?? `${total} · page ${pageCount?page+1:0}/${pageCount}`}</span>
+        <Button variant="outline" size="icon-sm" aria-label="First page" disabled={page===0} onClick={()=>onPage(0)}><ChevronsLeftIcon/></Button>
+        <Button variant="outline" size="icon-sm" aria-label="Previous page" disabled={page===0} onClick={()=>onPage(Math.max(0,page-1))}><ChevronLeftIcon/></Button>
+        <Button variant="outline" size="icon-sm" aria-label="Next page" disabled={page>=last} onClick={()=>onPage(Math.min(last,page+1))}><ChevronRightIcon/></Button>
+        <Button variant="outline" size="icon-sm" aria-label="Last page" disabled={page>=last} onClick={()=>onPage(last)}><ChevronsRightIcon/></Button>
+      </div>
+    </div>
+  );
+}
+function SearchField({ value, onChange, onClear, placeholder="Search…", className="w-44" }) {
+  return (
+    <div className={`relative ${className}`}>
+      <SearchIcon className="-translate-y-1/2 pointer-events-none absolute start-2.5 top-1/2 z-10 size-4 text-muted-foreground"/>
+      <CInput value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} aria-label={placeholder} className="[&_input]:ps-8 [&_input]:pe-7"/>
+      {value&&<button type="button" data-slot="search-clear" aria-label="Clear search" onClick={onClear||(()=>onChange(""))}
+        className="-translate-y-1/2 absolute end-1.5 top-1/2 z-10 rounded-sm p-0.5 text-muted-foreground hover:text-foreground"><XIcon className="size-3.5"/></button>}
+    </div>
+  );
+}
+function DateField({ value, onChange, min, max, label }) {
+  return <CInput type="date" value={value} min={min} max={max} onChange={e=>onChange(e.target.value)} aria-label={label} className="w-auto [&_input]:[color-scheme:light] dark:[&_input]:[color-scheme:dark]"/>;
+}
+// −  n  +  stepper used in order pickers and carts
+function QtyStepper({ value, onDec, onInc, decDisabled, incDisabled, label="item", display }) {
+  return (
+    <div className="inline-flex items-center gap-1">
+      <Button variant="outline" size="icon-xs" aria-label={`Remove one ${label}`} disabled={decDisabled??value<=0} onClick={onDec}><MinusIcon/></Button>
+      <span className="min-w-7 text-center font-semibold tabular-nums text-sm">{display??value}</span>
+      <Button variant="outline" size="icon-xs" aria-label={`Add one ${label}`} disabled={incDisabled} onClick={onInc}><PlusIcon/></Button>
+    </div>
+  );
+}
+// Pop-up form: coss Dialog with title, scrollable body and footer
+function Modal({ open=true, onClose, title, description, children, footer, className="max-w-lg", headerAction }) {
+  return (
+    <CDialog open={open} onOpenChange={o=>{ if(!o) onClose?.(); }}>
+      <DialogPopup showCloseButton={false} className={className}>
+        <DialogHeader className="pe-12">
+          <DialogTitle className="font-heading text-xl">{title}</DialogTitle>
+          {description&&<DialogDescription>{description}</DialogDescription>}
+        </DialogHeader>
+        <div className="absolute end-2 top-2 flex items-center gap-1">
+          {headerAction}
+          <Button variant="ghost" size="icon" aria-label="Close" onClick={onClose}><XIcon/></Button>
+        </div>
+        <DialogPanel>{children}</DialogPanel>
+        {footer&&<DialogFooter className="items-center sm:justify-between">{footer}</DialogFooter>}
+      </DialogPopup>
+    </CDialog>
+  );
+}
+function FieldBlock({ label, required, children, hint }) {
+  return (
+    <div className="flex flex-col gap-2">
+      {label&&<span className="font-medium text-sm">{label}{required&&<span className="ms-0.5 text-brand">*</span>}</span>}
+      {children}
+      {hint&&<span className="text-muted-foreground text-xs">{hint}</span>}
     </div>
   );
 }
@@ -2920,175 +3011,129 @@ function NewOrderModal({
   const grouped = {};
   (selectedMenu?.recipes||[]).forEach(r=>{ if(!grouped[r.category])grouped[r.category]=[]; grouped[r.category].push(r); });
 
+  const totalLabel = <span className="font-bold text-base text-brand tabular-nums">{total > 0 ? `${total} AMD` : "—"}</span>;
+
   // ── STEP 2: Other address ──────────────────────────────────────────────────
   if (step === 2) {
     const addr = [otherStreet, otherCity, otherZip, otherPhone].filter(Boolean).join(", ");
     return (
-      <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
-        <div style={{ background:G.white, borderRadius:16, width:"100%", maxWidth:480, display:"flex", flexDirection:"column", boxShadow:"0 20px 60px rgba(44,24,16,0.2)", animation:"fadeIn 0.2s ease" }}>
-          <div style={{ padding:"20px 24px", borderBottom:`1px solid ${G.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-            <h3 style={{ fontFamily:G.font, fontSize:20 }}>Delivery address</h3>
-            <button onClick={()=>setStep(1)} style={{ background:"none", border:"none", fontSize:13, cursor:"pointer", color:G.muted, fontFamily:G.mono }}>← Back</button>
+      <Modal title="Delivery address" onClose={onClose}
+        headerAction={<Button variant="ghost" size="sm" onClick={()=>setStep(1)}><ArrowLeftIcon/>Back</Button>}
+        footer={<>{totalLabel}<Btn onClick={()=>submit(addr)} loading={saving} disabled={!otherStreet}>{tl("Place order")}</Btn></>}>
+        <div className="flex flex-col gap-3.5">
+          <Input label="Street" value={otherStreet} onChange={setOtherStreet} placeholder="Street address" />
+          <div className="grid grid-cols-2 gap-3.5">
+            <Input label="City" value={otherCity} onChange={setOtherCity} />
+            <Input label="ZIP" value={otherZip} onChange={setOtherZip} />
           </div>
-          <div style={{ padding:24, display:"flex", flexDirection:"column", gap:14 }}>
-            <Input label="Street" value={otherStreet} onChange={setOtherStreet} placeholder="Street address" />
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
-              <Input label="City" value={otherCity} onChange={setOtherCity} />
-              <Input label="ZIP" value={otherZip} onChange={setOtherZip} />
-            </div>
-            <Input label="Phone" value={otherPhone} onChange={setOtherPhone} placeholder="+374 91 …" />
-            <div>
-              <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:6 }}>Delivery comments</label>
-              <textarea value={deliveryComments} onChange={e=>setDeliveryComments(e.target.value.slice(0,100))}
-                placeholder="Instructions, floor, buzzer code…" rows={3} maxLength={100}
-                style={{ width:"100%", padding:"10px 14px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:14, fontFamily:G.mono, outline:"none", resize:"vertical" }}
-                onFocus={e=>e.target.style.borderColor=G.caramel} onBlur={e=>e.target.style.borderColor=G.border}
-              />
-              <span style={{ fontSize:11, color:G.muted }}>{deliveryComments.length}/100</span>
-            </div>
-          </div>
-          <div style={{ padding:"16px 24px", borderTop:`1px solid ${G.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-            <span style={{ fontWeight:700, fontSize:16, color:G.caramel }}>{total > 0 ? `${total} AMD` : "—"}</span>
-            <Btn onClick={()=>submit(addr)} loading={saving} disabled={!otherStreet}>{tl("Place order")}</Btn>
-          </div>
+          <Input label="Phone" value={otherPhone} onChange={setOtherPhone} placeholder="+374 91 …" />
+          <FieldBlock label="Delivery comments" hint={`${deliveryComments.length}/100`}>
+            <Textarea value={deliveryComments} onChange={e=>setDeliveryComments(e.target.value.slice(0,100))}
+              placeholder="Instructions, floor, buzzer code…" rows={3} maxLength={100}/>
+          </FieldBlock>
         </div>
-      </div>
+      </Modal>
     );
   }
 
   // ── STEP 1: Main ──────────────────────────────────────────────────────────
+  const fulfilOpts = [{val:"pickup",label:tl("Pickup (free)")},{val:"delivery",label:`${tl("Delivery")} (+${selectedMenu?.delivery_fee||0} AMD)`},{val:"stock",label:tl("Stock")}];
+  const pickupKey = pickup===null ? "stock" : pickup ? "pickup" : "delivery";
   return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
-      <div style={{ background:G.white, borderRadius:16, width:"100%", maxWidth:680, maxHeight:"92vh", display:"flex", flexDirection:"column", boxShadow:"0 20px 60px rgba(44,24,16,0.2)", animation:"fadeIn 0.2s ease" }}>
-        <div style={{ padding:"20px 24px", borderBottom:`1px solid ${G.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <h3 style={{ fontFamily:G.font, fontSize:20 }}>New order</h3>
-          <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, cursor:"pointer", color:G.muted, lineHeight:1 }}>×</button>
-        </div>
+    <Modal title="New order" onClose={onClose} className="max-w-2xl"
+      footer={<>{totalLabel}
+        <div className="flex gap-2">
+          <Btn variant="ghost" onClick={onClose}>{tl("Cancel")}</Btn>
+          {!pickup && addrMode==="other" ? (
+            <Btn onClick={()=>setStep(2)} disabled={!items.length||!mid}>{tl("Next →")}</Btn>
+          ) : (
+            <Btn onClick={()=>submit()} loading={saving} disabled={!canPlaceMain}>{tl("Place order")}</Btn>
+          )}
+        </div></>}>
+      <div className="flex flex-col gap-5">
+        {/* 1. Fulfillment — at top */}
+        <FieldBlock label={tl("Fulfillment")}>
+          <RadioGroup value={pickupKey} onValueChange={v=>{ setPickup(v==="stock"?null:v==="pickup"); setAddrMode("customer"); }} className="flex flex-row flex-wrap gap-x-5 gap-y-2">
+            {fulfilOpts.map(opt=>(<Label key={opt.val} className="cursor-pointer font-normal"><Radio value={opt.val}/>{opt.label}</Label>))}
+          </RadioGroup>
+        </FieldBlock>
 
-        <div style={{ flex:1, overflowY:"auto", padding:24, display:"flex", flexDirection:"column", gap:20 }}>
-
-          {/* 1. Fulfillment — at top */}
-          <div>
-            <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:8 }}>{tl("Fulfillment")}</label>
-            <div style={{ display:"flex", gap:20, flexWrap:"wrap" }}>
-              {[{val:true,label:tl("Pickup (free)")},{val:false,label:`${tl("Delivery")} (+${selectedMenu?.delivery_fee||0} AMD)`},{val:null,label:tl("Stock")}].map(opt=>(
-                <label key={String(opt.val)} style={{ display:"flex", alignItems:"center", gap:7, cursor:"pointer", fontSize:14 }}>
-                  <input type="radio" name="mo_pickup" checked={pickup===opt.val}
-                    onChange={()=>{ setPickup(opt.val); setAddrMode("customer"); }}
-                    style={{accentColor:G.caramel}} />
-                  {opt.label}
-                </label>
-              ))}
-            </div>
-          </div>
-
-          {/* 2. Customer — hidden for Stock orders */}
-          {pickup !== null && (
-          <div>
-            <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:6 }}>
-              Customer {!pickup && addrMode==="customer" && <span style={{color:G.caramel}}>*</span>}
-            </label>
+        {/* 2. Customer — hidden for Stock orders */}
+        {pickup !== null && (
+          <FieldBlock label="Customer" required={!pickup && addrMode==="customer"}>
             {customer ? (
-              <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px", background:G.sand, borderRadius:8 }}>
-                <span style={{ flex:1, fontSize:14 }}>👤 {customer.first_name} {customer.last_name}</span>
-                <button onClick={()=>{setCustomer(null);setCustomerQ("");}} style={{ background:"none", border:"none", color:G.red, cursor:"pointer", fontSize:13, fontFamily:G.mono }}>{tl("Remove")}</button>
+              <div className="flex items-center gap-2.5 rounded-lg bg-muted px-3.5 py-2.5">
+                <CircleUserIcon className="size-4 text-muted-foreground"/>
+                <span className="flex-1 text-sm">{customer.first_name} {customer.last_name}</span>
+                <Button variant="ghost" size="xs" className="text-destructive-foreground" onClick={()=>{setCustomer(null);setCustomerQ("");}}>{tl("Remove")}</Button>
               </div>
             ) : (
-              <div style={{ position:"relative" }}>
-                <input value={customerQ} onChange={e=>setCustomerQ(e.target.value)}
-                  placeholder={pickup ? "Name, email or phone (optional)" : "Search existing customer"}
-                  style={{ width:"100%", padding:"10px 14px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:14, fontFamily:G.mono, outline:"none" }}
-                  onFocus={e=>e.target.style.borderColor=G.caramel} onBlur={e=>e.target.style.borderColor=G.border}
-                />
+              <div className="relative">
+                <CInput size="lg" value={customerQ} onChange={e=>setCustomerQ(e.target.value)}
+                  placeholder={pickup ? "Name, email or phone (optional)" : "Search existing customer"} aria-label="Customer"/>
                 {results.length>0&&(
-                  <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, background:G.white, border:`1px solid ${G.border}`, borderRadius:10, boxShadow:"0 8px 24px rgba(44,24,16,0.12)", zIndex:10, overflow:"hidden" }}>
+                  <div className="absolute inset-x-0 top-[calc(100%+4px)] z-10 overflow-hidden rounded-lg border bg-popover shadow-lg/10">
                     {results.map(r=>(
-                      <button key={r.uid} onClick={()=>{setCustomer(r);setCustomerQ(`${r.first_name} ${r.last_name}`);setResults([]);}}
-                        style={{ width:"100%", textAlign:"left", padding:"10px 14px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, display:"flex", gap:10 }}
-                        onMouseEnter={e=>e.currentTarget.style.background=G.sand}
-                        onMouseLeave={e=>e.currentTarget.style.background="none"}>
-                        <span style={{flex:1}}>{r.first_name} {r.last_name}</span>
-                        <span style={{color:G.muted,fontSize:12}}>{r.email}</span>
+                      <button key={r.uid} type="button" data-slot="customer-option" onClick={()=>{setCustomer(r);setCustomerQ(`${r.first_name} ${r.last_name}`);setResults([]);}}
+                        className="flex w-full gap-2.5 px-3.5 py-2.5 text-left text-sm hover:bg-accent">
+                        <span className="flex-1">{r.first_name} {r.last_name}</span>
+                        <span className="text-muted-foreground text-xs">{r.email}</span>
                       </button>
                     ))}
-                    <div style={{ padding:"8px 14px", fontSize:12, color:G.muted, borderTop:`1px solid ${G.border}` }}>Not listed? Will be saved as walk-in.</div>
+                    <div className="border-t px-3.5 py-2 text-muted-foreground text-xs">Not listed? Will be saved as walk-in.</div>
                   </div>
                 )}
                 {customerQ.length>=2&&results.length===0&&!customer&&(
-                  <p style={{ fontSize:12, color:G.muted, marginTop:4 }}>No matches — will be saved as walk-in "{customerQ}"</p>
+                  <p className="mt-1 text-muted-foreground text-xs">No matches — will be saved as walk-in "{customerQ}"</p>
                 )}
               </div>
             )}
-          </div>
-          )}
+          </FieldBlock>
+        )}
 
-          {/* 3. Delivery address — only when Delivery selected */}
-          {pickup === false && (
-            <div>
-              <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:8 }}>Delivery address <span style={{color:G.caramel}}>*</span></label>
-              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                {/* Customer address radio */}
-                <label style={{ display:"flex", alignItems:"flex-start", gap:8, cursor:"pointer" }}>
-                  <input type="radio" name="addrMode" checked={addrMode==="customer"} onChange={()=>setAddrMode("customer")} style={{accentColor:G.caramel,marginTop:2}} />
-                  <div>
-                    <span style={{ fontSize:14, fontWeight:500 }}>Customer's address</span>
-                    {customer && customerAddr ? (
-                      <p style={{ fontSize:13, color:G.muted, marginTop:2 }}>{customerAddr}</p>
-                    ) : (
-                      <p style={{ fontSize:12, color:G.muted, fontStyle:"italic", marginTop:2 }}>Select a registered customer to autofill</p>
-                    )}
+        {/* 3. Delivery address — only when Delivery selected */}
+        {pickup === false && (
+          <FieldBlock label="Delivery address" required>
+            <RadioGroup value={addrMode} onValueChange={setAddrMode} className="gap-2.5">
+              <Label className="cursor-pointer items-start font-normal">
+                <Radio value="customer" className="mt-0.5"/>
+                <span>
+                  <span className="font-medium text-sm">Customer's address</span>
+                  {customer && customerAddr
+                    ? <span className="mt-0.5 block text-muted-foreground text-sm">{customerAddr}</span>
+                    : <span className="mt-0.5 block text-muted-foreground text-xs italic">Select a registered customer to autofill</span>}
+                </span>
+              </Label>
+              <Label className="cursor-pointer font-medium"><Radio value="other"/>Other address</Label>
+            </RadioGroup>
+          </FieldBlock>
+        )}
+
+        {/* 4. Menu */}
+        <Select label={tl("Menu")} value={mid} onChange={selectMenu}
+          options={menus.map(m=>({value:String(m.mid),label:m.name+(m.available?"":" (draft)")}))}
+          placeholder="Select a menu" required />
+
+        {/* 5. Recipe picker */}
+        {selectedMenu && (
+          <FieldBlock label="Items">
+            {Object.entries(grouped).map(([cat,recs])=>(
+              <div key={cat} className="mb-2">
+                <p className="mb-1 font-semibold text-[11px] text-muted-foreground uppercase tracking-wider">{cat}</p>
+                {recs.map(r=>(
+                  <div key={r.rid} className="flex items-center gap-2.5 border-b py-2 last:border-b-0">
+                    <span className="flex-1 text-sm">{r.name}{r.deliverable===false&&<span className="ms-1.5 text-muted-foreground text-xs">(pick-up only)</span>}</span>
+                    <span className="min-w-[70px] text-right font-semibold text-brand text-sm tabular-nums">{r.price} {r.currency}</span>
+                    <QtyStepper value={qty[r.rid]||0} label={r.name} incDisabled={(qty[r.rid]||0)>=20}
+                      onDec={()=>changeQty(r.rid,-1)} onInc={()=>changeQty(r.rid,1)}/>
                   </div>
-                </label>
-                {/* Other address radio */}
-                <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}>
-                  <input type="radio" name="addrMode" checked={addrMode==="other"} onChange={()=>setAddrMode("other")} style={{accentColor:G.caramel}} />
-                  <span style={{ fontSize:14, fontWeight:500 }}>Other address</span>
-                </label>
+                ))}
               </div>
-            </div>
-          )}
-
-          {/* 4. Menu */}
-          <Select label={tl("Menu")} value={mid} onChange={selectMenu}
-            options={menus.map(m=>({value:String(m.mid),label:m.name+(m.available?"":" (draft)")}))}
-            placeholder="Select a menu" required />
-
-          {/* 5. Recipe picker */}
-          {selectedMenu && (
-            <div>
-              <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:10 }}>Items</label>
-              {Object.entries(grouped).map(([cat,recs])=>(
-                <div key={cat} style={{ marginBottom:12 }}>
-                  <p style={{ fontSize:11, fontWeight:700, color:G.muted, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:6 }}>{cat}</p>
-                  {recs.map(r=>(
-                    <div key={r.rid} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:`1px solid ${G.border}` }}>
-                      <span style={{ flex:1, fontSize:14 }}>{r.name}{r.deliverable===false&&<span style={{ fontSize:12, color:G.muted, marginLeft:6 }}>(pick-up only)</span>}</span>
-                      <span style={{ fontSize:13, color:G.caramel, fontWeight:600, minWidth:70, textAlign:"right" }}>{r.price} {r.currency}</span>
-                      <button onClick={()=>changeQty(r.rid,-1)} style={{ width:26, height:26, borderRadius:6, border:`1px solid ${G.border}`, background:G.white, cursor:"pointer", fontSize:15, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>−</button>
-                      <span style={{ minWidth:18, textAlign:"center", fontWeight:700, fontSize:14 }}>{qty[r.rid]||0}</span>
-                      <button onClick={()=>changeQty(r.rid,1)} style={{ width:26, height:26, borderRadius:6, border:"none", background:G.caramel, cursor:"pointer", fontSize:15, fontWeight:700, color:G.white, display:"flex", alignItems:"center", justifyContent:"center" }}>+</button>
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div style={{ padding:"16px 24px", borderTop:`1px solid ${G.border}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-          <span style={{ fontWeight:700, fontSize:16, color:G.caramel }}>{total > 0 ? `${total} AMD` : "—"}</span>
-          <div style={{ display:"flex", gap:10 }}>
-            <Btn variant="ghost" onClick={onClose}>{tl("Cancel")}</Btn>
-            {!pickup && addrMode==="other" ? (
-              <Btn onClick={()=>setStep(2)} disabled={!items.length||!mid}>{tl("Next →")}</Btn>
-            ) : (
-              <Btn onClick={()=>submit()} loading={saving} disabled={!canPlaceMain}>{tl("Place order")}</Btn>
-            )}
-          </div>
-        </div>
+            ))}
+          </FieldBlock>
+        )}
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -3122,61 +3167,61 @@ function EditOrderModal({ order, toast, onClose, onSaved }) {
   };
 
   return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
-      <div style={{ background:G.white, borderRadius:16, width:"100%", maxWidth:640, maxHeight:"90vh", display:"flex", flexDirection:"column", boxShadow:"0 20px 60px rgba(44,24,16,0.2)", animation:"fadeIn 0.2s ease" }}>
-        <div style={{ padding:"20px 24px", borderBottom:`1px solid ${G.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <h3 style={{ fontFamily:G.font, fontSize:18 }}>Order #{order.oid}</h3>
-          <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, cursor:"pointer", color:G.muted }}>×</button>
-        </div>
-        <div style={{ flex:1, overflowY:"auto", padding:24 }}>
-          {order.customer&&(
-            <p style={{ fontSize:13, color:G.muted, marginBottom:16 }}>
-              {order.customer.first_name} {order.customer.last_name}
-              {order.customer.email&&<> · {order.customer.email}</>}
-            </p>
-          )}
-          <table style={{ width:"100%", borderCollapse:"collapse" }}>
-            <thead>
-              <tr style={{ background:G.sand, borderBottom:`1px solid ${G.border}` }}>
-                {["Item",tl("Qty"),"Price / unit","Total"].map(h=>(
-                  <th key={h} style={{ padding:"8px 12px", textAlign:"left", fontSize:11, fontWeight:700, textTransform:"uppercase", color:G.muted, letterSpacing:"0.04em" }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((it,i)=>(
-                <tr key={it.oiid} style={{ borderBottom:`1px solid ${G.border}` }}>
-                  <td style={{ padding:"10px 12px", fontSize:14 }}>{it.name}</td>
-                  <td style={{ padding:"10px 12px" }}>
-                    <input type="number" value={it.qty} min={0} step="any"
-                      onChange={e=>updateItem(i,"qty",e.target.value)}
-                      style={{ width:80, padding:"5px 8px", borderRadius:6, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none", textAlign:"right" }}/>
-                  </td>
-                  <td style={{ padding:"10px 12px", fontSize:13, color:G.muted }}>
-                    {it.price} {it.currency||"AMD"}
-                  </td>
-                  <td style={{ padding:"10px 12px", fontSize:13, fontWeight:600, color:G.caramel, textAlign:"right" }}>
-                    {((parseFloat(it.qty)||0)*(parseFloat(it.price)||0)).toFixed(2)} {it.currency||"AMD"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div style={{ padding:"14px 24px", borderTop:`1px solid ${G.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <span style={{ fontFamily:G.font, fontSize:18, fontWeight:700, color:G.caramel }}>{total.toFixed(2)} AMD</span>
-          <div style={{ display:"flex", gap:10 }}>
-            <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
-            <Btn onClick={save} loading={saving}>Save</Btn>
-          </div>
-        </div>
-      </div>
-    </div>
+    <Modal title={`Order #${order.oid}`} onClose={onClose} className="max-w-2xl"
+      description={order.customer ? <>{order.customer.first_name} {order.customer.last_name}{order.customer.email&&<> · {order.customer.email}</>}</> : undefined}
+      footer={<>
+        <span className="font-bold font-heading text-brand text-lg tabular-nums">{total.toFixed(2)} AMD</span>
+        <div className="flex gap-2"><Btn variant="ghost" onClick={onClose}>Cancel</Btn><Btn onClick={save} loading={saving}>Save</Btn></div>
+      </>}>
+      <TableShell>
+        <Table>
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              {["Item",tl("Qty"),"Price / unit","Total"].map((h,i)=><SortHead key={h} label={h} sortable={false} className={i===3?"text-right":""}/>)}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {items.map((it,i)=>(
+              <TableRow key={it.oiid}>
+                <TableCell className={CELL}>{it.name}</TableCell>
+                <TableCell className={CELL}>
+                  <CInput type="number" value={it.qty} min={0} step="any" aria-label={`Quantity of ${it.name}`}
+                    onChange={e=>updateItem(i,"qty",e.target.value)} className="w-24 [&_input]:text-right"/>
+                </TableCell>
+                <TableCell className={`${CELL} text-muted-foreground tabular-nums`}>{it.price} {it.currency||"AMD"}</TableCell>
+                <TableCell className={`${CELL} text-right font-semibold text-brand tabular-nums`}>
+                  {((parseFloat(it.qty)||0)*(parseFloat(it.price)||0)).toFixed(2)} {it.currency||"AMD"}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </TableShell>
+    </Modal>
   );
 }
 
 // ─── QUICK SALE (walk-in sales in one step) ──────────────────────────────────
 // ─── CLOSING COUNT (inventory) ───────────────────────────────────────────────
+// One counted line (item or package) on the Closing count screen
+function CountRow({ tl, name, expected, value, changed, onDec, onInc, onChange, children }) {
+  return (
+    <div className={`border-b px-4 py-3 last:border-b-0 ${changed?"bg-accent/40":""}`}>
+      <div className="flex flex-wrap items-center gap-2.5">
+        <div className="min-w-0 flex-[1_1_160px]">
+          <div className="font-heading font-semibold text-base">{name}</div>
+          <div className="text-muted-foreground text-xs tabular-nums">{tl("Expected")}: {expected}</div>
+        </div>
+        <Button variant="outline" size="icon-lg" aria-label={`Count one less ${name}`} onClick={onDec}><MinusIcon/></Button>
+        <CInput type="number" inputMode="decimal" min="0" step="any" value={value} onChange={e=>onChange(e.target.value)} onFocus={e=>e.target.select()}
+          aria-label={`Counted ${name}`} className={`w-24 [&_input]:h-10 [&_input]:text-center [&_input]:font-bold [&_input]:text-lg ${changed?"border-brand":""}`}/>
+        <Button variant="outline" size="icon-lg" aria-label={`Count one more ${name}`} onClick={onInc}><PlusIcon/></Button>
+      </div>
+      {children}
+    </div>
+  );
+}
+
 function ClosingCountPage({ toast }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
@@ -3235,91 +3280,74 @@ function ClosingCountPage({ toast }) {
     finally { setSaving(false); }
   };
 
+  const nowLocal = new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16);
   return (
     <Page title={tl("Closing count")}>
       {loading ? <Spinner/> : (
-        <div style={{maxWidth:760}}>
-          <p style={{fontSize:13,color:G.muted,margin:"0 0 14px",lineHeight:1.5}}>{tl("Enter what is left of each item. Anything missing is recorded as sold; mark units as wasted if they were thrown away. Items you leave as they are stay unchanged.")}</p>
-          <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,overflow:"hidden"}}>
-            {countItems.length===0 && <div style={{padding:30,textAlign:"center",color:G.muted}}>{tl("No items with stock on hand.")}</div>}
+        <div className="flex max-w-[760px] flex-col gap-4">
+          <p className="text-muted-foreground text-sm leading-relaxed">{tl("Enter what is left of each item. Anything missing is recorded as sold; mark units as wasted if they were thrown away. Items you leave as they are stay unchanged.")}</p>
+          <Card className="overflow-hidden">
+            {countItems.length===0 && <div className="p-8 text-center text-muted-foreground">{tl("No items with stock on hand.")}</div>}
             {countItems.map(i=>{
               const d = cDiff(i), w = cWaste(i);
               return (
-                <div key={i.rid} style={{padding:"12px 16px",borderBottom:`1px solid ${G.border}`,background:d!==0?G.sand:"transparent"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-                    <div style={{flex:"1 1 160px",minWidth:0}}>
-                      <div style={{fontFamily:G.font,fontSize:16,fontWeight:600,color:G.dark}}>{i.name}</div>
-                      <div style={{fontSize:12,color:G.muted,fontFamily:G.mono}}>{tl("Expected")}: {fmtN(i.stock)}</div>
-                    </div>
-                    <button onClick={()=>stepCount(i,-1)} style={{width:40,height:40,borderRadius:10,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",fontSize:20}}>−</button>
-                    <input type="number" inputMode="decimal" min="0" step="any" value={counted[i.rid]===undefined?String(i.stock):counted[i.rid]} onChange={e=>setCount(i,e.target.value)} onFocus={e=>e.target.select()}
-                      style={{width:84,height:40,boxSizing:"border-box",textAlign:"center",fontSize:18,fontWeight:700,fontFamily:G.mono,borderRadius:10,border:`2px solid ${d!==0?G.caramel:G.border}`,background:G.white,color:G.dark,outline:"none"}}/>
-                    <button onClick={()=>stepCount(i,1)} style={{width:40,height:40,borderRadius:10,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",fontSize:20}}>+</button>
-                  </div>
+                <CountRow tl={tl} key={i.rid} name={i.name} expected={fmtN(i.stock)} changed={d!==0}
+                  value={counted[i.rid]===undefined?String(i.stock):counted[i.rid]} onChange={v=>setCount(i,v)}
+                  onDec={()=>stepCount(i,-1)} onInc={()=>stepCount(i,1)}>
                   {d>0 && (
-                    <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8,flexWrap:"wrap",fontSize:13}}>
-                      <span style={{color:G.dark}}>{fmtN(d-w)} {tl("sold")} · {(Math.max(0,d-w)*Number(i.price)).toLocaleString()} {i.currency}</span>
-                      <span style={{color:G.muted}}>·</span>
-                      <label style={{display:"flex",alignItems:"center",gap:6,color:G.muted}}>{tl("of which wasted")}
-                        <input type="number" inputMode="decimal" min="0" max={d} step="any" value={wasteQ[i.rid]===undefined?"":wasteQ[i.rid]} placeholder="0" onChange={e=>setWasteQ(m=>({...m,[i.rid]:e.target.value}))}
-                          style={{width:64,height:32,boxSizing:"border-box",textAlign:"center",fontFamily:G.mono,fontSize:14,borderRadius:8,border:`1px solid ${G.border}`,background:G.white,color:G.dark}}/>
+                    <div className="mt-2 flex flex-wrap items-center gap-2.5 text-sm">
+                      <span>{fmtN(d-w)} {tl("sold")} · {(Math.max(0,d-w)*Number(i.price)).toLocaleString()} {i.currency}</span>
+                      <span className="text-muted-foreground">·</span>
+                      <label className="flex items-center gap-1.5 text-muted-foreground">{tl("of which wasted")}
+                        <CInput type="number" inputMode="decimal" min="0" max={d} step="any" size="sm" value={wasteQ[i.rid]===undefined?"":wasteQ[i.rid]} placeholder="0"
+                          onChange={e=>setWasteQ(m=>({...m,[i.rid]:e.target.value}))} className="w-16 [&_input]:text-center"/>
                       </label>
                     </div>
                   )}
-                  {d<0 && <div style={{marginTop:8,fontSize:13,color:G.green}}>＋{fmtN(-d)} {tl("more than expected — stock will be raised")}</div>}
-                </div>
+                  {d<0 && <div className="mt-2 text-sm text-success-foreground">＋{fmtN(-d)} {tl("more than expected — stock will be raised")}</div>}
+                </CountRow>
               );
             })}
             {items.some(i=>i.stock<=0 && !extraRids.includes(i.rid)) && (
-              <div style={{padding:"12px 16px"}}>
-                <select value="" onChange={e=>{ if(e.target.value) setExtraRids(r=>[...r,Number(e.target.value)]); }}
-                  style={{padding:"9px 12px",borderRadius:8,border:`1px solid ${G.border}`,fontFamily:G.mono,fontSize:13,background:G.white,color:G.dark}}>
-                  <option value="">＋ {tl("Add another item…")}</option>
-                  {items.filter(i=>i.stock<=0 && !extraRids.includes(i.rid)).map(i=><option key={i.rid} value={i.rid}>{i.name}</option>)}
-                </select>
+              <div className="p-3">
+                <CSelect items={items.filter(i=>i.stock<=0 && !extraRids.includes(i.rid)).map(i=>({label:i.name,value:String(i.rid)}))} value={null}
+                  onValueChange={v=>{ if(v) setExtraRids(r=>[...r,Number(v)]); }}>
+                  <SelectTrigger className="w-auto min-w-56 text-muted-foreground"><span className="flex items-center gap-2"><PlusIcon className="size-4"/>{tl("Add another item…")}</span></SelectTrigger>
+                  <SelectPopup>{items.filter(i=>i.stock<=0 && !extraRids.includes(i.rid)).map(i=><SelectItem key={i.rid} value={String(i.rid)}>{i.name}</SelectItem>)}</SelectPopup>
+                </CSelect>
               </div>
             )}
-          </div>
+          </Card>
           {countPacks.length>0 && (
-            <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,overflow:"hidden",marginTop:16}}>
-              <div style={{padding:"10px 16px",fontSize:12,fontWeight:700,color:G.muted,background:G.sand}}>{tl("Packaging")}</div>
+            <Card className="overflow-hidden">
+              <div className="bg-muted px-4 py-2.5 font-semibold text-muted-foreground text-xs uppercase tracking-wider">{tl("Packaging")}</div>
               {countPacks.map(p=>{
                 const d = pDiff(p);
                 return (
-                  <div key={p.pid} style={{padding:"12px 16px",borderTop:`1px solid ${G.border}`,background:d!==0?G.sand:"transparent"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-                      <div style={{flex:"1 1 160px",minWidth:0}}>
-                        <div style={{fontFamily:G.font,fontSize:16,fontWeight:600,color:G.dark}}>{p.name}</div>
-                        <div style={{fontSize:12,color:G.muted,fontFamily:G.mono}}>{tl("Expected")}: {fmtN(p.stock)}</div>
-                      </div>
-                      <button onClick={()=>setPCounted(c=>({...c,[p.pid]:String(Math.max(0,pVal(p)-1))}))} style={{width:40,height:40,borderRadius:10,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",fontSize:20}}>−</button>
-                      <input type="number" inputMode="decimal" min="0" step="any" value={pCounted[p.pid]===undefined?String(p.stock):pCounted[p.pid]} onChange={e=>setPCounted(c=>({...c,[p.pid]:e.target.value}))} onFocus={e=>e.target.select()}
-                        style={{width:84,height:40,boxSizing:"border-box",textAlign:"center",fontSize:18,fontWeight:700,fontFamily:G.mono,borderRadius:10,border:`2px solid ${d!==0?G.caramel:G.border}`,background:G.white,color:G.dark,outline:"none"}}/>
-                      <button onClick={()=>setPCounted(c=>({...c,[p.pid]:String(pVal(p)+1)}))} style={{width:40,height:40,borderRadius:10,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",fontSize:20}}>+</button>
-                    </div>
-                    {d>0 && <div style={{marginTop:8,fontSize:13,color:G.dark}}>{fmtN(d)} {tl("used beyond the automatic write-off — recorded in Profit & Loss")}</div>}
-                    {d<0 && <div style={{marginTop:8,fontSize:13,color:G.green}}>＋{fmtN(-d)} {tl("more than expected — stock will be raised")}</div>}
-                  </div>
+                  <CountRow tl={tl} key={p.pid} name={p.name} expected={fmtN(p.stock)} changed={d!==0}
+                    value={pCounted[p.pid]===undefined?String(p.stock):pCounted[p.pid]} onChange={v=>setPCounted(c=>({...c,[p.pid]:v}))}
+                    onDec={()=>setPCounted(c=>({...c,[p.pid]:String(Math.max(0,pVal(p)-1))}))} onInc={()=>setPCounted(c=>({...c,[p.pid]:String(pVal(p)+1)}))}>
+                    {d>0 && <div className="mt-2 text-sm">{fmtN(d)} {tl("used beyond the automatic write-off — recorded in Profit & Loss")}</div>}
+                    {d<0 && <div className="mt-2 text-sm text-success-foreground">＋{fmtN(-d)} {tl("more than expected — stock will be raised")}</div>}
+                  </CountRow>
                 );
               })}
-            </div>
+            </Card>
           )}
-          <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,padding:18,marginTop:16}}>
-            <div style={{fontSize:14,color:G.dark,lineHeight:1.7}}>
-              {!cChanged ? <span style={{color:G.muted}}>{tl("No differences yet.")}</span> : (<>
-                {cSummary.sold>0 && <div>{tl("Sold")}: <b>{fmtN(cSummary.sold)}</b> · <b style={{color:G.caramel}}>{cSummary.revenue.toLocaleString()} {currency}</b></div>}
-                {cSummary.wasted>0 && <div>{tl("Wasted")}: <b>{fmtN(cSummary.wasted)}</b></div>}
-                {cSummary.surplus>0 && <div>{tl("Surplus added to stock")}: <b>{fmtN(cSummary.surplus)}</b></div>}
-              </>)}
-            </div>
-            <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:G.muted,margin:"12px 0 6px",cursor:"pointer"}}>
-              <input type="checkbox" checked={earlier} onChange={e=>setEarlier(e.target.checked)} style={{accentColor:G.caramel}}/>
-              {tl("Sold earlier")}
-            </label>
-            {earlier && <input type="datetime-local" value={soldAt} max={new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16)} onChange={e=>setSoldAt(e.target.value)}
-              style={{boxSizing:"border-box",padding:"8px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontFamily:G.mono,fontSize:13,marginBottom:8,background:G.white,color:G.dark}}/>}
-            <Btn style={{width:"100%",padding:"14px 0",fontSize:16,marginTop:6}} loading={saving} disabled={!cChanged||(earlier&&!soldAt)} onClick={saveCount}>{tl("Save count")}</Btn>
-          </div>
+          <Card>
+            <CardPanel className="flex flex-col gap-3">
+              <div className="text-sm leading-relaxed">
+                {!cChanged ? <span className="text-muted-foreground">{tl("No differences yet.")}</span> : (<>
+                  {cSummary.sold>0 && <div>{tl("Sold")}: <b>{fmtN(cSummary.sold)}</b> · <b className="text-brand">{cSummary.revenue.toLocaleString()} {currency}</b></div>}
+                  {cSummary.wasted>0 && <div>{tl("Wasted")}: <b>{fmtN(cSummary.wasted)}</b></div>}
+                  {cSummary.surplus>0 && <div>{tl("Surplus added to stock")}: <b>{fmtN(cSummary.surplus)}</b></div>}
+                </>)}
+              </div>
+              <Label className="cursor-pointer font-normal text-muted-foreground"><Checkbox checked={earlier} onCheckedChange={v=>setEarlier(!!v)}/>{tl("Sold earlier")}</Label>
+              {earlier && <CInput type="datetime-local" value={soldAt} max={nowLocal} onChange={e=>setSoldAt(e.target.value)} aria-label={tl("Sold earlier")} className="w-auto self-start"/>}
+              <Button size="xl" className="w-full" loading={saving} disabled={!cChanged||(earlier&&!soldAt)} onClick={saveCount}>{tl("Save count")}</Button>
+            </CardPanel>
+          </Card>
         </div>
       )}
     </Page>
@@ -3425,71 +3453,73 @@ function QuickSalePage({ toast }) {
     catch(e){ toast(e.message,"error"); }
   };
 
+  const nowLocal = new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16);
   return (
     <Page title={tl("Quick Sale")}>
       {loading ? <Spinner/> : (
-        <div style={{display:"flex",gap:20,alignItems:"flex-start",flexWrap:"wrap"}}>
+        <div className="flex flex-wrap items-start gap-5">
           {/* Tiles */}
-          <div style={{flex:"1 1 420px",minWidth:0}}>
-            <div style={{display:"flex",gap:8,marginBottom:14,alignItems:"stretch"}}>
-              <input value={filter} onChange={e=>setFilter(e.target.value)} placeholder={tl("Search items…")}
-                style={{flex:1,minWidth:0,boxSizing:"border-box",padding:"10px 14px",borderRadius:10,border:`1px solid ${G.border}`,fontSize:15,fontFamily:G.mono,outline:"none",background:G.white,color:G.dark}}/>
-              <button onClick={startListening} aria-label={listening?tl("Stop"):tl("Speak a sale")} title={listening?tl("Stop"):tl("Speak a sale")}
-                style={{width:52,borderRadius:10,border:`2px solid ${listening?G.red:G.caramel}`,background:listening?G.red:G.caramel,color:G.white,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",animation:listening?"pulse 1.2s ease-in-out infinite":"none"}}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/></svg>
-              </button>
+          <div className="min-w-0 flex-[1_1_420px]">
+            <div className="mb-3.5 flex items-stretch gap-2">
+              <SearchField value={filter} onChange={setFilter} placeholder={tl("Search items…")} className="flex-1"/>
+              <Button size="icon" variant={listening?"destructive":"default"} onClick={startListening}
+                aria-label={listening?tl("Stop"):tl("Speak a sale")} title={listening?tl("Stop"):tl("Speak a sale")}
+                style={{ animation:listening?"pulse 1.2s ease-in-out infinite":"none" }}>
+                {listening?<SquareIcon/>:<MicIcon/>}
+              </Button>
             </div>
             {(listening||voice)&&(
-              <div style={{background:G.white,border:`2px solid ${listening?G.red:G.caramel}`,borderRadius:12,padding:14,marginBottom:14}}>
-                {listening ? (
-                  <div>
-                    <div style={{fontSize:12,color:G.red,fontWeight:700,fontFamily:G.mono,marginBottom:4}}>● {tl("Listening…")}</div>
-                    <div style={{fontSize:16,color:G.dark,minHeight:22}}>{heard || <span style={{color:G.muted,fontStyle:"italic"}}>{vLang==="ru-RU"?"«Продал три булочки и два чизкейка»":"“Sold three buns and two cheesecakes”"}</span>}</div>
-                  </div>
-                ) : (
-                  <div>
-                    <div style={{fontSize:12,color:G.muted,fontFamily:G.mono,marginBottom:2}}>{tl("I heard")}</div>
-                    <div style={{fontSize:15,color:G.dark,fontStyle:"italic",marginBottom:10}}>“{voice.text}”</div>
-                    {voice.lines.length===0 && <p style={{fontSize:13,color:G.red,margin:"0 0 8px"}}>{tl("No items recognised. Try again or tap the items.")}</p>}
-                    {voice.lines.map(l=>{
-                      const it = items.find(i=>i.rid===l.rid);
-                      return (
-                        <div key={l.rid} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0"}}>
-                          <span style={{flex:1,fontSize:15,fontWeight:600,color:G.dark}}>{it?.name}</span>
-                          <button onClick={()=>voiceBump(l.rid,-1)} style={{width:32,height:32,borderRadius:8,border:`1px solid ${G.border}`,background:G.sand,cursor:"pointer",fontSize:16}}>−</button>
-                          <span style={{minWidth:24,textAlign:"center",fontFamily:G.mono,fontWeight:700}}>{l.qty}</span>
-                          <button onClick={()=>voiceBump(l.rid,1)} style={{width:32,height:32,borderRadius:8,border:`1px solid ${G.border}`,background:G.sand,cursor:"pointer",fontSize:16}}>+</button>
-                          <span style={{minWidth:84,textAlign:"right",fontFamily:G.mono,fontSize:13,color:G.caramel}}>{(l.qty*Number(it?.price||0)).toLocaleString()} {it?.currency}</span>
-                        </div>
-                      );
-                    })}
-                    {voice.missed.length>0 && <p style={{fontSize:12,color:G.red,margin:"8px 0 0"}}>{tl("Not recognised")}: {voice.missed.join(", ")}</p>}
-                    <div style={{display:"flex",gap:8,marginTop:12,flexWrap:"wrap"}}>
-                      <Btn loading={saving} disabled={!voice.lines.length} onClick={voiceSellNow}>{tl("Confirm sale")} · {voice.lines.reduce((s,l)=>s+l.qty*Number(items.find(i=>i.rid===l.rid)?.price||0),0).toLocaleString()} {currency}</Btn>
-                      <Btn variant="secondary" disabled={!voice.lines.length} onClick={voiceToCart}>{tl("Add to ticket")}</Btn>
-                      <Btn variant="ghost" onClick={()=>setVoice(null)}>{tl("Discard")}</Btn>
-                      <Btn variant="ghost" onClick={startListening}>{tl("Speak again")}</Btn>
+              <Card className={`mb-3.5 ${listening?"border-destructive/48":"border-brand/48"}`}>
+                <CardPanel className="p-4">
+                  {listening ? (
+                    <div>
+                      <div className="mb-1 font-bold text-destructive-foreground text-xs">● {tl("Listening…")}</div>
+                      <div className="min-h-[22px] text-base">{heard || <span className="text-muted-foreground italic">{vLang==="ru-RU"?"«Продал три булочки и два чизкейка»":"“Sold three buns and two cheesecakes”"}</span>}</div>
                     </div>
-                  </div>
-                )}
-              </div>
+                  ) : (
+                    <div>
+                      <div className="text-muted-foreground text-xs">{tl("I heard")}</div>
+                      <div className="mb-2.5 text-[15px] italic">“{voice.text}”</div>
+                      {voice.lines.length===0 && <p className="mb-2 text-destructive-foreground text-sm">{tl("No items recognised. Try again or tap the items.")}</p>}
+                      {voice.lines.map(l=>{
+                        const it = items.find(i=>i.rid===l.rid);
+                        return (
+                          <div key={l.rid} className="flex items-center gap-2 py-1">
+                            <span className="flex-1 font-semibold text-[15px]">{it?.name}</span>
+                            <QtyStepper value={l.qty} label={it?.name} onDec={()=>voiceBump(l.rid,-1)} onInc={()=>voiceBump(l.rid,1)}/>
+                            <span className="min-w-[84px] text-right text-brand text-sm tabular-nums">{(l.qty*Number(it?.price||0)).toLocaleString()} {it?.currency}</span>
+                          </div>
+                        );
+                      })}
+                      {voice.missed.length>0 && <p className="mt-2 text-destructive-foreground text-xs">{tl("Not recognised")}: {voice.missed.join(", ")}</p>}
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Btn loading={saving} disabled={!voice.lines.length} onClick={voiceSellNow}>{tl("Confirm sale")} · {voice.lines.reduce((s,l)=>s+l.qty*Number(items.find(i=>i.rid===l.rid)?.price||0),0).toLocaleString()} {currency}</Btn>
+                        <Btn variant="secondary" disabled={!voice.lines.length} onClick={voiceToCart}>{tl("Add to ticket")}</Btn>
+                        <Btn variant="ghost" onClick={()=>setVoice(null)}>{tl("Discard")}</Btn>
+                        <Btn variant="ghost" onClick={startListening}>{tl("Speak again")}</Btn>
+                      </div>
+                    </div>
+                  )}
+                </CardPanel>
+              </Card>
             )}
-            {shown.length===0 && <div style={{padding:40,textAlign:"center",color:G.muted}}>{tl("No items found")}</div>}
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:12}}>
+            {shown.length===0 && <div className="p-10 text-center text-muted-foreground">{tl("No items found")}</div>}
+            <div className="grid gap-3" style={{ gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))" }}>
               {shown.map(i=>{
                 const q = cart[i.rid]||0;
                 return (
-                  <div key={i.rid} onClick={()=>bump(i.rid,1)}
-                    style={{position:"relative",minHeight:96,padding:"12px 12px 10px",borderRadius:12,cursor:"pointer",userSelect:"none",WebkitTapHighlightColor:"transparent",
-                      background:q?G.sand:G.white,border:`2px solid ${q?G.caramel:G.border}`,display:"flex",flexDirection:"column",justifyContent:"space-between",transition:"border-color 0.1s, background 0.1s"}}>
-                    <div style={{fontFamily:G.font,fontSize:16,fontWeight:600,color:G.dark,lineHeight:1.2,paddingRight:q?34:0}}>{i.name}</div>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginTop:8}}>
-                      <span style={{fontSize:13,fontFamily:G.mono,color:G.caramel,fontWeight:600}}>{Number(i.price).toLocaleString()} {i.currency}</span>
-                      <span style={{fontSize:11,fontFamily:G.mono,color:i.stock>0?G.muted:G.red}}>{i.stock>0?`${fmtN(i.stock)} ${tl("in stock")}`:tl("no stock")}</span>
+                  <div key={i.rid} role="button" tabIndex={0} aria-label={`Add ${i.name}`} onClick={()=>bump(i.rid,1)}
+                    onKeyDown={e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); bump(i.rid,1); } }}
+                    className={`relative flex min-h-24 cursor-pointer select-none flex-col justify-between rounded-xl border-2 p-3 shadow-xs/5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring ${q?"border-brand bg-accent/60":"border-border bg-card hover:border-brand/40"}`}
+                    style={{ WebkitTapHighlightColor:"transparent" }}>
+                    <div className={`font-heading font-semibold text-base leading-tight ${q?"pe-9":""}`}>{i.name}</div>
+                    <div className="mt-2 flex items-end justify-between gap-1">
+                      <span className="font-semibold text-brand text-sm tabular-nums">{Number(i.price).toLocaleString()} {i.currency}</span>
+                      <span className={`text-[11px] ${i.stock>0?"text-muted-foreground":"text-destructive-foreground"}`}>{i.stock>0?`${fmtN(i.stock)} ${tl("in stock")}`:tl("no stock")}</span>
                     </div>
-                    {q>0 && <span style={{position:"absolute",top:8,right:8,minWidth:28,height:28,borderRadius:14,background:G.caramel,color:G.white,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,fontFamily:G.mono}}>{q}</span>}
-                    {q>0 && <button onClick={e=>{e.stopPropagation();bump(i.rid,-1);}} aria-label="minus"
-                      style={{position:"absolute",top:40,right:8,width:28,height:28,borderRadius:14,border:`1px solid ${G.border}`,background:G.white,color:G.dark,fontSize:16,cursor:"pointer",lineHeight:1}}>−</button>}
+                    {q>0 && <span className="absolute end-2 top-2 flex size-7 items-center justify-center rounded-full bg-brand font-bold text-brand-foreground text-sm tabular-nums">{q}</span>}
+                    {q>0 && <Button variant="outline" size="icon-xs" aria-label={`Remove one ${i.name}`} className="absolute end-2 top-10 rounded-full"
+                      onClick={e=>{e.stopPropagation();bump(i.rid,-1);}}><MinusIcon/></Button>}
                   </div>
                 );
               })}
@@ -3497,53 +3527,51 @@ function QuickSalePage({ toast }) {
           </div>
 
           {/* Ticket */}
-          <div style={{flex:"0 0 320px",maxWidth:"100%",position:"sticky",top:76}}>
-            <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,padding:18}}>
-              <h3 style={{fontFamily:G.font,fontSize:17,marginBottom:12,color:G.dark}}>{tl("Current sale")}</h3>
-              {lines.length===0 ? <p style={{fontSize:13,color:G.muted,fontStyle:"italic"}}>{tl("Tap items to add them.")}</p> : (
-                <>
-                  {lines.map(l=>(
-                    <div key={l.rid} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:`1px solid ${G.border}`}}>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:14,fontWeight:600,color:G.dark,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.name}</div>
-                        <div style={{fontSize:12,color:G.muted,fontFamily:G.mono}}>{(l.qty*Number(l.price)).toLocaleString()} {l.currency}</div>
+          <div className="flex max-w-full flex-[0_0_320px] flex-col gap-4 lg:sticky lg:top-[76px]">
+            <Card>
+              <CardHeader><CardTitle className="text-lg">{tl("Current sale")}</CardTitle></CardHeader>
+              <CardPanel className="pt-0">
+                {lines.length===0 ? <p className="text-muted-foreground text-sm italic">{tl("Tap items to add them.")}</p> : (
+                  <>
+                    {lines.map(l=>(
+                      <div key={l.rid} className="flex items-center gap-2 border-b py-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-semibold text-sm">{l.name}</div>
+                          <div className="text-muted-foreground text-xs tabular-nums">{(l.qty*Number(l.price)).toLocaleString()} {l.currency}</div>
+                        </div>
+                        <QtyStepper value={l.qty} label={l.name} onDec={()=>bump(l.rid,-1)} onInc={()=>bump(l.rid,1)}/>
                       </div>
-                      <button onClick={()=>bump(l.rid,-1)} style={{width:32,height:32,borderRadius:8,border:`1px solid ${G.border}`,background:G.sand,cursor:"pointer",fontSize:16}}>−</button>
-                      <span style={{minWidth:22,textAlign:"center",fontFamily:G.mono,fontWeight:700}}>{l.qty}</span>
-                      <button onClick={()=>bump(l.rid,1)} style={{width:32,height:32,borderRadius:8,border:`1px solid ${G.border}`,background:G.sand,cursor:"pointer",fontSize:16}}>+</button>
+                    ))}
+                    <div className="flex justify-between pt-3 pb-1 font-bold text-lg">
+                      <span>{tl("Total")}</span><span className="text-brand tabular-nums">{total.toLocaleString()} {currency}</span>
                     </div>
-                  ))}
-                  <div style={{display:"flex",justifyContent:"space-between",fontWeight:700,fontSize:18,padding:"12px 0 4px"}}>
-                    <span>{tl("Total")}</span><span style={{color:G.caramel}}>{total.toLocaleString()} {currency}</span>
-                  </div>
-                </>
-              )}
-              <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:G.muted,margin:"10px 0 6px",cursor:"pointer"}}>
-                <input type="checkbox" checked={earlier} onChange={e=>setEarlier(e.target.checked)} style={{accentColor:G.caramel}}/>
-                {tl("Sold earlier")}
-              </label>
-              {earlier && <input type="datetime-local" value={soldAt} max={new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16)} onChange={e=>setSoldAt(e.target.value)}
-                style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontFamily:G.mono,fontSize:13,marginBottom:8,background:G.white,color:G.dark}}/>}
-              <Btn style={{width:"100%",padding:"14px 0",fontSize:16,marginTop:6}} loading={saving} disabled={!lines.length||(earlier&&!soldAt)} onClick={sell}>{tl("Sold")}</Btn>
-              {lines.length>0 && <button onClick={()=>setCart({})} style={{width:"100%",marginTop:8,background:"none",border:"none",color:G.muted,fontSize:13,cursor:"pointer",fontFamily:G.mono}}>{tl("Clear")}</button>}
-            </div>
+                  </>
+                )}
+                <Label className="mt-3 mb-1.5 cursor-pointer font-normal text-muted-foreground"><Checkbox checked={earlier} onCheckedChange={v=>setEarlier(!!v)}/>{tl("Sold earlier")}</Label>
+                {earlier && <CInput type="datetime-local" value={soldAt} max={nowLocal} onChange={e=>setSoldAt(e.target.value)} aria-label={tl("Sold earlier")} className="mb-2"/>}
+                <Button size="xl" className="mt-1.5 w-full" loading={saving} disabled={!lines.length||(earlier&&!soldAt)} onClick={sell}>{tl("Sold")}</Button>
+                {lines.length>0 && <Button variant="ghost" size="sm" className="mt-2 w-full text-muted-foreground" onClick={()=>setCart({})}>{tl("Clear")}</Button>}
+              </CardPanel>
+            </Card>
 
             {recent.length>0 && (
-              <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,padding:18,marginTop:16}}>
-                <h3 style={{fontFamily:G.font,fontSize:15,marginBottom:8,color:G.dark}}>{tl("Recent sales")}</h3>
-                {recent.map(o=>{
-                  const undone = o.status==="Declined";
-                  return (
-                    <div key={o.oid} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:`1px solid ${G.border}`,opacity:undone?0.45:1}}>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:13,color:G.dark,textDecoration:undone?"line-through":"none"}}>{(o.items||[]).map(it=>`${it.qty} × ${it.name}`).join(", ")}</div>
-                        <div style={{fontSize:11,color:G.muted,fontFamily:G.mono}}>{new Date(o.created_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",hour12:false})} · {Number(o.total).toLocaleString()} {currency}</div>
+              <Card>
+                <CardHeader><CardTitle className="text-base">{tl("Recent sales")}</CardTitle></CardHeader>
+                <CardPanel className="pt-0">
+                  {recent.map(o=>{
+                    const undone = o.status==="Declined";
+                    return (
+                      <div key={o.oid} className={`flex items-center gap-2 border-b py-2 last:border-b-0 ${undone?"opacity-45":""}`}>
+                        <div className="min-w-0 flex-1">
+                          <div className={`text-[13px] ${undone?"line-through":""}`}>{(o.items||[]).map(it=>`${it.qty} × ${it.name}`).join(", ")}</div>
+                          <div className="text-[11px] text-muted-foreground tabular-nums">{new Date(o.created_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",hour12:false})} · {Number(o.total).toLocaleString()} {currency}</div>
+                        </div>
+                        {!undone && <Button variant="outline" size="xs" className="text-destructive-foreground" onClick={()=>undo(o.oid)}><Undo2Icon/>{tl("Undo")}</Button>}
                       </div>
-                      {!undone && <button onClick={()=>undo(o.oid)} style={{background:"none",border:`1px solid ${G.border}`,borderRadius:8,padding:"4px 10px",fontSize:12,color:G.red,cursor:"pointer",fontFamily:G.mono}}>{tl("Undo")}</button>}
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </CardPanel>
+              </Card>
             )}
           </div>
         </div>
@@ -3812,11 +3840,12 @@ function PackagingPage({ toast, onBack }) {
 // Segmented toggle used by the Orders and Inventory hubs
 function SegToggle({ options, value, onChange }) {
   return (
-    <div style={{display:"inline-flex",border:`1px solid ${G.border}`,borderRadius:10,overflow:"hidden"}}>
+    <SegmentedControl role="tablist">
       {options.map(([k,l])=>(
-        <button key={k} onClick={()=>onChange(k)} style={{padding:"9px 20px",border:"none",cursor:"pointer",fontSize:14,fontFamily:G.mono,background:value===k?G.caramel:G.white,color:value===k?G.white:G.muted}}>{l}</button>
+        <SegmentedControlItem key={k} role="tab" aria-selected={value===k} data-checked={value===k?"":undefined}
+          onClick={()=>onChange(k)} className="px-4">{l}</SegmentedControlItem>
       ))}
-    </div>
+    </SegmentedControl>
   );
 }
 
@@ -4079,7 +4108,6 @@ function OrdersManufPage({
 
   // filter = statuses that ARE shown (all by default)
   const [filter, setFilter] = useState(statuses);
-  const [statusOpen, setStatusOpen] = useState(false);
   const toggleStatus = s => setFilter(p => p.includes(s) ? p.filter(x=>x!==s) : [...p, s]);
   const allSelected = filter.length === statuses.length;
 
@@ -4148,17 +4176,6 @@ function OrdersManufPage({
     return `${d}-${m}-${y}`;
   }
 
-  const DatePicker = ({value, onChange, min, max}) => (
-    <div style={{ position:"relative", display:"inline-flex", alignItems:"center" }}>
-      <input type="date" value={value} min={min} max={max}
-        onChange={e=>onChange(e.target.value)}
-        style={{ padding:"6px 10px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none", colorScheme:"light", cursor:"pointer" }}
-        onFocus={e=>e.target.style.borderColor=G.caramel}
-        onBlur={e=>e.target.style.borderColor=G.border}
-      />
-    </div>
-  );
-
   // Search debounce ref — 2 second delay as per spec
   const searchRef = useRef(null);
   const [searchInput, setSearchInput] = useState("");
@@ -4169,80 +4186,43 @@ function OrdersManufPage({
   },[searchInput]);
 
   // Kanban/Table toggle
+  const switchView = k => { setView(k); if (k==="kanban") { setDateFrom(todayStr()); setDateTo(todayStr()); } setPage(0); };
   const ViewToggle = () => (
-    <div style={{ display:"flex", borderRadius:8, border:`1px solid ${G.border}`, overflow:"hidden" }}>
-      {[{k:"kanban",icon:"⊞"},{k:"table",icon:"☰"}].map(({k,icon})=>(
-        <button key={k} onClick={()=>{
-          setView(k);
-          if (k==="kanban") { setDateFrom(todayStr()); setDateTo(todayStr()); }
-          setPage(0);
-        }} title={k} style={{
-          padding:"5px 11px", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:15,
-          background:view===k?G.caramel:G.white, color:view===k?G.white:G.muted, transition:"all 0.15s"
-        }}>{icon}</button>
-      ))}
-    </div>
+    <SegmentedControl aria-label="View">
+      <SegmentedControlItem data-checked={view==="kanban"?"":undefined} onClick={()=>switchView("kanban")} aria-label="Board" title="Board" className="px-2"><LayoutGridIcon className="size-4"/></SegmentedControlItem>
+      <SegmentedControlItem data-checked={view==="table"?"":undefined} onClick={()=>switchView("table")} aria-label="List" title="List" className="px-2"><ListIcon className="size-4"/></SegmentedControlItem>
+    </SegmentedControl>
   );
 
   const StatusDropdown = () => (
-    <div style={{ position:"relative" }}>
-      <button onClick={()=>setStatusOpen(p=>!p)} style={{
-        display:"flex", alignItems:"center", gap:6, padding:"6px 12px",
-        borderRadius:8, border:`1px solid ${G.border}`, background:G.white,
-        fontFamily:G.mono, fontSize:13, cursor:"pointer", color:G.dark, whiteSpace:"nowrap"
-      }}>
-        Status{!allSelected ? ` (${filter.length}/${statuses.length})` : ""}
-        <span style={{ fontSize:10, color:G.muted }}>▾</span>
-      </button>
-      {statusOpen && (
-        <>
-          <div onClick={()=>setStatusOpen(false)} style={{ position:"fixed", inset:0, zIndex:149 }} />
-          <div style={{
-            position:"absolute", top:"calc(100% + 6px)", right:0, background:G.white,
-            border:`1px solid ${G.border}`, borderRadius:10, boxShadow:"0 8px 24px rgba(44,24,16,0.12)",
-            zIndex:150, minWidth:180, overflow:"hidden", animation:"fadeIn 0.15s ease"
-          }}>
-            {/* Select all / none */}
-            <button onClick={()=>{ setFilter(allSelected ? [] : [...statuses]); setPage(0); }}
-              style={{ width:"100%", textAlign:"left", padding:"9px 14px", background:"none", border:"none", borderBottom:`1px solid ${G.border}`, cursor:"pointer", fontFamily:G.mono, fontSize:12, fontWeight:700, color:G.muted }}
-              onMouseEnter={e=>e.currentTarget.style.background=G.sand}
-              onMouseLeave={e=>e.currentTarget.style.background="none"}>
-              {allSelected ? "Deselect all" : "Select all"}
-            </button>
-            {statuses.map(s=>{
-              const checked = filter.includes(s);
-              return (
-                <label key={s} style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 14px", cursor:"pointer" }}
-                  onMouseEnter={e=>e.currentTarget.style.background=G.sand}
-                  onMouseLeave={e=>e.currentTarget.style.background="none"}>
-                  <input type="checkbox" checked={checked}
-                    onChange={()=>{ toggleStatus(s); setPage(0); }}
-                    style={{ accentColor:G.caramel, width:14, height:14 }} />
-                  <span style={{ fontSize:13, color:G.dark, fontWeight:checked?500:400 }}>{tl(s)}</span>
-                </label>
-              );
-            })}
-          </div>
-        </>
-      )}
-    </div>
+    <Menu>
+      <MenuTrigger className={buttonVariants({ variant:"outline", size:"sm" })}>
+        <ListFilterIcon/>{tl("Status")}{!allSelected ? ` (${filter.length}/${statuses.length})` : ""}
+      </MenuTrigger>
+      <MenuPopup align="end" className="min-w-48">
+        <MenuItem closeOnClick={false} onClick={()=>{ setFilter(allSelected ? [] : [...statuses]); setPage(0); }} className="font-medium text-muted-foreground">
+          {allSelected ? "Deselect all" : "Select all"}
+        </MenuItem>
+        <MenuSeparator/>
+        {statuses.map(st=>(
+          <MenuCheckboxItem key={st} checked={filter.includes(st)} closeOnClick={false} onCheckedChange={()=>{ toggleStatus(st); setPage(0); }}>
+            {tl(st)}
+          </MenuCheckboxItem>
+        ))}
+      </MenuPopup>
+    </Menu>
   );
 
   const toolbar = (
-    <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"nowrap" }}>
+    <div className="flex flex-wrap items-center gap-2">
       <Btn size="sm" onClick={()=>setShowNewOrder(true)}>{tl("+ Order")}</Btn>
-      <div style={{ position:"relative", display:"inline-flex", alignItems:"center" }}>
-        <input value={searchInput} onChange={e=>setSearchInput(e.target.value)} placeholder={tl("Search")+"…"}
-          style={{ padding:"6px 28px 6px 10px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, width:160, outline:"none" }}
-          onFocus={e=>e.target.style.borderColor=G.caramel} onBlur={e=>e.target.style.borderColor=G.border} />
-        {searchInput&&<button onClick={()=>{setSearchInput("");setSearch("");setPage(0);}} style={{ position:"absolute", right:6, background:"none", border:"none", cursor:"pointer", color:G.muted, fontSize:14, lineHeight:1, padding:0 }}>×</button>}
-      </div>
-      <span style={{ fontSize:12, color:G.muted }}>{tl("From")}</span>
-      <DatePicker value={dateFrom} max={dateTo} onChange={v=>{setDateFrom(v);setPage(0);}} />
-      <span style={{ fontSize:12, color:G.muted }}>{tl("To")}</span>
-      <DatePicker value={dateTo} min={dateFrom} onChange={v=>{setDateTo(v);setPage(0);}} />
-      <ViewToggle />
-      <StatusDropdown />
+      <SearchField value={searchInput} onChange={setSearchInput} onClear={()=>{setSearchInput("");setSearch("");setPage(0);}} placeholder={tl("Search")+"…"}/>
+      <span className="text-muted-foreground text-xs">{tl("From")}</span>
+      <DateField label={tl("From")} value={dateFrom} max={dateTo} onChange={v=>{setDateFrom(v);setPage(0);}} />
+      <span className="text-muted-foreground text-xs">{tl("To")}</span>
+      <DateField label={tl("To")} value={dateTo} min={dateFrom} onChange={v=>{setDateTo(v);setPage(0);}} />
+      {ViewToggle()}
+      {StatusDropdown()}
     </div>
   );
 
@@ -4265,109 +4245,81 @@ function OrdersManufPage({
       )}
       {loading ? <Spinner/> : view==="kanban" ? (
         // ── KANBAN ────────────────────────────────────────────────────────────
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(240px, 1fr))", gap:14 }}>
+        <div className="grid gap-3.5" style={{ gridTemplateColumns:"repeat(auto-fill, minmax(240px, 1fr))" }}>
           {KANBAN_ORDER.filter(status=>filter.includes(status)).map(status=>{
             const cfg=STATUS_CONFIG[status]; const col=searched.filter(o=>o.status===status);
             return (
-              <div key={status} style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, overflow:"hidden" }}>
-                <div style={{ padding:"10px 14px", background:cfg.bg, borderBottom:`2px solid ${cfg.color}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                  <span style={{ fontSize:13, fontWeight:700, color:cfg.color, letterSpacing:"0.04em" }}>{tl(status.toUpperCase())}</span>
-                  <span style={{ fontSize:12, color:cfg.color, background:G.white, padding:"2px 8px", borderRadius:20, fontWeight:700 }}>{col.length}</span>
+              <Card key={status} className="overflow-hidden">
+                <div className="flex items-center justify-between px-3.5 py-2.5" style={{ background:cfg.bg, borderBottom:`2px solid ${cfg.color}` }}>
+                  <span className="font-bold text-[13px] tracking-wide" style={{ color:cfg.color }}>{tl(status.toUpperCase())}</span>
+                  <span className="rounded-full bg-card px-2 py-0.5 font-bold text-xs tabular-nums" style={{ color:cfg.color }}>{col.length}</span>
                 </div>
-                <div style={{ padding:10, display:"flex", flexDirection:"column", gap:8, minHeight:80 }}>
+                <div className="flex min-h-20 flex-col gap-2 p-2.5">
                   {col.map(o=>(
-                    <div key={o.oid} style={{ padding:12, borderRadius:10, border:`1px solid ${G.border}`, background:G.cream, fontSize:13 }}>
-                      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
-                        <span style={{ fontWeight:700 }}>#{o.oid}{o.prid?` | ${tl("Run")} ${o.prid}`:""}</span>
-                        <span style={{ color:G.muted, fontSize:11 }}>{new Date(o.created_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span>
+                    <div key={o.oid} className="rounded-xl border bg-background p-3 text-[13px]">
+                      <div className="mb-1 flex justify-between">
+                        <span className="font-bold">#{o.oid}{o.prid?` | ${tl("Run")} ${o.prid}`:""}</span>
+                        <span className="text-[11px] text-muted-foreground tabular-nums">{new Date(o.created_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span>
                       </div>
-                      <p style={{ color:G.muted, fontSize:12, marginBottom:6 }}>{o.customer?.first_name} {o.customer?.last_name}</p>
-                      <div style={{ marginBottom:8 }}>{(o.items||[]).map((it,i)=><div key={i} style={{fontSize:12}}>{it.qty}× {it.name}</div>)}</div>
-                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", borderTop:`1px solid ${G.border}`, paddingTop:8 }}>
-                        <span style={{ fontWeight:700, color:G.caramel }}>{(o.items||[]).reduce((s,it)=>s+it.qty*it.price,0)} AMD</span>
-                        <span style={{ fontSize:11, color:G.muted }}>{o.is_boa?"Board of Arrivals · "+(o.fulfillment==='delivery'?tl("Delivery"):tl("Pickup (free)")):o.fulfillment==='stock'?tl("Stock"):o.pickup?tl("Pickup (free)"):tl("Delivery")}</span>
+                      <p className="mb-1.5 text-muted-foreground text-xs">{o.customer?.first_name} {o.customer?.last_name}</p>
+                      <div className="mb-2">{(o.items||[]).map((it,i)=><div key={i} className="text-xs">{it.qty}× {it.name}</div>)}</div>
+                      <div className="flex items-center justify-between gap-2 border-t pt-2">
+                        <span className="font-bold text-brand tabular-nums">{(o.items||[]).reduce((s,it)=>s+it.qty*it.price,0)} AMD</span>
+                        <span className="text-right text-[11px] text-muted-foreground">{o.is_boa?"Board of Arrivals · "+(o.fulfillment==='delivery'?tl("Delivery"):tl("Pickup (free)")):o.fulfillment==='stock'?tl("Stock"):o.pickup?tl("Pickup (free)"):tl("Delivery")}</span>
                       </div>
                       {(cfg.next && !(o.status==="Done" && o.allNonDeliverable))&&(
-                        <div style={{ display:"flex", gap:4, marginTop:8 }}>
-                          <Btn size="sm" onClick={()=>advance(o.oid)} style={{flex:1,fontSize:11,padding:"5px 0"}}>{tl(cfg.next)}</Btn>
+                        <div className="mt-2 flex gap-1">
+                          <Button size="xs" className="flex-1" onClick={()=>advance(o.oid)}>{tl(cfg.next)}</Button>
                           {o.status==="Accepted"&&(
-                            <Btn size="sm" variant="secondary" onClick={()=>setEditOrder(o)} style={{fontSize:11,padding:"5px 10px"}}>✎</Btn>
+                            <Button size="icon-xs" variant="outline" aria-label={`Edit order ${o.oid}`} onClick={()=>setEditOrder(o)}><PencilIcon/></Button>
                           )}
-                          {cfg.canDecline&&<Btn variant="danger" size="sm" onClick={()=>{setPending(o.oid);setDialog("decline");}} style={{fontSize:11,padding:"5px 10px"}}>✕</Btn>}
+                          {cfg.canDecline&&<Button size="icon-xs" variant="destructive" aria-label={`Decline order ${o.oid}`} onClick={()=>{setPending(o.oid);setDialog("decline");}}><XIcon/></Button>}
                         </div>
                       )}
                     </div>
                   ))}
-                  {col.length===0&&<div style={{padding:16,textAlign:"center",color:G.muted,fontSize:12}}>{tl("Empty")}</div>}
+                  {col.length===0&&<div className="p-4 text-center text-muted-foreground text-xs">{tl("Empty")}</div>}
                 </div>
-              </div>
+              </Card>
             );
           })}
         </div>
       ) : (
         // ── TABLE ─────────────────────────────────────────────────────────────
         <>
-          <div style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, overflow:"hidden", marginBottom:14 }}>
-            <table style={{ width:"100%", borderCollapse:"collapse" }}>
-              <thead>
-                <tr style={{ background:G.sand, borderBottom:`1px solid ${G.border}` }}>
-                  {TABLE_COLS.map(c=>(
-                    <th key={c.key} onClick={()=>toggleSort(c.key)} style={{
-                      padding:"11px 16px", textAlign:"left", fontSize:12, fontWeight:700,
-                      letterSpacing:"0.05em", textTransform:"uppercase", color:G.muted,
-                      cursor:"pointer", userSelect:"none", whiteSpace:"nowrap"
-                    }}>
-                      {tl(c.label)}{sortKey===c.key&&<span style={{marginLeft:4}}>{sortDir==="asc"?"↑":"↓"}</span>}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
+          <TableShell>
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  {TABLE_COLS.map(c=><SortHead key={c.key} label={tl(c.label)} active={sortKey===c.key} dir={sortDir} onClick={()=>toggleSort(c.key)}/>)}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {paged.length===0?(
-                  <tr><td colSpan={TABLE_COLS.length} style={{padding:40,textAlign:"center",color:G.muted}}>{tl("No orders found.")}</td></tr>
-                ):paged.map((o,i)=>{
+                  <TableRow className="hover:bg-transparent"><TableCell colSpan={TABLE_COLS.length} className="py-10 text-center text-muted-foreground">{tl("No orders found.")}</TableCell></TableRow>
+                ):paged.map(o=>{
                   const cfg=STATUS_CONFIG[o.status]||STATUS_CONFIG.New;
                   const d=new Date(o.created_at);
                   const dateStr=`${String(d.getDate()).padStart(2,"0")}-${String(d.getMonth()+1).padStart(2,"0")}-${d.getFullYear()}`;
                   return (
-                    <tr key={o.oid} style={{ borderBottom:i<paged.length-1?`1px solid ${G.border}`:"none", transition:"background 0.1s" }}
-                      onMouseEnter={e=>e.currentTarget.style.background=G.sand}
-                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                      <td style={{padding:"11px 16px",fontSize:14,fontWeight:700}}>#{o.oid}</td>
-                      <td style={{padding:"11px 16px",fontSize:13,color:G.muted}}>{dateStr}</td>
-                      <td style={{padding:"11px 16px",fontSize:14}}>{o.customer?.first_name}</td>
-                      <td style={{padding:"11px 16px",fontSize:14}}>{o.customer?.last_name}</td>
-                      <td style={{padding:"11px 16px"}}>
-                        <span style={{padding:"3px 10px",borderRadius:20,fontSize:12,fontWeight:700,background:cfg.bg,color:cfg.color}}>{tl(o.status)}</span>
-                      </td>
-                      <td style={{padding:"11px 16px",fontSize:14,fontWeight:700,color:G.caramel}}>{o.total} AMD</td>
-                    </tr>
+                    <TableRow key={o.oid}>
+                      <TableCell className={`${CELL} font-bold`}>#{o.oid}</TableCell>
+                      <TableCell className={`${CELL} text-muted-foreground tabular-nums`}>{dateStr}</TableCell>
+                      <TableCell className={CELL}>{o.customer?.first_name}</TableCell>
+                      <TableCell className={CELL}>{o.customer?.last_name}</TableCell>
+                      <TableCell className={CELL}>
+                        <span className="rounded-full px-2.5 py-0.5 font-bold text-xs" style={{background:cfg.bg,color:cfg.color}}>{tl(o.status)}</span>
+                      </TableCell>
+                      <TableCell className={`${CELL} font-bold text-brand tabular-nums`}>{o.total} AMD</TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Pagination */}
-          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:10 }}>
-            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-              <span style={{ fontSize:13, color:G.muted }}>{tl("Rows per page:")}</span>
-              {[10,25,50,100].map(n=>(
-                <button key={n} onClick={()=>{setPageSize(n);setPage(0);}} style={{
-                  padding:"4px 10px", borderRadius:6, border:`1px solid ${pageSize===n?G.caramel:G.border}`,
-                  background:pageSize===n?G.caramel:G.white, color:pageSize===n?G.white:G.muted,
-                  fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:G.mono
-                }}>{n}</button>
-              ))}
-            </div>
-            <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-              <span style={{ fontSize:13, color:G.muted }}>{sorted.length} order{sorted.length!==1?"s":""} · page {totalPages?page+1:0}/{totalPages}</span>
-              <button onClick={()=>setPage(0)} disabled={page===0} style={{ padding:"4px 8px", borderRadius:6, border:`1px solid ${G.border}`, background:G.white, cursor:page===0?"not-allowed":"pointer", fontSize:13, opacity:page===0?0.4:1 }}>«</button>
-              <button onClick={()=>setPage(p=>Math.max(0,p-1))} disabled={page===0} style={{ padding:"4px 8px", borderRadius:6, border:`1px solid ${G.border}`, background:G.white, cursor:page===0?"not-allowed":"pointer", fontSize:13, opacity:page===0?0.4:1 }}>‹</button>
-              <button onClick={()=>setPage(p=>Math.min(totalPages-1,p+1))} disabled={page>=totalPages-1} style={{ padding:"4px 8px", borderRadius:6, border:`1px solid ${G.border}`, background:G.white, cursor:page>=totalPages-1?"not-allowed":"pointer", fontSize:13, opacity:page>=totalPages-1?0.4:1 }}>›</button>
-              <button onClick={()=>setPage(totalPages-1)} disabled={page>=totalPages-1} style={{ padding:"4px 8px", borderRadius:6, border:`1px solid ${G.border}`, background:G.white, cursor:page>=totalPages-1?"not-allowed":"pointer", fontSize:13, opacity:page>=totalPages-1?0.4:1 }}>»</button>
-            </div>
-          </div>
+              </TableBody>
+            </Table>
+          </TableShell>
+          <TablePager total={sorted.length} page={page} pageCount={totalPages} pageSize={pageSize}
+            onPage={setPage} onPageSize={n=>{setPageSize(n);setPage(0);}}
+            label={`${sorted.length} order${sorted.length!==1?"s":""} · page ${totalPages?page+1:0}/${totalPages}`}/>
         </>
       )}
       <ProductionChart toast={toast}/>
