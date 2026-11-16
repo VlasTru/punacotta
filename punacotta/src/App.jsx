@@ -11,7 +11,7 @@ import { Field, FieldLabel, FieldDescription } from "@/components/ui/field";
 import { Card, CardHeader, CardTitle, CardDescription, CardAction, CardPanel, CardFooter } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Radio, RadioGroup } from "@/components/ui/radio-group";
-import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { Alert, AlertTitle, AlertDescription, AlertAction } from "@/components/ui/alert";
 import { Badge as CBadge } from "@/components/ui/badge";
 import { Select as CSelect, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "@/components/ui/select";
 import { Kbd } from "@/components/ui/kbd";
@@ -20,7 +20,9 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog as CDialog, DialogPopup, DialogHeader, DialogTitle, DialogDescription, DialogPanel, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { ImageIcon, ImageUpIcon, Trash2Icon, CheckIcon, MicIcon, SquareIcon, Undo2Icon, LayoutGridIcon, ListIcon, ListFilterIcon, PencilIcon, ArrowDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, ChevronsLeftIcon, ChevronsRightIcon, ChevronsUpDownIcon, MinusIcon, PlusIcon } from "lucide-react";
+import { Sheet, SheetPopup, SheetHeader, SheetTitle, SheetPanel } from "@/components/ui/sheet";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { CopyIcon, ImageIcon, ImageUpIcon, Trash2Icon, CheckIcon, MicIcon, SquareIcon, Undo2Icon, LayoutGridIcon, ListIcon, ListFilterIcon, PencilIcon, ArrowDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, ChevronsLeftIcon, ChevronsRightIcon, ChevronsUpDownIcon, MinusIcon, PlusIcon } from "lucide-react";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator, MenuRadioGroup, MenuRadioItem, MenuCheckboxItem } from "@/components/ui/menu";
 import { AlertDialog, AlertDialogPopup, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from "@/components/ui/alert-dialog";
 import { ArrowLeftIcon, ChefHatIcon, MailCheckIcon, PartyPopperIcon, StoreIcon, TriangleAlertIcon, BellIcon, ChevronDownIcon, CircleAlertIcon, CircleCheckIcon, CircleUserIcon, ClockIcon, GlobeIcon, InfoIcon, Link2Icon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SettingsIcon, SunIcon, XIcon } from "lucide-react";
@@ -2448,10 +2450,10 @@ function MenuCalendar({ menus, storeSchedule=DEFAULT_STORE }) {
   const menusWithHours = menus.filter(m=>m.hours_from&&m.hours_until&&m.hours_days?.length);
 
   return (
-    <div style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, overflow:"hidden", marginTop:32 }}>
-      <div style={{ padding:"16px 20px", borderBottom:`1px solid ${G.border}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-        <h3 style={{ fontFamily:G.font, fontSize:17 }}>Weekly Schedule</h3>
-        <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
+    <Card className="mt-8 overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
+        <h3 className="font-heading font-semibold text-lg">Weekly Schedule</h3>
+        <div className="flex flex-wrap gap-2.5">
           {menusWithHours.map((m,i)=>{
             const c=MENU_COLORS[i%MENU_COLORS.length];
             return <span key={m.mid} style={{ fontSize:12, padding:"3px 10px", borderRadius:20, background:c.bg, color:c.text, border:`1px solid ${c.border}`, fontWeight:600 }}>{m.name}</span>;
@@ -2531,11 +2533,40 @@ function MenuCalendar({ menus, storeSchedule=DEFAULT_STORE }) {
         </div>
       </div>
       {menusWithHours.length===0&&(
-        <div style={{ padding:"20px 20px 20px 20px", fontSize:13, color:G.muted }}>
+        <div className="p-5 text-muted-foreground text-sm">
           No menus have availability hours set yet. Open a menu and set its hours to see them here.
         </div>
       )}
-    </div>
+    </Card>
+  );
+}
+
+// Side panel listing items to add to a menu (category filter + checkboxes)
+function MenuItemsSheet({ open, onClose, cats, cat, setCat, recs, isChecked, onToggle }) {
+  return (
+    <Sheet open={open} onOpenChange={o=>{ if(!o) onClose(); }}>
+      <SheetPopup side="right" showCloseButton={false} className="w-[min(360px,100vw)]">
+        <SheetHeader className="flex-row items-center justify-between">
+          <SheetTitle className="font-heading text-lg">Items</SheetTitle>
+          <Button variant="ghost" size="icon" aria-label="Close" onClick={onClose}><XIcon/></Button>
+        </SheetHeader>
+        <SheetPanel className="flex flex-col gap-4">
+          <Select label="Category" value={cat} onChange={setCat} options={cats} placeholder="All categories" />
+          <div className="flex flex-col gap-1.5">
+            {recs.map(r=>{
+              const on = isChecked(r);
+              return (
+                <Label key={r.rid} className={`cursor-pointer rounded-lg border px-3 py-2.5 font-normal ${on?"border-brand/50 bg-accent/50":"border-transparent hover:bg-accent/30"}`}>
+                  <Checkbox checked={on} onCheckedChange={()=>onToggle(r)}/>
+                  <span className="flex-1 text-sm">{r.name}</span>
+                  <span className="text-muted-foreground text-xs tabular-nums">{r.price} {r.currency}</span>
+                </Label>
+              );
+            })}
+          </div>
+        </SheetPanel>
+      </SheetPopup>
+    </Sheet>
   );
 }
 
@@ -2614,122 +2645,113 @@ function MenusPage({
   const sidebarCats=[...new Set(availRecipes.map(r=>r.category))].filter(Boolean);
   const sidebarRecs=availRecipes.filter(r=>!sidebarCat||r.category===sidebarCat);
 
-  const toggleDay = day => setHoursDays(p=>p.includes(day)?p.filter(d=>d!==day):[...p,day]);
 
   if (viewMid) {
     const menu=menus.find(m=>m.mid===viewMid);
     if (!menu){setViewMid(null);return null;}
     const grouped={};
     (menu.recipes||[]).forEach(r=>{if(!grouped[r.category])grouped[r.category]=[];grouped[r.category].push(r);});
+    const toggleInMenu = async r => {
+      const inMenu = (menus.find(m=>m.mid===viewMid)?.recipes||[]).some(x=>x.rid===r.rid);
+      try {
+        const u = inMenu ? await api.removeMenuRecipes(viewMid, [r.rid]) : await api.addMenuRecipes(viewMid, [r.rid]);
+        setMenus(prev=>prev.map(m=>m.mid===viewMid?u:m));
+      } catch(e){ toast(e.message,"error"); }
+    };
     return (
       <Page actions={
-        <div style={{display:"flex",gap:10}}>
+        <div className="flex flex-wrap gap-2">
+          <Btn variant="ghost" size="sm" onClick={()=>setViewMid(null)}><ArrowLeftIcon/>All menus</Btn>
           <Btn variant="secondary" size="sm" onClick={async()=>{
             try {
               const copy = await api.duplicateMenu(viewMid);
               setMenus(prev=>[...prev,copy]);
-              const baseName = menu.name.replace(/\s*\(\d+\)$/,"");
               toast(`"${copy.name}" created`);
               setViewMid(copy.mid);
             } catch(e){ toast(e.message,"error"); }
-          }}>Duplicate</Btn>
-          <Btn variant="secondary" size="sm" onClick={()=>setShowSidebar(true)}>+ Add items</Btn>
-          <Btn variant="danger" size="sm" onClick={()=>setDialog("delete-menu")}>Delete</Btn>
-          <Btn variant="ghost" size="sm" onClick={()=>setViewMid(null)}>← All menus</Btn>
+          }}><CopyIcon/>Duplicate</Btn>
+          <Btn variant="secondary" size="sm" onClick={()=>setShowSidebar(true)}><PlusIcon/>Add items</Btn>
+          <Btn variant="danger" size="sm" onClick={()=>setDialog("delete-menu")}><Trash2Icon/>Delete</Btn>
         </div>
       }>
-        <div style={{ marginBottom:20 }}>
+        <div className="mb-5">
           {editTitle?(
-            <input autoFocus value={titleVal} onChange={e=>setTitleVal(e.target.value)} onBlur={()=>{patchMenu(menu.mid,{name:titleVal});setEditTitle(false);}} onKeyDown={e=>e.key==="Enter"&&e.target.blur()}
-              style={{ fontFamily:G.font, fontSize:28, fontWeight:700, background:"none", border:"none", borderBottom:`2px solid ${G.caramel}`, outline:"none", width:"100%" }} />
+            <input autoFocus data-slot="title-input" value={titleVal} onChange={e=>setTitleVal(e.target.value)} onBlur={()=>{patchMenu(menu.mid,{name:titleVal});setEditTitle(false);}} onKeyDown={e=>e.key==="Enter"&&e.target.blur()}
+              aria-label="Menu name" className="w-full border-b-2 border-brand bg-transparent font-bold font-heading text-3xl outline-none" />
           ):(
             <h1 onClick={()=>{setTitleVal(menu.name);setEditTitle(true);}} title="Click to rename"
-              style={{ fontFamily:G.font, fontSize:28, fontWeight:700, cursor:"text", display:"inline-block", borderBottom:"2px solid transparent", transition:"border-color 0.2s" }}
-              onMouseEnter={e=>e.target.style.borderColor=G.caramel} onMouseLeave={e=>e.target.style.borderColor="transparent"}>{menu.name}</h1>
+              className="inline-flex cursor-text items-center gap-2 border-b-2 border-transparent font-bold font-heading text-3xl transition-colors hover:border-brand">
+              {menu.name}<PencilIcon className="size-4 text-muted-foreground"/>
+            </h1>
           )}
 
           {/* Availability row */}
-          <div style={{ display:"flex", alignItems:"center", gap:16, marginTop:12, flexWrap:"wrap" }}>
-            <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontSize:14 }}>
-              <input type="checkbox" checked={menu.available} onChange={()=>patchMenu(menu.mid,{available:!menu.available})} style={{accentColor:G.caramel}} />
+          <div className="mt-3 flex flex-wrap items-center gap-4">
+            <Label className="cursor-pointer font-normal">
+              <Checkbox checked={menu.available} onCheckedChange={()=>patchMenu(menu.mid,{available:!menu.available})} />
               Available to customers
-            </label>
+            </Label>
             {toRemove.length>0&&<Btn variant="danger" size="sm" onClick={()=>setDialog("remove")}>Remove selected ({toRemove.length})</Btn>}
           </div>
 
           {/* Availability hours */}
-          <div style={{ marginTop:20, background:G.sand, borderRadius:12, padding:20 }}>
-            <p style={{ fontSize:13, fontWeight:700, color:G.dark, marginBottom:14, letterSpacing:"0.02em" }}>Availability Hours</p>
-
-            {/* Day toggles */}
-            <div style={{ display:"flex", gap:6, marginBottom:14, flexWrap:"wrap" }}>
-              {DAYS.map((d,i)=>(
-                <button key={d} onClick={()=>toggleDay(d)} style={{
-                  padding:"5px 12px", borderRadius:20, border:"none", cursor:"pointer", fontSize:12, fontWeight:700,
-                  background:hoursDays.includes(d)?G.caramel:G.white, color:hoursDays.includes(d)?G.white:G.muted,
-                  transition:"all 0.15s"
-                }}>{tl(DAY_LABELS[i])}</button>
-              ))}
-            </div>
-
-            {/* Time range */}
-            <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                <label style={{ fontSize:13, color:G.muted, fontWeight:600 }}>From</label>
-                <input type="time" value={hoursFrom} onChange={e=>setHoursFrom(e.target.value)}
-                  style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${G.border}`, background:G.white, fontSize:13, fontFamily:G.mono, outline:"none" }} />
+          <Card className="mt-5">
+            <CardPanel className="flex flex-col gap-3.5">
+              <p className="font-semibold text-sm">Availability Hours</p>
+              <ToggleGroup multiple value={hoursDays} onValueChange={v=>setHoursDays(v)} className="flex flex-wrap gap-1.5" aria-label="Days">
+                {DAYS.map((d,i)=>(
+                  <ToggleGroupItem key={d} value={d} size="sm" aria-label={tl(DAY_LABELS[i])}
+                    className="rounded-full border border-input px-3 data-pressed:border-primary data-pressed:bg-primary data-pressed:text-primary-foreground">{tl(DAY_LABELS[i])}</ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+              <div className="flex flex-wrap items-center gap-2.5">
+                <span className="text-muted-foreground text-sm">From</span>
+                <CInput type="time" value={hoursFrom} onChange={e=>setHoursFrom(e.target.value)} aria-label="From" className="w-auto"/>
+                <span className="text-muted-foreground text-sm">Until</span>
+                <CInput type="time" value={hoursUntil} onChange={e=>setHoursUntil(e.target.value)} aria-label="Until" className="w-auto"/>
+                <Btn size="sm" onClick={applyHours} loading={applyingHours}>Apply</Btn>
+                {menu.hours_from&&(
+                  <Btn size="sm" variant="ghost" onClick={async()=>{
+                    await patchMenu(menu.mid,{hours_from:null,hours_until:null,hours_days:[]});
+                    setHoursFrom("09:00"); setHoursUntil("21:00"); setHoursDays([]); setHoursWarning("");
+                    toast("Hours cleared");
+                  }}>Clear hours</Btn>
+                )}
               </div>
-              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                <label style={{ fontSize:13, color:G.muted, fontWeight:600 }}>Until</label>
-                <input type="time" value={hoursUntil} onChange={e=>setHoursUntil(e.target.value)}
-                  style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${G.border}`, background:G.white, fontSize:13, fontFamily:G.mono, outline:"none" }} />
-              </div>
-              <Btn size="sm" onClick={applyHours} loading={applyingHours}>Apply</Btn>
-              {menu.hours_from&&(
-                <Btn size="sm" variant="ghost" onClick={async()=>{
-                  await patchMenu(menu.mid,{hours_from:null,hours_until:null,hours_days:[]});
-                  setHoursFrom("09:00"); setHoursUntil("21:00"); setHoursDays([]); setHoursWarning("");
-                  toast("Hours cleared");
-                }}>Clear hours</Btn>
+              {hoursWarning&&(
+                <Alert variant="warning"><TriangleAlertIcon/>
+                  <AlertDescription>{hoursWarning}</AlertDescription>
+                  <AlertAction><Button variant="ghost" size="icon-xs" aria-label="Dismiss" onClick={()=>setHoursWarning("")}><XIcon/></Button></AlertAction>
+                </Alert>
               )}
-            </div>
-
-            {/* Warning */}
-            {hoursWarning&&(
-              <div style={{ marginTop:12, padding:"10px 14px", background:"#fefce8", border:"1px solid #eab308", borderLeft:"3px solid #eab308", borderRadius:8, fontSize:13, color:"#854d0e", display:"flex", alignItems:"flex-start", gap:8, animation:"fadeIn 0.2s ease" }}>
-                <span>⚠️</span>
-                <span style={{flex:1}}>{hoursWarning}</span>
-                <button onClick={()=>setHoursWarning("")} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:16,lineHeight:1,flexShrink:0}}>×</button>
-              </div>
-            )}
-
-            {menu.hours_from&&(
-              <p style={{ fontSize:12, color:G.muted, marginTop:10 }}>
-                Currently active: <b>{menu.hours_days?.map(d=>d.charAt(0).toUpperCase()+d.slice(1)).join(", ")}</b> · {menu.hours_from} – {menu.hours_until}
-              </p>
-            )}
-          </div>
+              {menu.hours_from&&(
+                <p className="text-muted-foreground text-xs">
+                  Currently active: <b className="text-foreground">{menu.hours_days?.map(d=>d.charAt(0).toUpperCase()+d.slice(1)).join(", ")}</b> · {menu.hours_from} – {menu.hours_until}
+                </p>
+              )}
+            </CardPanel>
+          </Card>
         </div>
 
         {/* Recipe list */}
-        <div style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, overflow:"hidden" }}>
+        <Card className="overflow-hidden">
           {Object.entries(grouped).map(([cat,recs])=>(
             <div key={cat}>
-              <div style={{ padding:"10px 20px", background:G.sand, borderBottom:`1px solid ${G.border}`, fontSize:12, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em", color:G.muted, display:"flex", alignItems:"center", gap:10 }}>
-                <input type="checkbox" checked={recs.every(r=>toRemove.includes(r.rid))} onChange={()=>{const all=recs.every(r=>toRemove.includes(r.rid));setToRemove(p=>all?p.filter(x=>!recs.find(r=>r.rid===x)):[...p,...recs.map(r=>r.rid).filter(x=>!p.includes(x))]);}} style={{accentColor:G.caramel}} />
+              <Label className="flex w-full cursor-pointer gap-2.5 border-b bg-muted px-5 py-2.5 font-semibold text-muted-foreground text-xs uppercase tracking-wider">
+                <Checkbox checked={recs.every(r=>toRemove.includes(r.rid))} onCheckedChange={()=>{const all=recs.every(r=>toRemove.includes(r.rid));setToRemove(p=>all?p.filter(x=>!recs.find(r=>r.rid===x)):[...p,...recs.map(r=>r.rid).filter(x=>!p.includes(x))]);}} />
                 {cat}
-              </div>
+              </Label>
               {recs.map(r=>(
-                <div key={r.rid} style={{ padding:"12px 20px", display:"flex", alignItems:"center", gap:12, borderBottom:`1px solid ${G.border}` }}>
-                  <input type="checkbox" checked={toRemove.includes(r.rid)} onChange={()=>setToRemove(p=>p.includes(r.rid)?p.filter(x=>x!==r.rid):[...p,r.rid])} style={{accentColor:G.caramel}} />
-                  <span style={{flex:1,fontSize:14}}>{r.name}{r.deliverable===false&&<em style={{marginLeft:6,fontSize:12,color:G.muted}}>(pickup only)</em>}</span>
-                  <span style={{fontWeight:600,color:G.caramel,fontSize:14}}>{r.price} {r.currency}</span>
-                </div>
+                <Label key={r.rid} className="flex w-full cursor-pointer gap-3 border-b px-5 py-3 font-normal last:border-b-0 hover:bg-accent/30">
+                  <Checkbox checked={toRemove.includes(r.rid)} onCheckedChange={()=>setToRemove(p=>p.includes(r.rid)?p.filter(x=>x!==r.rid):[...p,r.rid])} />
+                  <span className="flex-1 text-sm">{r.name}{r.deliverable===false&&<em className="ms-1.5 text-muted-foreground text-xs">(pickup only)</em>}</span>
+                  <span className="font-semibold text-brand text-sm tabular-nums">{r.price} {r.currency}</span>
+                </Label>
               ))}
             </div>
           ))}
-          {(!menu.recipes||menu.recipes.length===0)&&<div style={{padding:40,textAlign:"center",color:G.muted}}>No recipes yet.</div>}
-        </div>
+          {(!menu.recipes||menu.recipes.length===0)&&<div className="p-10 text-center text-muted-foreground">No recipes yet.</div>}
+        </Card>
         <Dialog open={dialog==="remove"} title="Remove from menu?" onConfirm={removeRecipes} onCancel={()=>setDialog(null)}>
           Are you sure you wish to remove the selected items? You may add them back later.
         </Dialog>
@@ -2743,37 +2765,8 @@ function MenusPage({
         }} onCancel={()=>setDialog(null)}>
           This will remove the menu and all items from it, and it cannot be undone. If customers have already ordered from it, the menu is archived instead: it disappears from your list and from customers, while past orders and reports are kept as they are.
         </Dialog>
-      {showSidebar&&(
-        <div style={{ position:"fixed", inset:0, zIndex:200 }} onClick={()=>setShowSidebar(false)}>
-          <div onClick={e=>e.stopPropagation()} style={{ position:"fixed", right:0, top:0, bottom:0, width:340, background:G.white, boxShadow:"-8px 0 40px rgba(44,24,16,0.12)", padding:24, display:"flex", flexDirection:"column", animation:"slideIn 0.25s ease" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
-              <h3 style={{ fontFamily:G.font, fontSize:18 }}>Items</h3>
-              <button onClick={()=>setShowSidebar(false)} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:G.muted}}>×</button>
-            </div>
-            <Select label="Category" value={sidebarCat} onChange={setSidebarCat} options={sidebarCats} placeholder="All categories" />
-            <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:6, marginTop:16 }}>
-              {sidebarRecs.map(r=>{
-                const inMenu = (menus.find(m=>m.mid===viewMid)?.recipes||[]).some(x=>x.rid===r.rid);
-                const toggle = async () => {
-                  try {
-                    const u = inMenu
-                      ? await api.removeMenuRecipes(viewMid, [r.rid])
-                      : await api.addMenuRecipes(viewMid, [r.rid]);
-                    setMenus(prev=>prev.map(m=>m.mid===viewMid?u:m));
-                  } catch(e){ toast(e.message,"error"); }
-                };
-                return (
-                  <label key={r.rid} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:8, cursor:"pointer", background:inMenu?G.sand:"transparent", border:`1px solid ${inMenu?G.caramel:"transparent"}` }}>
-                    <input type="checkbox" checked={inMenu} onChange={toggle} style={{accentColor:G.caramel}} />
-                    <span style={{flex:1,fontSize:14}}>{r.name}</span>
-                    <span style={{fontSize:12,color:G.muted}}>{r.price} {r.currency}</span>
-                  </label>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
+        <MenuItemsSheet open={showSidebar} onClose={()=>setShowSidebar(false)} cats={sidebarCats} cat={sidebarCat} setCat={setSidebarCat} recs={sidebarRecs}
+          isChecked={r=>(menus.find(m=>m.mid===viewMid)?.recipes||[]).some(x=>x.rid===r.rid)} onToggle={toggleInMenu}/>
       </Page>
     );
   }
@@ -2781,67 +2774,52 @@ function MenusPage({
   return (
     <Page title={tl("Menus")} actions={<Btn size="sm" onClick={()=>setShowNew(s=>!s)}>{tl("+ Menu")}</Btn>}>
       {showNew&&(
-        <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
-          <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>New Menu</h3>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr auto", gap:14, marginBottom:14, alignItems:"end" }}>
-            <Input label="Name" value={form.name} onChange={v=>setForm(p=>({...p,name:v}))} required />
-            <Input label="Delivery fee (AMD)" type="number" value={form.delivery_fee} onChange={v=>setForm(p=>({...p,delivery_fee:v}))} placeholder="0" />
-            <label style={{ display:"flex", alignItems:"center", gap:8, fontSize:14, paddingBottom:10, cursor:"pointer", whiteSpace:"nowrap" }}>
-              <input type="checkbox" checked={form.available} onChange={e=>setForm(p=>({...p,available:e.target.checked}))} style={{accentColor:G.caramel}} />
-              Available
-            </label>
-          </div>
-          <div style={{ marginBottom:14 }}>
-            <p style={{ fontSize:13, fontWeight:600, marginBottom:8 }}>Recipes ({form.recipe_ids.length} selected)</p>
-            {form.recipe_ids.length>0&&(
-              <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:8 }}>
-                {form.recipe_ids.map(rid=>{const r=availRecipes.find(x=>x.rid===rid);return r?(<span key={rid} style={{ background:G.sand, padding:"4px 10px", borderRadius:20, fontSize:13, display:"flex", alignItems:"center", gap:6 }}>{r.name}<button onClick={()=>setForm(p=>({...p,recipe_ids:p.recipe_ids.filter(x=>x!==rid)}))} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:16,lineHeight:1}}>×</button></span>):null;})}
-              </div>
-            )}
-            <Btn variant="secondary" size="sm" onClick={()=>setShowSidebar(true)}>+ Add items</Btn>
-          </div>
-          <div style={{ display:"flex", gap:10 }}>
-            <Btn size="sm" onClick={saveNew} loading={saving}>{tl("Save")}</Btn>
-            <Btn variant="ghost" size="sm" onClick={()=>setShowNew(false)}>{tl("Cancel")}</Btn>
-          </div>
-        </div>
-      )}
-      {showSidebar&&(
-        <div style={{ position:"fixed", inset:0, zIndex:200 }} onClick={()=>setShowSidebar(false)}>
-          <div onClick={e=>e.stopPropagation()} style={{ position:"fixed", right:0, top:0, bottom:0, width:340, background:G.white, boxShadow:"-8px 0 40px rgba(44,24,16,0.12)", padding:24, display:"flex", flexDirection:"column", animation:"slideIn 0.25s ease" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
-              <h3 style={{ fontFamily:G.font, fontSize:18 }}>Items</h3>
-              <button onClick={()=>setShowSidebar(false)} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:G.muted}}>×</button>
+        <Card className="mb-5" style={{ animation:"fadeIn 0.2s ease" }}>
+          <CardHeader><CardTitle>New Menu</CardTitle></CardHeader>
+          <CardPanel className="flex flex-col gap-3.5 pt-0">
+            <div className="grid grid-cols-1 items-end gap-3.5 sm:grid-cols-[1fr_1fr_auto]">
+              <Input label="Name" value={form.name} onChange={v=>setForm(p=>({...p,name:v}))} required />
+              <Input label="Delivery fee (AMD)" type="number" value={form.delivery_fee} onChange={v=>setForm(p=>({...p,delivery_fee:v}))} placeholder="0" />
+              <Label className="h-10 cursor-pointer whitespace-nowrap font-normal">
+                <Checkbox checked={form.available} onCheckedChange={v=>setForm(p=>({...p,available:!!v}))} />Available
+              </Label>
             </div>
-            <Select label="Category" value={sidebarCat} onChange={setSidebarCat} options={sidebarCats} placeholder="All categories" />
-            <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:6, marginTop:16 }}>
-              {sidebarRecs.map(r=>(
-                <label key={r.rid} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:8, cursor:"pointer", background:form.recipe_ids.includes(r.rid)?G.sand:"transparent", border:`1px solid ${form.recipe_ids.includes(r.rid)?G.caramel:"transparent"}` }}>
-                  <input type="checkbox" checked={form.recipe_ids.includes(r.rid)}
-                    onChange={()=>setForm(p=>({...p,recipe_ids:p.recipe_ids.includes(r.rid)?p.recipe_ids.filter(x=>x!==r.rid):[...p.recipe_ids,r.rid]}))}
-                    style={{accentColor:G.caramel}} />
-                  <span style={{flex:1,fontSize:14}}>{r.name}</span>
-                  <span style={{fontSize:12,color:G.muted}}>{r.price} {r.currency}</span>
-                </label>
-              ))}
+            <FieldBlock label={`Recipes (${form.recipe_ids.length} selected)`}>
+              {form.recipe_ids.length>0&&(
+                <div className="flex flex-wrap gap-1.5">
+                  {form.recipe_ids.map(rid=>{const r=availRecipes.find(x=>x.rid===rid);return r?(
+                    <span key={rid} className="inline-flex items-center gap-1 rounded-full bg-accent py-0.5 ps-2.5 pe-1 text-accent-foreground text-sm">{r.name}
+                      <button type="button" data-slot="chip-remove" aria-label={`Remove ${r.name}`} onClick={()=>setForm(p=>({...p,recipe_ids:p.recipe_ids.filter(x=>x!==rid)}))} className="rounded-full p-0.5 hover:bg-background/60"><XIcon className="size-3.5"/></button>
+                    </span>):null;})}
+                </div>
+              )}
+              <Btn variant="secondary" size="sm" onClick={()=>setShowSidebar(true)} style={{ alignSelf:"flex-start" }}><PlusIcon/>Add items</Btn>
+            </FieldBlock>
+            <div className="flex gap-2.5">
+              <Btn size="sm" onClick={saveNew} loading={saving}>{tl("Save")}</Btn>
+              <Btn variant="ghost" size="sm" onClick={()=>setShowNew(false)}>{tl("Cancel")}</Btn>
             </div>
-          </div>
-        </div>
+          </CardPanel>
+        </Card>
       )}
+      <MenuItemsSheet open={showSidebar} onClose={()=>setShowSidebar(false)} cats={sidebarCats} cat={sidebarCat} setCat={setSidebarCat} recs={sidebarRecs}
+        isChecked={r=>form.recipe_ids.includes(r.rid)}
+        onToggle={r=>setForm(p=>({...p,recipe_ids:p.recipe_ids.includes(r.rid)?p.recipe_ids.filter(x=>x!==r.rid):[...p.recipe_ids,r.rid]}))}/>
       {loading?<Spinner/>:(
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(300px, 1fr))", gap:16 }}>
+        <div className="grid gap-4" style={{ gridTemplateColumns:"repeat(auto-fill, minmax(300px, 1fr))" }}>
           {menus.map(m=>(
-            <div key={m.mid} onClick={()=>setViewMid(m.mid)} style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, padding:20, cursor:"pointer", transition:"all 0.2s" }}
-              onMouseEnter={e=>{e.currentTarget.style.borderColor=G.caramel;e.currentTarget.style.boxShadow="0 4px 20px rgba(200,135,58,0.15)";}}
-              onMouseLeave={e=>{e.currentTarget.style.borderColor=G.border;e.currentTarget.style.boxShadow="none";}}>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
-                <h3 style={{ fontFamily:G.font, fontSize:17 }}>{m.name}</h3>
-                <Badge color={m.available?G.green:G.muted} bg={m.available?"#f0fdf4":G.sand}>{m.available?"Live":"Draft"}</Badge>
-              </div>
-              <p style={{ fontSize:13, color:G.muted }}>{(m.recipes||[]).length} recipe{(m.recipes||[]).length!==1?"s":""} · Delivery {m.delivery_fee} AMD</p>
-            </div>
+            <Card key={m.mid} role="button" tabIndex={0} onClick={()=>setViewMid(m.mid)} onKeyDown={e=>{ if(e.key==="Enter") setViewMid(m.mid); }}
+              className="cursor-pointer transition-[border-color,box-shadow] hover:border-brand/60 hover:shadow-md/10 focus-visible:outline-2 focus-visible:outline-ring">
+              <CardPanel className="p-5">
+                <div className="mb-2.5 flex items-start justify-between gap-2">
+                  <h3 className="font-heading font-semibold text-lg">{m.name}</h3>
+                  <CBadge variant={m.available?"success":"secondary"}>{m.available?"Live":"Draft"}</CBadge>
+                </div>
+                <p className="text-muted-foreground text-sm">{(m.recipes||[]).length} recipe{(m.recipes||[]).length!==1?"s":""} · Delivery {m.delivery_fee} AMD</p>
+              </CardPanel>
+            </Card>
           ))}
-          {menus.length===0&&<p style={{color:G.muted,fontSize:14}}>No menus yet.</p>}
+          {menus.length===0&&<p className="text-muted-foreground text-sm">No menus yet.</p>}
         </div>
       )}
       {!loading&&<MenuCalendar menus={menus} storeSchedule={storeSchedule} />}
@@ -3769,7 +3747,7 @@ function PackagingPage({ toast, onBack }) {
 // Segmented toggle used by the Orders and Inventory hubs
 function SegToggle({ options, value, onChange }) {
   return (
-    <SegmentedControl role="tablist">
+    <SegmentedControl role="tablist" className="max-w-full justify-start overflow-x-auto [scrollbar-width:none]">
       {options.map(([k,l])=>(
         <SegmentedControlItem key={k} role="tab" aria-selected={value===k} data-checked={value===k?"":undefined}
           onClick={()=>onChange(k)} className="px-4">{l}</SegmentedControlItem>

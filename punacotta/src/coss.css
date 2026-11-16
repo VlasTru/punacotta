@@ -151,7 +151,7 @@
 
 /* Stacking: the older screens use z-index up to 2000 (nav 300, modals 1000, lightbox 2000).
    coss popups must open above them, e.g. a select inside an order modal. Unlayered, so it beats `z-50`. */
-[data-slot="dialog-backdrop"], [data-slot="dialog-viewport"] { z-index: 2300; }
+[data-slot="dialog-backdrop"], [data-slot="dialog-viewport"], [data-slot="sheet-backdrop"], [data-slot="sheet-viewport"] { z-index: 2300; }
 [data-slot="alert-dialog-backdrop"], [data-slot="alert-dialog-viewport"] { z-index: 2400; }
 [data-slot="select-positioner"], [data-slot="combobox-positioner"], [data-slot="menu-positioner"],
 [data-slot="popover-positioner"], [data-slot="autocomplete-positioner"] { z-index: 2500; }
