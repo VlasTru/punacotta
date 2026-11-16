@@ -23,7 +23,7 @@ import { Dialog as CDialog, DialogPopup, DialogHeader, DialogTitle, DialogDescri
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetPopup, SheetHeader, SheetTitle, SheetPanel } from "@/components/ui/sheet";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { CopyIcon, ImageIcon, ImageUpIcon, Trash2Icon, CheckIcon, MicIcon, SquareIcon, Undo2Icon, LayoutGridIcon, ListIcon, ListFilterIcon, PencilIcon, ArrowDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, ChevronsLeftIcon, ChevronsRightIcon, ChevronsUpDownIcon, MinusIcon, PlusIcon, UploadIcon, CalendarDaysIcon, TagsIcon, UsersIcon, MailIcon } from "lucide-react";
+import { CopyIcon, ImageIcon, ImageUpIcon, Trash2Icon, CheckIcon, MicIcon, SquareIcon, Undo2Icon, LayoutGridIcon, ListIcon, ListFilterIcon, PencilIcon, ArrowDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, ChevronsLeftIcon, ChevronsRightIcon, ChevronsUpDownIcon, MinusIcon, PlusIcon, UploadIcon, WorkflowIcon, PlayIcon, PauseIcon, SkipForwardIcon, TimerIcon, RepeatIcon, CalendarDaysIcon, TagsIcon, UsersIcon, MailIcon } from "lucide-react";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator, MenuRadioGroup, MenuRadioItem, MenuCheckboxItem } from "@/components/ui/menu";
 import { AlertDialog, AlertDialogPopup, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from "@/components/ui/alert-dialog";
@@ -1782,8 +1782,8 @@ function SearchField({ value, onChange, onClear, placeholder="Search…", classN
     </div>
   );
 }
-function DateField({ value, onChange, min, max, label }) {
-  return <CInput type="date" value={value} min={min} max={max} onChange={e=>onChange(e.target.value)} aria-label={label} className="w-auto [&_input]:[color-scheme:light] dark:[&_input]:[color-scheme:dark]"/>;
+function DateField({ value, onChange, min, max, label, className="w-auto", size }) {
+  return <CInput type="date" value={value} min={min} max={max} size={size} onChange={e=>onChange(e.target.value)} aria-label={label} className={`${className} [&_input]:[color-scheme:light] dark:[&_input]:[color-scheme:dark]`}/>;
 }
 // −  n  +  stepper used in order pickers and carts
 function QtyStepper({ value, onDec, onInc, decDisabled, incDisabled, label="item", display }) {
@@ -6876,42 +6876,41 @@ function StopRunDialog({ run, mode="stop", psrid=null, onClose, onStopped, toast
       onStopped(updated);
     } catch(e){ toast(e.message,"error"); } finally{ setBusy(false); }
   };
-  const bs = {width:24,height:24,borderRadius:5,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",fontWeight:700,fontSize:14,lineHeight:1};
   return (
-    <div style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.45)",zIndex:1500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-      <div style={{background:G.white,borderRadius:16,maxWidth:520,width:"100%",boxShadow:"0 20px 60px rgba(44,24,16,0.2)",overflow:"hidden"}}>
-        <div style={{padding:"20px 24px",borderBottom:`1px solid ${G.border}`}}>
-          <h3 style={{fontFamily:G.font,fontSize:18}}>{mode==="complete"?"Completing":"Stopping"} {run.process_name}...</h3>
+    <Modal onClose={onClose} className="max-w-lg"
+      title={`${mode==="complete"?"Completing":"Stopping"} ${run.process_name}…`}
+      description={mode==="complete"
+        ? <>This is the last step of {run.process_name}. Click “Complete” to accept the quantities below:</>
+        : <>{run.process_name} will terminate, and you will not be able to resume it. Click “Stop” to accept the quantities below:</>}
+      footer={<>
+        <Btn variant="ghost" onClick={reset} disabled={!full}><Undo2Icon/>Reset</Btn>
+        <div className="flex gap-2">
+          <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+          <Btn variant={mode==="complete"?"primary":"danger"} loading={busy} disabled={!full} onClick={stop}>
+            {mode==="complete"?<><CheckIcon/>Complete</>:<><SquareIcon/>Stop</>}
+          </Btn>
         </div>
-        <div style={{padding:"20px 24px",maxHeight:420,overflowY:"auto"}}>
-          <p style={{fontSize:14,color:G.dark,lineHeight:1.6,marginBottom:14}}>
-            {mode==="complete"
-              ? <>This is the last step of {run.process_name}. Click "Complete" to accept the quantities below:</>
-              : <>{run.process_name} will terminate, and you will not be able to resume it. Click "Stop" to accept the quantities below:</>}
-          </p>
-          {!full ? <Spinner/> : (full.items||[]).map(it=>{
-            const d = dec(it.qty); const low = vals[it.rid] < Number(it.qty);
+      </>}>
+      {!full ? <Spinner/> : (
+        <div className="flex flex-col divide-y divide-border">
+          {(full.items||[]).map(it=>{
+            const d = dec(it.qty); const v = vals[it.rid]; const low = v < Number(it.qty);
             return (
-              <div key={it.rid} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
-                <span style={{flex:1,fontSize:14,fontWeight:600,color:low?G.red:G.dark}}>{it.name}</span>
-                <button onClick={()=>bump(it,1)} disabled={vals[it.rid]>=Number(it.qty)} style={{...bs,opacity:vals[it.rid]>=Number(it.qty)?0.4:1}}>+</button>
-                <span style={{minWidth:56,textAlign:"center",fontFamily:G.mono,fontSize:14,fontWeight:600,color:low?G.red:G.dark}}>{fmt(vals[it.rid]??it.qty,d)}</span>
-                <button onClick={()=>bump(it,-1)} disabled={vals[it.rid]<=0} style={{...bs,opacity:vals[it.rid]<=0?0.4:1}}>−</button>
-                <span style={{fontSize:12,color:G.muted,minWidth:36}}>{it.units||"pcs"}</span>
+              <div key={it.rid} className="flex items-center gap-3 py-2.5">
+                <span className={`min-w-0 flex-1 truncate font-medium text-sm ${low?"text-destructive-foreground":""}`}>{it.name}</span>
+                <span className={low?"text-destructive-foreground":""}>
+                  <QtyStepper label={it.name} value={v} display={fmt(v??it.qty,d)}
+                    onDec={()=>bump(it,-1)} onInc={()=>bump(it,1)} decDisabled={v<=0} incDisabled={v>=Number(it.qty)}/>
+                </span>
+                <span className="w-10 text-muted-foreground text-xs">{it.units||"pcs"}</span>
               </div>
             );
           })}
         </div>
-        <div style={{padding:"16px 24px",borderTop:`1px solid ${G.border}`,display:"flex",gap:10,justifyContent:"flex-end"}}>
-          <Btn variant="ghost" size="sm" onClick={reset} disabled={!full}>Reset</Btn>
-          <Btn variant="ghost" size="sm" onClick={onClose}>Cancel</Btn>
-          <Btn variant={mode==="complete"?"primary":"danger"} size="sm" loading={busy} disabled={!full} onClick={stop}>{mode==="complete"?"Complete":"Stop"}</Btn>
-        </div>
-      </div>
-    </div>
+      )}
+    </Modal>
   );
 }
-
 
 // ─── SKILL COMBO ──────────────────────────────────────────────────────────────
 // Coloured pill for a skill/role (colours come from the database).
@@ -7684,22 +7683,33 @@ function RolesPage({ roles, skills, setRoles, setSkills, createSkill, toast, onB
   );
 }
 
+// ─── RUN / STEP STATUS ────────────────────────────────────────────────────────
+const RUN_STATUS = {
+  pending:     { label:"Pending",     cls:"bg-secondary text-muted-foreground" },
+  in_progress: { label:"In progress", cls:"bg-brand/16 text-accent-foreground" },
+  on_hold:     { label:"On hold",     cls:"bg-warning/16 text-warning-foreground" },
+  completed:   { label:"Completed",   cls:"bg-success/16 text-success-foreground" },
+  skipped:     { label:"Skipped",     cls:"bg-secondary text-muted-foreground line-through" },
+  cancelled:   { label:"Cancelled",   cls:"bg-destructive/12 text-destructive-foreground" },
+};
+function RunStatusBadge({ status, label, className="" }) {
+  const s = RUN_STATUS[status] || { label:String(status||"").replace("_"," "), cls:"bg-secondary text-muted-foreground" };
+  return <CBadge variant="outline" className={`border-transparent font-semibold ${s.cls} ${className}`}>{label||s.label}</CBadge>;
+}
+
 // ─── RUN DETAIL SIDEBAR ───────────────────────────────────────────────────────
 function RunDetailSidebar({ run, user, onClose, onRunUpdated, toast }) {
   const [stepAction, setStepAction] = useState(null); // {psrid, action}
   const [skipReason, setSkipReason] = useState("");
   const [showSkipFor, setShowSkipFor] = useState(null); // psrid
+  const [completeFor, setCompleteFor] = useState(null);
 
   if (!run) return null;
 
   const steps = run.steps || [];
-  const STATUS_COLOR = {
-    pending:"#94a3b8", in_progress:G.caramel, on_hold:"#eab308",
-    completed:G.green, skipped:G.muted,
-  };
-  const STATUS_LABEL = {
-    pending:"Pending", in_progress:"In progress", on_hold:"On hold",
-    completed:"Done", skipped:"Skipped",
+  const STEP_DOT = {
+    pending:"bg-muted-foreground/15 text-muted-foreground", in_progress:"bg-brand text-brand-foreground", on_hold:"bg-warning/20 text-warning-foreground",
+    completed:"bg-success/20 text-success-foreground", skipped:"bg-secondary text-muted-foreground",
   };
 
   const fmtElapsed = secs => {
@@ -7718,7 +7728,6 @@ function RunDetailSidebar({ run, user, onClose, onRunUpdated, toast }) {
     return step.uid === user?.uid;
   };
 
-  const [completeFor, setCompleteFor] = useState(null);
   const doStepAction = async (psrid, action, extra) => {
     if (action==="complete") {
       const st = (run.steps||[]).find(x=>x.psrid===psrid);
@@ -7741,146 +7750,117 @@ function RunDetailSidebar({ run, user, onClose, onRunUpdated, toast }) {
     setShowSkipFor(null); setSkipReason("");
   };
 
-  const runStatusColor = { in_progress:G.caramel, on_hold:"#eab308", completed:G.green, cancelled:G.red };
-  const col = runStatusColor[run.status] || G.muted;
+  const done = steps.filter(s=>s.status==="completed").length;
 
   return (
-    <>
-      {completeFor&&<StopRunDialog run={run} mode="complete" psrid={completeFor} toast={toast} onClose={()=>setCompleteFor(null)}
-        onStopped={u=>{ setCompleteFor(null); onRunUpdated(u); }}/>}
-      {/* Backdrop */}
-      <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.35)",zIndex:1400,opacity:completeFor?0:1,pointerEvents:completeFor?"none":"auto",transition:"opacity 0.25s ease"}}/>
-      {/* Panel */}
-      <div style={{
-        position:"fixed",top:0,right:0,bottom:0,width:420,maxWidth:"100vw",
-        background:G.cream,boxShadow:"-4px 0 32px rgba(44,24,16,0.18)",
-        zIndex:1401,display:"flex",flexDirection:"column",overflowY:"hidden",
-        transform:completeFor?"translateX(105%)":"translateX(0)",transition:"transform 0.25s ease",
-      }}>
-        {/* Header */}
-        <div style={{padding:"20px 24px 16px",borderBottom:`1px solid ${G.border}`,flexShrink:0}}>
-          <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8}}>
-            <div>
-              <h2 style={{fontFamily:G.font,fontSize:20,color:G.dark,margin:"0 0 6px"}}>{run.process_name}</h2>
-              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                <span style={{fontSize:12,padding:"3px 10px",borderRadius:20,background:`${col}20`,color:col,fontWeight:700}}>
-                  {run.status.replace("_"," ")}
+    <Sheet open onOpenChange={o=>{ if(!o) onClose(); }}>
+      <SheetPopup side="right" showCloseButton={false} className="w-[min(440px,100vw)]">
+        <SheetHeader className="flex-row items-start justify-between gap-3 border-border border-b">
+          <div className="flex min-w-0 flex-col gap-2">
+            <SheetTitle className="font-heading text-xl">{run.process_name}</SheetTitle>
+            <div className="flex flex-wrap items-center gap-2">
+              <RunStatusBadge status={run.status}/>
+              {run.started_at&&(
+                <span className="text-muted-foreground text-xs">
+                  Started {new Date(run.started_at).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}
                 </span>
-                {run.started_at&&(
-                  <span style={{fontSize:12,color:G.muted}}>
-                    Started {new Date(run.started_at).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}
-                  </span>
-                )}
-              </div>
+              )}
             </div>
-            <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:22,lineHeight:1,padding:4,flexShrink:0}}>×</button>
           </div>
-        </div>
+          <Button variant="ghost" size="icon" aria-label="Close" onClick={onClose}><XIcon/></Button>
+        </SheetHeader>
 
-        {/* Steps list */}
-        <div style={{flex:1,overflowY:"auto",padding:"16px 24px"}}>
-          <p style={{fontSize:12,color:G.muted,marginBottom:12,textTransform:"uppercase",letterSpacing:0.8,fontWeight:600}}>
-            Steps — {steps.filter(s=>s.status==="completed").length}/{steps.length} done
-          </p>
-          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        <SheetPanel className="flex flex-col gap-3">
+          {completeFor&&<StopRunDialog run={run} mode="complete" psrid={completeFor} toast={toast} onClose={()=>setCompleteFor(null)}
+            onStopped={u=>{ setCompleteFor(null); onRunUpdated(u); }}/>}
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-semibold text-[11px] text-muted-foreground uppercase tracking-wider">Steps</span>
+            <span className="text-muted-foreground text-xs tabular-nums">{done}/{steps.length} done</span>
+          </div>
+          {steps.length>0&&(
+            <div className="h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={done} aria-valuemax={steps.length}>
+              <div className="h-full rounded-full bg-success transition-all" style={{ width:`${(done/steps.length)*100}%` }}/>
+            </div>
+          )}
+          <ol className="flex list-none flex-col gap-2.5">
             {steps.map((step,i)=>{
-              const sc = STATUS_COLOR[step.status]||G.muted;
               const busy = stepAction?.psrid===step.psrid;
               const actable = canAct(step);
               const isSkipOpen = showSkipFor===step.psrid;
+              const open = actable && !["completed","skipped"].includes(step.status);
 
               return (
-                <div key={step.psrid} style={{
-                  background:G.white,borderRadius:12,border:`1px solid ${G.border}`,
-                  padding:"12px 14px",opacity:step.status==="skipped"?0.55:1,
-                }}>
+                <li key={step.psrid} data-slot="run-step" className={`rounded-xl border border-border bg-card p-3 shadow-xs/5 ${step.status==="skipped"?"opacity-60":""} ${step.status==="in_progress"?"border-brand/50":""}`}>
                   {/* Row 1: seq + skill name + status badge */}
-                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-                    <span style={{
-                      width:24,height:24,borderRadius:"50%",background:`${sc}22`,
-                      color:sc,fontSize:11,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,
-                    }}>{i+1}</span>
-                    <span style={{flex:1,fontSize:14,fontWeight:600,color:G.dark}}>{step.skill_name}</span>
-                    <span style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:`${sc}18`,color:sc,fontWeight:600,whiteSpace:"nowrap"}}>
-                      {STATUS_LABEL[step.status]||step.status}
+                  <div className="flex items-center gap-2.5">
+                    <span className={`flex size-6 shrink-0 items-center justify-center rounded-full font-bold text-[11px] ${STEP_DOT[step.status]||STEP_DOT.pending}`}>
+                      {step.status==="completed"?<CheckIcon className="size-3.5"/>:i+1}
                     </span>
+                    <span className="min-w-0 flex-1 truncate font-semibold text-sm">{step.skill_name}</span>
+                    <RunStatusBadge status={step.status} label={step.status==="completed"?"Done":undefined}/>
                   </div>
 
                   {/* Row 2: assignee + duration + elapsed */}
-                  <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:actable&&step.status!=="completed"&&step.status!=="skipped"?10:0}}>
+                  <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 ps-8.5 text-muted-foreground text-xs">
                     {(step.first_name||step.last_name) && (
-                      <span style={{fontSize:12,color:G.muted}}>
-                        👤 {[step.first_name,step.last_name].filter(Boolean).join(" ")}
-                      </span>
+                      <span className="inline-flex items-center gap-1"><CircleUserIcon className="size-3.5"/>{[step.first_name,step.last_name].filter(Boolean).join(" ")}</span>
                     )}
                     {step.duration && (
-                      <span style={{fontSize:12,color:G.muted}}>
-                        ⏱ {intDur(step.duration)} {step.duration_unit||"min"}
-                      </span>
+                      <span className="inline-flex items-center gap-1"><TimerIcon className="size-3.5"/>{intDur(step.duration)} {step.duration_unit||"min"}</span>
                     )}
                     {step.elapsed_secs>0 && (
-                      <span style={{fontSize:12,color:G.caramel,fontWeight:600}}>
-                        Active: {fmtElapsed(step.elapsed_secs)}
-                      </span>
+                      <span className="font-semibold text-accent-foreground">Active: {fmtElapsed(step.elapsed_secs)}</span>
                     )}
                     {step.recur_every && (
-                      <span style={{fontSize:11,color:G.caramel,fontWeight:600}}>
-                        🔁 every {step.recur_every} {step.recur_unit||"hours"}
+                      <span className="inline-flex items-center gap-1 font-semibold text-accent-foreground">
+                        <RepeatIcon className="size-3.5"/>every {step.recur_every} {step.recur_unit||"hours"}
                         {step.recur_index > 0 ? ` · #${step.recur_index + 1}` : ""}
                       </span>
                     )}
                     {step.is_delayed && (
-                      <span style={{fontSize:11,color:G.red,fontWeight:600}}>⚠ Delayed</span>
+                      <span className="inline-flex items-center gap-1 font-semibold text-destructive-foreground"><TriangleAlertIcon className="size-3.5"/>Delayed</span>
                     )}
                     {step.delay_reason && (
-                      <span style={{fontSize:11,color:G.muted,fontStyle:"italic"}}>"{step.delay_reason}"</span>
+                      <span className="italic">“{step.delay_reason}”</span>
                     )}
                   </div>
 
                   {/* Action buttons */}
-                  {actable && !["completed","skipped"].includes(step.status) && !isSkipOpen && (
-                    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                  {open && !isSkipOpen && (
+                    <div className="mt-3 flex flex-wrap gap-1.5 ps-8.5">
                       {step.status==="pending" && (
-                        <Btn size="sm" onClick={()=>doStepAction(step.psrid,"start")} loading={busy}>▶ Start</Btn>
+                        <Btn size="sm" onClick={()=>doStepAction(step.psrid,"start")} loading={busy}><PlayIcon/>Start</Btn>
                       )}
                       {step.status==="in_progress" && (<>
-                        <Btn size="sm" variant="secondary" onClick={()=>doStepAction(step.psrid,"pause")} loading={busy}>⏸ Pause</Btn>
-                        <Btn size="sm" onClick={()=>doStepAction(step.psrid,"complete")} loading={busy}>✓ Complete</Btn>
+                        <Btn size="sm" variant="secondary" onClick={()=>doStepAction(step.psrid,"pause")} loading={busy}><PauseIcon/>Pause</Btn>
+                        <Btn size="sm" onClick={()=>doStepAction(step.psrid,"complete")} loading={busy}><CheckIcon/>Complete</Btn>
                       </>)}
                       {step.status==="on_hold" && (<>
-                        <Btn size="sm" onClick={()=>doStepAction(step.psrid,"resume")} loading={busy}>▶ Resume</Btn>
-                        <Btn size="sm" onClick={()=>doStepAction(step.psrid,"complete")} loading={busy}>✓ Complete</Btn>
+                        <Btn size="sm" variant="secondary" onClick={()=>doStepAction(step.psrid,"resume")} loading={busy}><PlayIcon/>Resume</Btn>
+                        <Btn size="sm" onClick={()=>doStepAction(step.psrid,"complete")} loading={busy}><CheckIcon/>Complete</Btn>
                       </>)}
-                      <button onClick={()=>setShowSkipFor(step.psrid)}
-                        style={{padding:"4px 12px",borderRadius:6,border:`1px solid ${G.border}`,background:"none",
-                          fontSize:12,fontFamily:G.mono,color:G.muted,cursor:"pointer"}}>
-                        Skip
-                      </button>
+                      <Btn size="sm" variant="ghost" onClick={()=>setShowSkipFor(step.psrid)}><SkipForwardIcon/>Skip</Btn>
                     </div>
                   )}
 
                   {/* Skip reason form */}
                   {isSkipOpen && (
-                    <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:6}}>
-                      <input value={skipReason} onChange={e=>setSkipReason(e.target.value)}
-                        placeholder="Reason for skipping (optional)"
-                        style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none",width:"100%",boxSizing:"border-box"}}/>
-                      <div style={{display:"flex",gap:6}}>
-                        <Btn size="sm" variant="danger" onClick={()=>handleSkip(step.psrid)} loading={busy}>⚠ Skip step</Btn>
-                        <button onClick={()=>{setShowSkipFor(null);setSkipReason("");}}
-                          style={{padding:"4px 12px",borderRadius:6,border:`1px solid ${G.border}`,background:"none",fontSize:12,fontFamily:G.mono,color:G.muted,cursor:"pointer"}}>
-                          Cancel
-                        </button>
+                    <form className="mt-3 flex flex-col gap-2 ps-8.5" onSubmit={e=>{ e.preventDefault(); handleSkip(step.psrid); }}>
+                      <CInput value={skipReason} onChange={e=>setSkipReason(e.target.value)} autoFocus
+                        placeholder="Reason for skipping (optional)" aria-label="Reason for skipping"/>
+                      <div className="flex gap-1.5">
+                        <Button type="submit" size="sm" variant="destructive" loading={busy}><SkipForwardIcon/>Skip step</Button>
+                        <Btn size="sm" variant="ghost" onClick={()=>{setShowSkipFor(null);setSkipReason("");}}>Cancel</Btn>
                       </div>
-                    </div>
+                    </form>
                   )}
-                </div>
+                </li>
               );
             })}
-          </div>
-        </div>
-      </div>
-    </>
+          </ol>
+        </SheetPanel>
+      </SheetPopup>
+    </Sheet>
   );
 }
 
@@ -7919,95 +7899,90 @@ function ExecutionsCalendar({ runs, onAction, onOpenDetail }) {
   const tickInterval = windowMins <= 240 ? 30 : windowMins <= 720 ? 60 : 120;
 
   const minToX = m => Math.max(0, (m / windowMins) * chartW);
-
-  const anchorLabel = new Date(anchorHour).toLocaleTimeString("en-GB", {hour:"2-digit", minute:"2-digit"});
+  const hm = d => new Date(d).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"});
+  const anchorLabel = hm(anchorHour);
 
   return (
-    <div style={{overflowX:"auto", background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:16, marginBottom:12}}>
-      <p style={{fontSize:11, color:G.muted, marginBottom:8}}>Timeline from {anchorLabel}</p>
-      <svg width={W} height={svgH}>
-        {Array.from({length: Math.ceil(windowMins / tickInterval) + 1}, (_,i) => i * tickInterval).map(m=>(
-          <g key={m}>
-            <line x1={labelW+minToX(m)} y1={0} x2={labelW+minToX(m)} y2={svgH}
-              stroke={G.border} strokeWidth={m%60===0?1:0.5}/>
-            <text x={labelW+minToX(m)+3} y={12} fontSize={9} fill={G.muted}>
-              {new Date(anchorHour + m*60000).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}
-            </text>
-          </g>
-        ))}
-        {runs.map((run,i)=>{
-          if (!run.started_at) return null;
-          const y   = 20 + i*rowH;
-          const col = RUN_COLS[run.status] || G.muted;
-          const startM = minsFromAnchor(run.started_at);
-          const endM   = run.completed_at ? minsFromAnchor(run.completed_at)
-            : run.status==="in_progress" ? minsFromAnchor(new Date().toISOString())
-            : startM + 30;
-          const x1 = labelW + minToX(startM);
-          const w  = Math.max(6, minToX(endM) - minToX(startM));
-          return (
-            <g key={run.prid}>
-              <text x={labelW-6} y={y+barH/2+4} fontSize={12} fontWeight="600" fill={G.dark}
-                textAnchor="end" dominantBaseline="middle">
-                {(run.process_name||"").slice(0,22)}
-              </text>
-              <rect x={x1} y={y} width={w} height={barH}
-                fill={`${col}28`} stroke={col} strokeWidth={1.5}
-                strokeDasharray={run.status==="on_hold"?"6,3":"none"} rx={5}/>
-              {w>55&&<text x={x1+6} y={y+18} fontSize={10} fill={col} fontWeight="600">
-                {run.status.replace("_"," ")}
-              </text>}
-              {w>80&&<text x={x1+6} y={y+32} fontSize={9} fill={G.muted}>
-                {new Date(run.started_at).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}
-                {run.completed_at&&` → ${new Date(run.completed_at).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}`}
-              </text>}
-            </g>
-          );
-        })}
-      </svg>
-      {/* Legend */}
-      <div style={{display:"flex",gap:16,marginTop:10,flexWrap:"wrap"}}>
-        {Object.entries(RUN_COLS).map(([s,c])=>(
-          <span key={s} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:c}}>
-            <span style={{width:12,height:12,borderRadius:3,background:`${c}30`,border:`1.5px solid ${c}`,display:"inline-block"}}/>
-            {s.replace("_"," ")}
-          </span>
-        ))}
-      </div>
-      {/* Run cards */}
-      <div style={{marginTop:16,display:"flex",flexDirection:"column",gap:8}}>
-        {runs.map(run=>{
-          const col = RUN_COLS[run.status]||G.muted;
-          return (
-            <div key={run.prid} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
-              padding:"10px 14px",background:G.sand,borderRadius:8}}>
-              <div style={{display:"flex",alignItems:"center",gap:10}}>
-                <button onClick={()=>onOpenDetail&&onOpenDetail(run)}
-                  style={{fontWeight:700,fontSize:14,color:G.caramel,background:"none",border:"none",cursor:"pointer",padding:0,fontFamily:G.mono,textDecoration:"underline",textDecorationColor:`${G.caramel}50`}}>
+    <Card className="mb-4">
+      <CardPanel className="flex flex-col gap-3 pt-5">
+        <p className="text-muted-foreground text-xs">Timeline from {anchorLabel}</p>
+        <div className="overflow-x-auto">
+          <svg width={W} height={svgH} className="text-foreground">
+            {Array.from({length: Math.ceil(windowMins / tickInterval) + 1}, (_,i) => i * tickInterval).map(m=>(
+              <g key={m}>
+                <line x1={labelW+minToX(m)} y1={0} x2={labelW+minToX(m)} y2={svgH}
+                  stroke="var(--border)" strokeWidth={m%60===0?1:0.5}/>
+                <text x={labelW+minToX(m)+3} y={12} fontSize={9} fill="var(--muted-foreground)">{hm(anchorHour + m*60000)}</text>
+              </g>
+            ))}
+            {runs.map((run,i)=>{
+              if (!run.started_at) return null;
+              const y   = 20 + i*rowH;
+              const col = RUN_COLS[run.status] || G.muted;
+              const startM = minsFromAnchor(run.started_at);
+              const endM   = run.completed_at ? minsFromAnchor(run.completed_at)
+                : run.status==="in_progress" ? minsFromAnchor(new Date().toISOString())
+                : startM + 30;
+              const x1 = labelW + minToX(startM);
+              const w  = Math.max(6, minToX(endM) - minToX(startM));
+              return (
+                <g key={run.prid} className={onOpenDetail?"cursor-pointer":""} onClick={()=>onOpenDetail&&onOpenDetail(run)}>
+                  <text x={labelW-8} y={y+barH/2} fontSize={12} fontWeight="600" fill="currentColor"
+                    textAnchor="end" dominantBaseline="middle">
+                    {(run.process_name||"").slice(0,22)}
+                  </text>
+                  <rect x={x1} y={y} width={w} height={barH}
+                    fill={`${col}28`} stroke={col} strokeWidth={1.5}
+                    strokeDasharray={run.status==="on_hold"?"6,3":"none"} rx={6}/>
+                  {w>55&&<text x={x1+7} y={y+15} fontSize={10} fill="currentColor" fontWeight="600">
+                    {RUN_STATUS[run.status]?.label||run.status.replace("_"," ")}
+                  </text>}
+                  {w>80&&<text x={x1+7} y={y+29} fontSize={9} fill="var(--muted-foreground)">
+                    {hm(run.started_at)}{run.completed_at&&` → ${hm(run.completed_at)}`}
+                  </text>}
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+        {/* Legend */}
+        <div className="flex flex-wrap gap-4">
+          {Object.entries(RUN_COLS).map(([s,c])=>(
+            <span key={s} className="flex items-center gap-1.5 text-muted-foreground text-xs">
+              <span className="inline-block size-3 rounded-[3px] border-[1.5px]" style={{ background:`${c}30`, borderColor:c }}/>
+              {RUN_STATUS[s]?.label||s}
+            </span>
+          ))}
+        </div>
+        {/* Run rows */}
+        <div className="mt-1 flex flex-col divide-y divide-border rounded-xl border border-border">
+          {runs.map(run=>(
+            <div key={run.prid} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
+              <div className="flex min-w-0 flex-wrap items-center gap-2.5">
+                <button type="button" data-slot="row-link" onClick={()=>onOpenDetail&&onOpenDetail(run)}
+                  className="truncate font-semibold text-sm underline decoration-dotted underline-offset-3 hover:decoration-solid">
                   {run.process_name}
                 </button>
-                <span style={{fontSize:12,padding:"2px 10px",borderRadius:20,background:`${col}20`,color:col,fontWeight:600}}>
-                  {run.status.replace("_"," ")}
-                </span>
-                {run.started_at&&<span style={{fontSize:12,color:G.muted}}>
+                <RunStatusBadge status={run.status}/>
+                {run.started_at&&<span className="text-muted-foreground text-xs">
                   {new Date(run.started_at).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}
                 </span>}
               </div>
-              <div style={{display:"flex",gap:6}}>
+              <div className="flex gap-1">
                 {run.status==="in_progress"&&<>
-                  <Btn size="sm" variant="secondary" onClick={()=>onAction(run.prid,"pause")}>⏸</Btn>
-                  <Btn size="sm" variant="danger"    onClick={()=>onAction(run.prid,"stop")}>⏹</Btn>
+                  <Button size="icon-sm" variant="outline" aria-label="Pause" title="Pause" onClick={()=>onAction(run.prid,"pause")}><PauseIcon/></Button>
+                  <Button size="icon-sm" variant="destructive-outline" aria-label="Stop" title="Stop" onClick={()=>onAction(run.prid,"stop")}><SquareIcon/></Button>
                 </>}
                 {run.status==="on_hold"&&<>
-                  <Btn size="sm" onClick={()=>onAction(run.prid,"resume")}>▶</Btn>
-                  <Btn size="sm" variant="danger" onClick={()=>onAction(run.prid,"stop")}>⏹</Btn>
+                  <Button size="icon-sm" variant="outline" aria-label="Resume" title="Resume" onClick={()=>onAction(run.prid,"resume")}><PlayIcon/></Button>
+                  <Button size="icon-sm" variant="destructive-outline" aria-label="Stop" title="Stop" onClick={()=>onAction(run.prid,"stop")}><SquareIcon/></Button>
                 </>}
               </div>
             </div>
-          );
-        })}
-      </div>
-    </div>
+          ))}
+        </div>
+      </CardPanel>
+    </Card>
   );
 }
 
@@ -8016,44 +7991,231 @@ function ExecutionsCalendar({ runs, onAction, onOpenDetail }) {
 function SkillComboWithProcesses({ allItems, onAdd, onCreateSkill }) {
   const [input, setInput] = useState("");
   const [open, setOpen]   = useState(false);
+  const [hiSel, setHi]    = useState(null);
+  const [rect, setRect]   = useState(null);
+  const ref = useRef(null);
 
   const filtered = allItems.filter(s=>s.name.toLowerCase().includes(input.toLowerCase()));
   const canCreate = onCreateSkill && input.trim() &&
     !allItems.find(s=>s.name.toLowerCase()===input.trim().toLowerCase() && !s._isProcess && !s._isRole);
+  const options = [...(canCreate?[{ _create:true }]:[]), ...filtered];
+  // Enter picks the first matching item (as before); "Add skill" only when nothing matches
+  const hi = hiSel ?? (canCreate && filtered.length ? 1 : 0);
 
-  const select = item => { onAdd(item); setInput(""); setOpen(false); };
+  useEffect(()=>{
+    if (!open) return;
+    const upd = () => { const r = ref.current?.getBoundingClientRect(); if (r) setRect({ bottom:r.bottom, left:r.left, width:r.width }); };
+    upd();
+    window.addEventListener("scroll", upd, true); window.addEventListener("resize", upd);
+    return () => { window.removeEventListener("scroll", upd, true); window.removeEventListener("resize", upd); };
+  },[open]);
+
+  const select = item => { onAdd(item); setInput(""); setOpen(false); setHi(null); };
+  const pick = async o => {
+    if (o._create) { const s = await onCreateSkill(input.trim()); if (s) select(s); }
+    else select(o);
+  };
 
   return (
-    <div style={{position:"relative"}}>
-      <input value={input} onChange={e=>{ setInput(e.target.value); setOpen(true); }}
+    <div className="relative w-full" ref={ref}>
+      <CInput value={input} onChange={e=>{ setInput(e.target.value); setOpen(true); setHi(null); }} size="lg"
         onFocus={()=>setOpen(true)} onBlur={()=>setTimeout(()=>setOpen(false),150)}
-        onKeyDown={e=>{ if(e.key==="Escape") setOpen(false); if(e.key==="Enter"&&filtered.length) select(filtered[0]); }}
-        placeholder="Type to search processes or skills…"
-        style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}/>
-      {open&&(filtered.length>0||canCreate)&&(
-        <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,background:G.white,border:`1px solid ${G.border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(44,24,16,0.12)",zIndex:500,maxHeight:240,overflowY:"auto"}}>
-          {canCreate&&(
-            <button onMouseDown={async()=>{ const s=await onCreateSkill(input.trim()); if(s) select(s); }}
-              style={{width:"100%",textAlign:"left",padding:"9px 14px",background:"none",border:"none",cursor:"pointer",fontSize:13,fontFamily:G.mono,color:G.caramel,fontWeight:600,borderBottom:`1px solid ${G.border}`}}>
-              + Add skill "{input.trim()}"
-            </button>
-          )}
-          {filtered.map(item=>(
-            <button key={item.skid} onMouseDown={()=>select(item)}
-              style={{width:"100%",textAlign:"left",padding:"9px 14px",background:"none",border:"none",cursor:"pointer",fontSize:13,fontFamily:G.mono,color:G.dark,display:"flex",alignItems:"center",gap:8}}
-              onMouseEnter={e=>e.currentTarget.style.background=G.sand}
-              onMouseLeave={e=>e.currentTarget.style.background="none"}>
-              {item._isProcess&&<span style={{fontSize:10,background:`${G.caramel}20`,color:G.caramel,borderRadius:4,padding:"1px 6px",fontWeight:700,flexShrink:0}}>PROCESS</span>}
-              <span style={{fontWeight:item._isProcess?700:400}}>{item.name}</span>
+        onKeyDown={e=>{
+          if (e.key==="ArrowDown") { e.preventDefault(); setOpen(true); setHi(Math.min(hi+1, options.length-1)); }
+          if (e.key==="ArrowUp")   { e.preventDefault(); setHi(Math.max(hi-1, 0)); }
+          if (e.key==="Escape" && open && options.length) { e.stopPropagation(); e.nativeEvent.stopImmediatePropagation?.(); setOpen(false); }
+          if (e.key==="Enter" && options.length) { e.preventDefault(); const o = options[Math.min(hi, options.length-1)]; if (o) pick(o); }
+        }}
+        placeholder="Type to search processes or skills…" aria-label="Add a step"/>
+      {open&&options.length>0&&rect&&createPortal(
+        <div data-slot="skill-combo-popup" role="listbox"
+          style={{ position:"fixed", top:rect.bottom+4, left:rect.left, width:rect.width, zIndex:2500 }}
+          className="max-h-60 overflow-y-auto rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg/5">
+          {options.map((item,i)=>(
+            <button type="button" key={item._create?"__new":`${item._isProcess?"p":"s"}${item.skid}`} data-slot="skill-combo-item" role="option" aria-selected={i===hi}
+              onMouseDown={e=>{ e.preventDefault(); pick(item); }} onMouseEnter={()=>setHi(i)}
+              className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-start text-sm ${i===hi?"bg-accent text-accent-foreground":""}`}>
+              {item._create
+                ? <><PlusIcon className="size-4 text-brand"/><span>Add skill <span className="font-semibold">“{input.trim()}”</span></span></>
+                : <>
+                    {item._isProcess&&<CBadge variant="outline" size="sm" className="border-transparent bg-brand/16 font-bold text-[10px] text-accent-foreground uppercase tracking-wide">Process</CBadge>}
+                    <span className={item._isProcess?"font-semibold":""}>{item.name}</span>
+                  </>}
             </button>
           ))}
-        </div>
+        </div>, document.body
       )}
     </div>
   );
 }
 
+// ── MiniGantt — per-process Gantt chart embedded in each process card (module level so its view toggle keeps state)
+const procToMins = (dur,unit) => {
+  if (!dur) return 0;
+  if (unit==="seconds") return Number(dur)/60;
+  if (unit==="hours")   return Number(dur)*60;
+  return Number(dur);
+};
+function MiniGantt({ proc, forcedView }) {
+  const skills = proc.skills || [];
+  const [viewSel, setView] = useState(forcedView || null);
+  if (!skills.length) return null;
 
+  // Compute max end time in minutes (layout in minutes, then scale to pixels)
+  const placed = {}; // psid → { x1Mins, x2Mins }
+  let cursor = 0;
+  skills.forEach(sk => {
+    const durMins = Math.max(1, procToMins(sk.duration, sk.duration_unit) || 30);
+    const pred = sk.dep_psid ? placed[sk.dep_psid] : null;
+    let x1;
+    if (!pred) {
+      x1 = cursor;
+    } else if (sk.dep_type === "SS") { x1 = pred.x1; }
+    else if (sk.dep_type === "FF")   { x1 = pred.x2 - durMins; }
+    else if (sk.dep_type === "SF")   { x1 = pred.x1 - durMins; }
+    else                              { x1 = pred.x2; } // FS / default
+    x1 = Math.max(0, x1);
+    placed[sk.psid] = { x1, x2: x1 + durMins, durMins };
+    if (!pred) cursor = x1 + durMins;
+  });
+  const maxMins = Object.values(placed).reduce((m, b) => Math.max(m, b.x2), 0);
+
+  // Auto-choose view: week if > 10h (600min), day otherwise. Allow manual toggle.
+  const autoView = maxMins > 600 ? "week" : "day";
+  const view = viewSel || autoView;
+  // Window: day = nearest hour above maxMins; week = nearest day above maxMins
+  const windowMins = view === "week"
+    ? Math.max(1440, Math.ceil(maxMins / 1440) * 1440)
+    : Math.max(60, Math.ceil(maxMins / 60) * 60);
+
+  const barH = 26, rowGap = 6, trackH = barH + rowGap;
+  const labelW = 130, W = 700, chartW = W - labelW - 8;
+  const minToX = m => Math.max(0, (m / windowMins) * chartW);
+  const svgH = skills.length * trackH + 28;
+
+  // Build pixel-placed blocks
+  const blocks = {};
+  skills.forEach((sk, idx) => {
+    const b = placed[sk.psid];
+    if (!b) return;
+    blocks[sk.psid] = {
+      px1: labelW + minToX(b.x1),
+      px2: labelW + minToX(b.x2),
+      pw:  Math.max(8, minToX(b.x2) - minToX(b.x1)),
+      y:   20 + idx * trackH,
+    };
+  });
+
+  // Arrows
+  const arrows = [];
+  skills.forEach(sk => {
+    if (!sk.dep_type || !sk.dep_psid) return;
+    const src = blocks[sk.dep_psid], tgt = blocks[sk.psid];
+    if (!src || !tgt) return;
+    const dep = sk.dep_type;
+    let ax, ay, bx, by;
+    if      (dep==="FS"){ ax=src.px2; ay=src.y+barH/2; bx=tgt.px1; by=tgt.y+barH/2; }
+    else if (dep==="SS"){ ax=src.px1; ay=src.y+barH;   bx=tgt.px1; by=tgt.y; }
+    else if (dep==="FF"){ ax=src.px2; ay=src.y+barH;   bx=tgt.px2; by=tgt.y; }
+    else if (dep==="SF"){ ax=src.px1; ay=src.y+barH;   bx=tgt.px2; by=tgt.y; }
+    else                { ax=src.px2; ay=src.y+barH/2; bx=tgt.px1; by=tgt.y+barH/2; }
+    let d;
+    if (Math.abs(ay-by) < 3) {
+      d = `M${ax},${ay} L${bx},${by}`;
+    } else if (dep==="FS") {
+      const ex = ax + 6;
+      d = `M${ax},${ay} L${ex},${ay} L${ex},${by} L${bx},${by}`;
+    } else {
+      const midY = (ay+by)/2;
+      d = `M${ax},${ay} C${ax},${midY} ${bx},${midY} ${bx},${by}`;
+    }
+    arrows.push({ d, dep });
+  });
+
+  // Ticks: day view = hours, week view = days
+  const tickUnit = view === "week" ? 1440 : 60;
+  const ticks = Array.from({ length: Math.ceil(windowMins / tickUnit) + 1 }, (_, i) => i * tickUnit);
+  const fmtTick = m => view === "week"
+    ? (m === 0 ? "Start" : `Day ${m/1440 + 1}`)
+    : `${String(Math.floor(m/60)).padStart(2,"0")}:00`;
+  const majorTick = view === "week" ? 1440 : 120;
+
+  return (
+    <div data-slot="mini-gantt" className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-2">
+        <span className="text-muted-foreground text-xs">View</span>
+        <SegmentedControl className="h-7 p-0.5">
+          {["day","week"].map(v=>(
+            <SegmentedControlItem key={v} data-checked={view===v?"":undefined} aria-pressed={view===v} onClick={()=>setView(v)} className="h-6 px-2.5 text-xs">
+              {v==="day"?"Day":"Week"}
+            </SegmentedControlItem>
+          ))}
+        </SegmentedControl>
+      </div>
+      <div className="overflow-x-auto">
+        <svg width={W} height={svgH} className="block text-muted-foreground">
+          <defs>
+            <marker id={`arr-${proc.procid}`} markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <polygon points="0 0, 6 3, 0 6" fill="currentColor"/>
+            </marker>
+          </defs>
+          {/* Day/week shading: alternate columns for week view */}
+          {view==="week" && ticks.filter(m=>m>0).map(m => (
+            (m/1440)%2===0 && (
+              <rect key={m} x={labelW+minToX(m-1440)} y={14} width={minToX(1440)} height={svgH-14} fill="var(--muted)"/>
+            )
+          ))}
+          {/* Grid lines */}
+          {ticks.map(m => (
+            <g key={m}>
+              <line x1={labelW+minToX(m)} y1={14} x2={labelW+minToX(m)} y2={svgH}
+                stroke="var(--border)" strokeWidth={m%majorTick===0 ? 1 : 0.4}/>
+              {m%majorTick===0 && (
+                <text x={labelW+minToX(m)+3} y={10} fontSize={9} fill="currentColor">{fmtTick(m)}</text>
+              )}
+            </g>
+          ))}
+          {/* Step rows */}
+          {skills.map((sk, idx) => {
+            const b = blocks[sk.psid];
+            if (!b) return null;
+            const color = sk.color || G.muted;
+            return (
+              <g key={sk.psid}>
+                {idx%2===1&&<rect x={labelW} y={b.y} width={chartW} height={barH} fill="var(--muted)"/>}
+                <text x={labelW-6} y={b.y+barH/2+1} fontSize={10} fill="currentColor" textAnchor="end" dominantBaseline="middle">
+                  {sk.name.slice(0,17)}
+                </text>
+                <rect x={b.px1} y={b.y+2} width={b.pw} height={barH-4} fill={`${color}30`} stroke={color} strokeWidth={1.5} rx={5}/>
+                {b.pw > 32 && (
+                  <text x={b.px1+5} y={b.y+barH/2+1} fontSize={9} fill="var(--foreground)" fontWeight="600" dominantBaseline="middle">
+                    {intDur(sk.duration)}{durAbbr(sk.duration_unit)}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+          {/* Dependency arrows */}
+          {arrows.map((a,i) => (
+            <path key={i} d={a.d} fill="none" stroke="currentColor" strokeWidth="1.2"
+              markerEnd={`url(#arr-${proc.procid})`} strokeLinejoin="round"/>
+          ))}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+// Compact coss select for table cells; items = [{label, value}]
+function MiniSelect({ value, onChange, items, disabled, className="", ...rest }) {
+  const cur = value==null ? "" : String(value);
+  return (
+    <CSelect items={items} value={cur} onValueChange={v=>onChange(v??"")} disabled={disabled}>
+      <SelectTrigger size="sm" className={`min-w-0 ${className}`} {...rest}><SelectValue/></SelectTrigger>
+      <SelectPopup>{items.map(it=><SelectItem key={it.value} value={it.value} title={it.title}>{it.label}</SelectItem>)}</SelectPopup>
+    </CSelect>
+  );
+}
 
 // ─── PROCESSES PAGE ────────────────────────────────────────────────────────────
 function ProcessesPage({ user, setPage, toast }) {
@@ -8077,6 +8239,8 @@ function ProcessesPage({ user, setPage, toast }) {
   const [execPeriod, setExecPeriod] = useState("week"); // "day" | "week"
   const [execDate,   setExecDate]   = useState(() => new Date().toISOString().slice(0,10));
   const [selectedRun, setSelectedRun] = useState(null); // run with steps for sidebar
+  const [startingId, setStartingId] = useState(null);
+  const [delProc, setDelProc] = useState(null);
 
   const load = useCallback(async()=>{
     setLoading(true);
@@ -8228,8 +8392,9 @@ function ProcessesPage({ user, setPage, toast }) {
     } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
   };
 
+  const runProc = async proc => { setStartingId(proc.procid); try { await handleRunProcess(proc); } finally { setStartingId(null); } };
   const deleteProcess = async id => {
-    if (!window.confirm("Delete this process?")) return;
+    setDelProc(null);
     try { await api.deleteProcess(id); setProcesses(p=>p.filter(x=>x.procid!==id)); toast("Deleted"); }
     catch(e){ toast(e.message,"error"); }
   };
@@ -8264,167 +8429,6 @@ function ProcessesPage({ user, setPage, toast }) {
     return parts.join(' ');
   };
 
-  // ── MiniGantt — per-process Gantt chart embedded in each process card ────────
-  const MiniGantt = ({ proc, forcedView }) => {
-    const skills = proc.skills || [];
-    if (!skills.length) return null;
-
-    // Compute max end time in minutes (layout in minutes, then scale to pixels)
-    const placed = {}; // psid → { x1Mins, x2Mins }
-    let cursor = 0;
-    skills.forEach(sk => {
-      const durMins = Math.max(1, toMins(sk.duration, sk.duration_unit) || 30);
-      const pred = sk.dep_psid ? placed[sk.dep_psid] : null;
-      let x1;
-      if (!pred) {
-        x1 = cursor;
-      } else if (sk.dep_type === "SS") { x1 = pred.x1; }
-      else if (sk.dep_type === "FF")   { x1 = pred.x2 - durMins; }
-      else if (sk.dep_type === "SF")   { x1 = pred.x1 - durMins; }
-      else                              { x1 = pred.x2; } // FS / default
-      x1 = Math.max(0, x1);
-      placed[sk.psid] = { x1, x2: x1 + durMins, durMins };
-      if (!pred) cursor = x1 + durMins;
-    });
-    const maxMins = Object.values(placed).reduce((m, b) => Math.max(m, b.x2), 0);
-
-    // Auto-choose view: week if > 10h (600min), day otherwise. Allow manual toggle.
-    const autoView = maxMins > 600 ? "week" : "day";
-    const [view, setView] = useState(forcedView || autoView);
-    // Window: day = nearest hour above maxMins; week = nearest day above maxMins
-    const windowMins = view === "week"
-      ? Math.max(1440, Math.ceil(maxMins / 1440) * 1440)
-      : Math.max(60, Math.ceil(maxMins / 60) * 60);
-
-    const barH = 26, rowGap = 6, trackH = barH + rowGap;
-    const labelW = 130, W = 700, chartW = W - labelW - 8;
-    const minToX = m => Math.max(0, (m / windowMins) * chartW);
-    const svgH = skills.length * trackH + 28;
-
-    // Build pixel-placed blocks
-    const blocks = {};
-    skills.forEach((sk, idx) => {
-      const b = placed[sk.psid];
-      if (!b) return;
-      blocks[sk.psid] = {
-        px1: labelW + minToX(b.x1),
-        px2: labelW + minToX(b.x2),
-        pw:  Math.max(8, minToX(b.x2) - minToX(b.x1)),
-        y:   20 + idx * trackH,
-      };
-    });
-
-    // Arrows
-    const arrows = [];
-    skills.forEach(sk => {
-      if (!sk.dep_type || !sk.dep_psid) return;
-      const src = blocks[sk.dep_psid], tgt = blocks[sk.psid];
-      if (!src || !tgt) return;
-      const dep = sk.dep_type;
-      let ax, ay, bx, by;
-      if      (dep==="FS"){ ax=src.px2; ay=src.y+barH/2; bx=tgt.px1; by=tgt.y+barH/2; }
-      else if (dep==="SS"){ ax=src.px1; ay=src.y+barH;   bx=tgt.px1; by=tgt.y; }
-      else if (dep==="FF"){ ax=src.px2; ay=src.y+barH;   bx=tgt.px2; by=tgt.y; }
-      else if (dep==="SF"){ ax=src.px1; ay=src.y+barH;   bx=tgt.px2; by=tgt.y; }
-      else                { ax=src.px2; ay=src.y+barH/2; bx=tgt.px1; by=tgt.y+barH/2; }
-      let d;
-      if (Math.abs(ay-by) < 3) {
-        d = `M${ax},${ay} L${bx},${by}`;
-      } else if (dep==="FS") {
-        const ex = ax + 6;
-        d = `M${ax},${ay} L${ex},${ay} L${ex},${by} L${bx},${by}`;
-      } else {
-        const midY = (ay+by)/2;
-        d = `M${ax},${ay} C${ax},${midY} ${bx},${midY} ${bx},${by}`;
-      }
-      arrows.push({ d, dep });
-    });
-
-    // Ticks: day view = hours, week view = days
-    const tickUnit = view === "week" ? 1440 : 60;
-    const ticks = Array.from({ length: Math.ceil(windowMins / tickUnit) + 1 }, (_, i) => i * tickUnit);
-    const fmtTick = m => view === "week"
-      ? (m === 0 ? "Start" : `Day ${m/1440 + 1}`)
-      : `${String(Math.floor(m/60)).padStart(2,"0")}:00`;
-    const majorTick = view === "week" ? 1440 : 120;
-
-    return (
-      <div style={{ marginTop:12, marginBottom:8 }}>
-        {/* Toggle */}
-        <div style={{ display:"flex", gap:6, marginBottom:6, alignItems:"center" }}>
-          <span style={{ fontSize:11, color:G.muted }}>View:</span>
-          {["day","week"].map(v => (
-            <button key={v} onClick={() => setView(v)}
-              style={{ padding:"2px 10px", borderRadius:5, border:`1px solid ${view===v?G.caramel:G.border}`,
-                background: view===v?G.caramel:G.white, color: view===v?G.white:G.dark,
-                fontSize:11, fontFamily:G.mono, fontWeight:600, cursor:"pointer" }}>
-              {v==="day"?"Day":"Week"}
-            </button>
-          ))}
-        </div>
-        <div style={{ overflowX:"auto" }}>
-          <svg width={W} height={svgH} style={{ display:"block", fontFamily:G.mono }}>
-            <defs>
-              <marker id={`arr-${proc.procid}`} markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-                <polygon points="0 0, 6 3, 0 6" fill="#888"/>
-              </marker>
-            </defs>
-            {/* Grid lines */}
-            {ticks.map(m => (
-              <g key={m}>
-                <line x1={labelW+minToX(m)} y1={14} x2={labelW+minToX(m)} y2={svgH}
-                  stroke={G.border} strokeWidth={m%majorTick===0 ? 1 : 0.4}/>
-                {m%majorTick===0 && (
-                  <text x={labelW+minToX(m)+3} y={10} fontSize={8} fill={G.muted}>{fmtTick(m)}</text>
-                )}
-              </g>
-            ))}
-            {/* Day/week shading: alternate columns for week view */}
-            {view==="week" && ticks.filter(m=>m>0).map(m => (
-              (m/1440)%2===0 && (
-                <rect key={m} x={labelW+minToX(m-1440)} y={14} width={minToX(1440)} height={svgH-14}
-                  fill={`${G.sand}50`}/>
-              )
-            ))}
-            {/* Step rows */}
-            {skills.map((sk, idx) => {
-              const b = blocks[sk.psid];
-              if (!b) return null;
-              const color = sk.color || G.muted;
-              return (
-                <g key={sk.psid}>
-                  {/* Stripe */}
-                  <rect x={labelW} y={b.y} width={chartW} height={barH}
-                    fill={idx%2===0 ? "transparent" : `${G.sand}40`}/>
-                  {/* Step name label */}
-                  <text x={labelW-5} y={b.y+barH/2+1} fontSize={9} fill={G.muted}
-                    textAnchor="end" dominantBaseline="middle">
-                    {sk.name.slice(0,17)}
-                  </text>
-                  {/* Bar */}
-                  <rect x={b.px1} y={b.y+2} width={b.pw} height={barH-4}
-                    fill={`${color}30`} stroke={color} strokeWidth={1.5} rx={4}/>
-                  {/* Duration label inside bar */}
-                  {b.pw > 32 && (
-                    <text x={b.px1+5} y={b.y+barH/2+1} fontSize={8} fill={color}
-                      fontWeight="600" dominantBaseline="middle">
-                      {intDur(sk.duration)}{durAbbr(sk.duration_unit)}
-                    </text>
-                  )}
-                </g>
-              );
-            })}
-            {/* Dependency arrows */}
-            {arrows.map((a,i) => (
-              <path key={i} d={a.d} fill="none" stroke="#999" strokeWidth="1.2"
-                markerEnd={`url(#arr-${proc.procid})`} strokeLinejoin="round"/>
-            ))}
-          </svg>
-        </div>
-      </div>
-    );
-  };
-
   // Items for combo: processes (bold) + skills only — no roles
   const allItems = [
     ...processes.filter(p=>p.procid!==editProc?.procid).map(p=>({
@@ -8433,174 +8437,173 @@ function ProcessesPage({ user, setPage, toast }) {
     ...skills,
   ];
 
+  const closeForm = () => { setShowForm(false); setEditProc(null); setFormName(""); setFormSkills([]); setNameError(""); };
+  const H = "h-10 px-3 font-semibold text-[11px] text-muted-foreground uppercase tracking-wider whitespace-nowrap";
+  const shiftExec = dir => {
+    const d = new Date(execDate+"T00:00:00");
+    d.setDate(d.getDate() + dir * (execPeriod==="week" ? 7 : 1));
+    setExecDate(d.toISOString().slice(0,10));
+  };
+  const sd = startDialog;
+  const setSel = fn => setStartDialog(d=>({...d, selectedItems:fn(d.selectedItems)}));
+
   return (
-    <Page title={tl("Processes")} actions={
-      <div style={{display:"flex",gap:10}}>
-        {user?.employer_uid && !user?.is_manufacturer && (
-          <Btn variant="secondary" size="sm" onClick={()=>setPage("processes-emp")}>Executions →</Btn>
-        )}
-        <Btn size="sm" onClick={openNew}>+ Process</Btn>
-      </div>
-    }>
+    <Page title={tl("Processes")} actions={<>
+      {user?.employer_uid && !user?.is_manufacturer && (
+        <Btn variant="secondary" size="sm" onClick={()=>setPage("processes-emp")}>Executions<ChevronRightIcon/></Btn>
+      )}
+      <Btn size="sm" onClick={openNew}><PlusIcon/>Process</Btn>
+    </>}>
       {showForm&&(
-        <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
-          <div style={{marginBottom:18}}>
-            <input value={formName} onChange={e=>{ setFormName(e.target.value); setNameError(""); }}
-              placeholder={editProc?"Process name…":"New process name…"}
-              style={{ border:"none", borderBottom:`2px solid ${nameError?G.red:G.caramel}`, outline:"none", fontSize:20, fontFamily:G.font, fontWeight:700, color:G.dark, width:"100%", paddingBottom:6, background:"transparent" }}/>
-            {nameError&&<p style={{fontSize:12,color:G.red,marginTop:6,lineHeight:1.5}}>{nameError}</p>}
-          </div>
+        <Card className="mb-6" style={{ animation:"fadeIn 0.2s ease" }}>
+          <CardHeader>
+            <CardTitle className="font-heading text-lg">{editProc?"Edit process":"New process"}</CardTitle>
+            <CardAction><Button variant="ghost" size="icon-sm" aria-label="Close" onClick={closeForm}><XIcon/></Button></CardAction>
+          </CardHeader>
+          <CardPanel className="flex flex-col gap-5">
+            <Field invalid={!!nameError} className="gap-1.5">
+              <FieldLabel>Process name<span className="text-brand">*</span></FieldLabel>
+              <CInput size="lg" value={formName} onChange={e=>{ setFormName(e.target.value); setNameError(""); }} autoFocus={!editProc}
+                aria-invalid={nameError?true:undefined}
+                placeholder={editProc?"Process name…":"New process name…"} className="font-heading font-semibold text-lg"/>
+              {nameError&&<p className="text-destructive-foreground text-xs leading-relaxed">{nameError}</p>}
+            </Field>
 
-          <div style={{ marginBottom:16 }}>
-            <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:6}}>Add processes / skills</label>
-            {/* Custom combo showing processes in bold */}
-            <SkillComboWithProcesses allItems={allItems} onAdd={addToForm} onCreateSkill={createSkill}/>
-          </div>
+            <FieldBlock label="Add processes / skills" hint="Adding a process copies all of its steps.">
+              <SkillComboWithProcesses allItems={allItems} onAdd={addToForm} onCreateSkill={createSkill}/>
+            </FieldBlock>
 
-          {formSkills.length>0&&(
-            <div style={{ border:`1px solid ${G.border}`, borderRadius:10, overflow:"hidden", marginBottom:16 }}>
-              <table style={{ width:"100%", borderCollapse:"collapse" }}>
-                <thead>
-                  <tr style={{ background:G.sand }}>
-                    {["#","Skill / Step","Duration","Repeat every","Times","Dep. type","Depends on",""].map(h=>(
-                      <th key={h} style={{padding:"8px 12px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,whiteSpace:"nowrap"}}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {formSkills.map((sk,i)=>(
-                    <tr key={`${sk.skid}-${i}`} style={{ borderTop:`1px solid ${G.border}` }}>
-                      <td style={{padding:"8px 12px",fontSize:13,color:G.muted,fontFamily:G.mono,fontWeight:700}}>{i+1}</td>
-                      <td style={{padding:"8px 12px"}}>
-                        <span style={{fontSize:13,fontWeight:600,color:sk.color||G.dark}}>{sk.name}</span>
-                        {sk._procRef&&<span style={{fontSize:10,color:G.muted,marginLeft:6}}>from {sk._procRef}</span>}
-                      </td>
-                      <td style={{padding:"8px 12px"}}>
-                        <div style={{display:"flex",gap:5,alignItems:"center"}}>
-                          <input type="number" min="0" step="1" value={intDur(sk.duration)||""} onChange={e=>updateRow(i,"duration", Math.max(0, parseInt(e.target.value,10)||0))} placeholder="0"
-                            style={{width:52,padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",borderColor:Number(sk.duration)<0?G.red:G.border}}/>
-                          <select value={sk.duration_unit||"minutes"} onChange={e=>updateRow(i,"duration_unit",e.target.value)}
-                            style={{padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
-                            {DUR_UNITS.map(u=><option key={u.value} value={u.value}>{u.label}</option>)}
-                          </select>
-                        </div>
-                      </td>
-                      <td style={{padding:"8px 12px"}}>
-                        <div style={{display:"flex",gap:5,alignItems:"center"}}>
-                          <input type="number" min="1" value={sk.recur_every||""} onChange={e=>updateRow(i,"recur_every",e.target.value?Math.max(1,parseInt(e.target.value)||1):"")} placeholder="—"
-                            style={{width:44,padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}/>
-                          <select value={sk.recur_unit||"hours"} onChange={e=>updateRow(i,"recur_unit",e.target.value)}
-                            disabled={!sk.recur_every}
-                            style={{padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none",background:!sk.recur_every?G.sand:G.white}}>
-                            <option value="hours">hrs</option>
-                            <option value="days">days</option>
-                          </select>
-                        </div>
-                      </td>
-                      <td style={{padding:"8px 12px"}}>
-                        <input type="number" min="1" step="1" value={sk.recur_times||""} onChange={e=>updateRow(i,"recur_times",e.target.value?Math.max(1,Math.round(Number(e.target.value))||1):"")} placeholder="—"
-                          disabled={!sk.recur_every}
-                          title="How many times this step recurs (multiplies duration)"
-                          style={{width:52,padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",background:!sk.recur_every?G.sand:G.white}}/>
-                      </td>
-                      <td style={{padding:"8px 12px"}}>
-                        <select value={sk.dep_type||""} onChange={e=>updateRow(i,"dep_type",e.target.value)}
-                          style={{padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
-                          <option value="">—</option>
-                          {DEP_TYPES.map(d=><option key={d.value} value={d.value} title={d.label}>{d.value}</option>)}
-                        </select>
-                        {sk.dep_type&&<div style={{fontSize:9,color:G.muted,marginTop:2,maxWidth:90}}>{DEP_TYPES.find(d=>d.value===sk.dep_type)?.label}</div>}
-                      </td>
-                      <td style={{padding:"8px 12px"}}>
-                        <select value={sk.dep_seq||""} onChange={e=>updateRow(i,"dep_seq",e.target.value)}
-                          disabled={!sk.dep_type}
-                          style={{padding:"5px 7px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none",background:!sk.dep_type?G.sand:G.white,minWidth:100}}>
-                          <option value="">Select…</option>
-                          {formSkills.filter((_,j)=>j!==i).map(other=>{
-                            const idx=formSkills.indexOf(other);
-                            return <option key={`${other.skid}-${idx}`} value={idx+1}>{idx+1}. {other.name}</option>;
-                          })}
-                        </select>
-                      </td>
-                      <td style={{padding:"8px 12px"}}>
-                        <div style={{display:"flex",gap:3}}>
-                          <button onClick={()=>moveRow(i,-1)} disabled={i===0} style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:G.muted,opacity:i===0?0.3:1,padding:"2px 3px"}}>↑</button>
-                          <button onClick={()=>moveRow(i,1)} disabled={i===formSkills.length-1} style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:G.muted,opacity:i===formSkills.length-1?0.3:1,padding:"2px 3px"}}>↓</button>
-                          <button onClick={()=>removeRow(i)} style={{background:"none",border:"none",cursor:"pointer",color:G.red,fontSize:16,padding:"2px 3px"}}>×</button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                  <tr style={{ borderTop:`2px solid ${G.border}`, background:G.sand }}>
-                    <td colSpan={2} style={{padding:"8px 12px",fontSize:13,fontWeight:700}}>Total</td>
-                    <td style={{padding:"8px 12px",fontSize:13,fontWeight:700,color:G.caramel}}>{fmtTotalMins(totalMins)}</td>
-                    <td colSpan={5}/>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          <div style={{display:"flex",gap:10}}>
+            {formSkills.length>0&&(
+              <div className="overflow-x-auto rounded-xl border border-border [&_thead_tr]:bg-muted">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className={`${H} w-8`}>#</TableHead>
+                      <TableHead className={H}>Skill / Step</TableHead>
+                      <TableHead className={H}>Duration</TableHead>
+                      <TableHead className={H}>Repeat every</TableHead>
+                      <TableHead className={H}>Times</TableHead>
+                      <TableHead className={H}>Dep. type</TableHead>
+                      <TableHead className={H}>Depends on</TableHead>
+                      <TableHead className="w-24"/>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {formSkills.map((sk,i)=>{
+                      const depItems = [{label:"Select…", value:""}, ...formSkills.map((o,j)=>j===i?null:{ label:`${j+1}. ${o.name}`, value:String(j+1) }).filter(Boolean)];
+                      return (
+                        <TableRow key={`${sk.skid}-${i}`} data-slot="process-step-row" className="align-top">
+                          <TableCell className="px-3 pt-4 font-bold font-mono text-muted-foreground text-xs">{i+1}</TableCell>
+                          <TableCell className="min-w-36 whitespace-normal px-3 pt-3.5">
+                            <span className={`font-semibold text-sm ${SKILL_INK}`} style={{ "--ink":sk.color||"var(--foreground)" }}>{sk.name}</span>
+                            {sk._procRef&&<div className="text-muted-foreground text-xs">from {sk._procRef}</div>}
+                          </TableCell>
+                          <TableCell className="px-3 py-2.5">
+                            <div className="flex items-center gap-1.5">
+                              <CInput type="number" size="sm" aria-label="Duration" value={intDur(sk.duration)||""} placeholder="0" className="w-16"
+                                onChange={e=>updateRow(i,"duration", Math.max(0, parseInt(e.target.value,10)||0))}/>
+                              <MiniSelect aria-label="Duration unit" value={sk.duration_unit||"minutes"} onChange={v=>updateRow(i,"duration_unit",v)}
+                                items={DUR_UNITS.map(u=>({ label:u.label, value:u.value }))} className="w-20"/>
+                            </div>
+                          </TableCell>
+                          <TableCell className="px-3 py-2.5">
+                            <div className="flex items-center gap-1.5">
+                              <CInput type="number" size="sm" aria-label="Repeat every" value={sk.recur_every||""} placeholder="—" className="w-14"
+                                onChange={e=>updateRow(i,"recur_every",e.target.value?Math.max(1,parseInt(e.target.value)||1):"")}/>
+                              <MiniSelect aria-label="Repeat unit" value={sk.recur_unit||"hours"} onChange={v=>updateRow(i,"recur_unit",v)} disabled={!sk.recur_every}
+                                items={[{label:"hrs",value:"hours"},{label:"days",value:"days"}]} className="w-20"/>
+                            </div>
+                          </TableCell>
+                          <TableCell className="px-3 py-2.5">
+                            <CInput type="number" size="sm" aria-label="Times" value={sk.recur_times||""} placeholder="—" className="w-16" disabled={!sk.recur_every}
+                              title="How many times this step recurs (multiplies duration)"
+                              onChange={e=>updateRow(i,"recur_times",e.target.value?Math.max(1,Math.round(Number(e.target.value))||1):"")}/>
+                          </TableCell>
+                          <TableCell className="px-3 py-2.5">
+                            <MiniSelect aria-label="Dependency type" value={sk.dep_type||""} onChange={v=>updateRow(i,"dep_type",v)}
+                              items={[{label:"—",value:""}, ...DEP_TYPES.map(d=>({ label:d.value, value:d.value, title:d.label }))]} className="w-20"/>
+                            {sk.dep_type&&<div className="mt-1 max-w-28 whitespace-normal text-[10px] text-muted-foreground leading-tight">{DEP_TYPES.find(d=>d.value===sk.dep_type)?.label}</div>}
+                          </TableCell>
+                          <TableCell className="px-3 py-2.5">
+                            <MiniSelect aria-label="Depends on" value={String(sk.dep_seq||"")} onChange={v=>updateRow(i,"dep_seq",v)} disabled={!sk.dep_type}
+                              items={depItems} className="w-36"/>
+                          </TableCell>
+                          <TableCell className="px-2 py-2.5">
+                            <div className="flex justify-end gap-0.5">
+                              <Button variant="ghost" size="icon-xs" aria-label="Move up" disabled={i===0} onClick={()=>moveRow(i,-1)}><ArrowUpIcon/></Button>
+                              <Button variant="ghost" size="icon-xs" aria-label="Move down" disabled={i===formSkills.length-1} onClick={()=>moveRow(i,1)}><ArrowDownIcon/></Button>
+                              <Button variant="ghost" size="icon-xs" aria-label={`Remove ${sk.name}`} className="text-muted-foreground hover:text-destructive-foreground" onClick={()=>removeRow(i)}><XIcon/></Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                    <TableRow className="bg-muted hover:bg-muted">
+                      <TableCell colSpan={2} className="px-3 py-2.5 font-bold text-sm">Total</TableCell>
+                      <TableCell colSpan={6} className="px-3 py-2.5 font-bold text-accent-foreground text-sm tabular-nums">{fmtTotalMins(totalMins)}</TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardPanel>
+          <CardFooter className="justify-end gap-2 border-border border-t pt-4">
+            <Btn variant="ghost" onClick={closeForm}>Cancel</Btn>
             <Btn onClick={saveForm} loading={saving}>{editProc?"Update process":"Save process"}</Btn>
-            <Btn variant="ghost" onClick={()=>{ setShowForm(false); setEditProc(null); setFormName(""); setFormSkills([]); setNameError(""); }}>Cancel</Btn>
-          </div>
-        </div>
+          </CardFooter>
+        </Card>
       )}
 
       {/* Saved processes list */}
-      {processes.map(proc=>(
-        <div key={proc.procid} style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:12, padding:"14px 18px", marginBottom:10 }}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12}}>
-            <div style={{flex:1,minWidth:0}}>
-              <button onClick={()=>{ openEdit(proc); window.scrollTo({top:0,behavior:"smooth"}); }}
-                style={{background:"none",border:"none",cursor:"pointer",fontWeight:700,fontSize:15,color:G.caramel,padding:0,textDecoration:"underline dotted",textUnderlineOffset:3,marginBottom:6,display:"block",textAlign:"left"}}>
-                {proc.name}
-              </button>
-              <MiniGantt proc={proc}/>
-              <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginTop:8 }}>
-                {(proc.skills||[]).map(sk=>(
-                  <span key={sk.psid} style={{ fontSize:12, padding:"2px 10px", borderRadius:20, background:`${sk.color||G.muted}18`, color:sk.color||G.muted, border:`1px solid ${sk.color||G.muted}40`, display:"flex", alignItems:"center", gap:4 }}>
-                    {sk.name}{sk.duration?` · ${intDur(sk.duration)}${durAbbr(sk.duration_unit)}`:""}
-                    {sk.dep_type&&<span style={{fontSize:9,opacity:0.75,fontWeight:700}}>{sk.dep_type}</span>}
-                  </span>
-                ))}
-              </div>
-            </div>
-            <div style={{display:"flex",gap:8,alignItems:"center",flexShrink:0}}>
-              <Btn size="sm" onClick={()=>handleRunProcess(proc)} loading={startSaving}>▶ Run</Btn>
-              <button onClick={()=>deleteProcess(proc.procid)} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:18,padding:"4px 8px"}}>×</button>
-            </div>
-          </div>
+      {loading ? <Spinner/> : processes.length===0 && !showForm ? (
+        <Empty className="rounded-2xl border border-border border-dashed bg-card">
+          <EmptyHeader>
+            <EmptyMedia variant="icon"><WorkflowIcon/></EmptyMedia>
+            <EmptyTitle>No processes yet</EmptyTitle>
+            <EmptyDescription>A process is an ordered set of skills — e.g. mix, proof, bake — that your staff run together.</EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent><Btn size="sm" onClick={openNew}><PlusIcon/>Process</Btn></EmptyContent>
+        </Empty>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {processes.map(proc=>(
+            <Card key={proc.procid} data-slot="process-card" className="gap-0 py-0">
+              <CardPanel className="flex flex-col gap-3 p-4 sm:p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <button type="button" data-slot="row-link" onClick={()=>{ openEdit(proc); window.scrollTo({top:0,behavior:"smooth"}); }}
+                    className="min-w-0 text-start font-heading font-semibold text-lg underline decoration-dotted underline-offset-4 hover:decoration-solid">
+                    {proc.name}
+                  </button>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <Btn size="sm" onClick={()=>runProc(proc)} loading={startingId===proc.procid}><PlayIcon/>Run</Btn>
+                    <Button variant="ghost" size="icon-sm" aria-label={`Delete ${proc.name}`} title="Delete process"
+                      className="text-muted-foreground hover:text-destructive-foreground" onClick={()=>setDelProc(proc)}><Trash2Icon/></Button>
+                  </div>
+                </div>
+                <MiniGantt proc={proc}/>
+                <div className="flex flex-wrap gap-1">
+                  {(proc.skills||[]).map(sk=>(
+                    <SkillPill key={sk.psid} color={sk.color||G.muted}
+                      name={<>{sk.name}{sk.duration?` · ${intDur(sk.duration)}${durAbbr(sk.duration_unit)}`:""}{sk.dep_type&&<span className="ms-1 font-bold text-[9px] opacity-75">{sk.dep_type}</span>}</>}/>
+                  ))}
+                </div>
+              </CardPanel>
+            </Card>
+          ))}
         </div>
-      ))}
+      )}
 
       {/* ── Executions calendar ──────────────────────────────────────────────── */}
-      <div style={{marginTop:32}}>
-        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14,flexWrap:"wrap"}}>
-          <h3 style={{fontFamily:G.font,fontSize:18,color:G.dark,margin:0}}>{tl("Executions")}</h3>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginLeft:"auto"}}>
-            {/* ← → navigation */}
-            {[{dir:-1,label:"←"},{dir:1,label:"→"}].map(({dir,label})=>(
-              <button key={dir} onClick={()=>{
-                const d = new Date(execDate+"T00:00:00");
-                d.setDate(d.getDate() + dir * (execPeriod==="week" ? 7 : 1));
-                setExecDate(d.toISOString().slice(0,10));
-              }} style={{padding:"5px 10px",borderRadius:7,border:`1px solid ${G.border}`,background:G.white,
-                color:G.dark,fontSize:14,fontFamily:G.mono,cursor:"pointer",lineHeight:1}}>
-                {label}
-              </button>
-            ))}
-            <input type="date" value={execDate} onChange={e=>setExecDate(e.target.value)}
-              style={{padding:"5px 10px",borderRadius:7,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",background:G.white,color:G.dark}}/>
-            {["day","week"].map(p=>(
-              <button key={p} onClick={()=>setExecPeriod(p)}
-                style={{padding:"5px 14px",borderRadius:7,border:`1px solid ${execPeriod===p?G.caramel:G.border}`,
-                  background:execPeriod===p?G.caramel:G.white,color:execPeriod===p?G.white:G.dark,
-                  fontSize:13,fontFamily:G.mono,fontWeight:600,cursor:"pointer",transition:"all 0.15s"}}>
-                {p==="day"?"Day":"Week"}
-              </button>
-            ))}
+      <div className="mt-10">
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <h2 className="font-heading font-semibold text-xl">{tl("Executions")}</h2>
+          <div className="ms-auto flex flex-wrap items-center gap-2">
+            <div className="flex items-center">
+              <Button variant="outline" size="icon-sm" aria-label={execPeriod==="week"?"Previous week":"Previous day"} className="rounded-e-none" onClick={()=>shiftExec(-1)}><ChevronLeftIcon/></Button>
+              <DateField value={execDate} onChange={v=>v&&setExecDate(v)} className="w-40 [&_input]:rounded-none" size="sm"/>
+              <Button variant="outline" size="icon-sm" aria-label={execPeriod==="week"?"Next week":"Next day"} className="rounded-s-none" onClick={()=>shiftExec(1)}><ChevronRightIcon/></Button>
+            </div>
+            <SegToggle value={execPeriod} onChange={setExecPeriod} options={[["day","Day"],["week","Week"]]}/>
           </div>
         </div>
         {(()=>{
@@ -8616,11 +8619,13 @@ function ProcessesPage({ user, setPage, toast }) {
             return s < periodEnd && e > periodStart;
           });
           if (filtered.length===0) return (
-            <p style={{fontSize:13,color:G.muted,fontStyle:"italic"}}>
-              {runs.length===0
-                ? "No processes have been started yet. Click ▶ Run on any process above to begin."
-                : "No processes in this period."}
-            </p>
+            <Empty className="rounded-2xl border border-border border-dashed py-10">
+              <EmptyHeader>
+                <EmptyMedia variant="icon"><CalendarDaysIcon/></EmptyMedia>
+                <EmptyTitle className="text-base">{runs.length===0 ? "No processes have been started yet" : "No processes in this period"}</EmptyTitle>
+                {runs.length===0&&<EmptyDescription>Click Run on any process above to begin.</EmptyDescription>}
+              </EmptyHeader>
+            </Empty>
           );
           return <ExecutionsCalendar runs={filtered} onAction={handleRunAction} onOpenDetail={openRunDetail}/>;
         })()}
@@ -8639,97 +8644,90 @@ function ProcessesPage({ user, setPage, toast }) {
 
       {stopRun&&<StopRunDialog run={stopRun} toast={toast} onClose={()=>setStopRun(null)}
         onStopped={u=>{ setRuns(p=>p.map(r=>r.prid===u.prid?u:r)); if(selectedRun?.prid===u.prid) setSelectedRun(u); setStopRun(null); toast("Process stopped"); }}/>}
+
+      <Dialog open={!!delProc} title={`Delete “${delProc?.name||""}”?`} onConfirm={()=>deleteProcess(delProc.procid)} onCancel={()=>setDelProc(null)}>
+        This cannot be undone.
+      </Dialog>
+
       {/* ── Start validation dialog ───────────────────────────────────────────── */}
-      {startDialog&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.45)",zIndex:1200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-          <div style={{background:G.white,borderRadius:16,maxWidth:560,width:"100%",boxShadow:"0 20px 60px rgba(44,24,16,0.2)",animation:"fadeIn 0.2s ease",overflow:"hidden"}}>
-            <div style={{padding:"20px 24px",borderBottom:`1px solid ${G.border}`}}>
-              <h3 style={{fontFamily:G.font,fontSize:18}}>▶ Run "{startDialog.proc.name}"</h3>
+      {sd&&(
+        <Modal onClose={()=>setStartDialog(null)} className="max-w-xl"
+          title={`Run “${sd.proc.name}”`}
+          description={sd.step==='items'
+            ? <>Select what you are producing in this run and set the quantity.{sd.suggestedItems.length>0 && " Items from your equipment are pre-populated."}</>
+            : "Please review before starting:"}
+          footer={sd.step==='items' ? <>
+            <span className="text-muted-foreground text-sm">{sd.selectedItems.length} item{sd.selectedItems.length===1?"":"s"}</span>
+            <div className="flex gap-2">
+              <Btn variant="ghost" onClick={()=>setStartDialog(null)}>Cancel</Btn>
+              <Btn loading={startSaving} onClick={()=>handleStartConfirm(false)} disabled={sd.selectedItems.length===0}><PlayIcon/>Start process</Btn>
             </div>
-
-            {startDialog.step==='items'&&(
-              <>
-                <div style={{padding:"20px 24px",maxHeight:420,overflowY:"auto"}}>
-                  <p style={{fontSize:13,color:G.muted,marginBottom:16}}>
-                    Select what you are producing in this run and set the quantity.
-                    {startDialog.suggestedItems.length>0 && " Items from your equipment are pre-populated."}
-                  </p>
-                  {startDialog.selectedItems.length===0&&(
-                    <p style={{fontSize:13,color:G.muted,fontStyle:"italic",marginBottom:12}}>No items selected — add from the list below.</p>
-                  )}
-                  {/* Selected items with qty */}
-                  {startDialog.selectedItems.map((it,i)=>(
-                    <div key={it.rid} style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,padding:"10px 14px",background:G.sand,borderRadius:8}}>
-                      <span style={{flex:1,fontSize:14,fontWeight:600,color:G.dark}}>{it.name}</span>
-                      {it.equipment_name&&<span style={{fontSize:11,color:G.muted}}>{it.equipment_name}</span>}
-                      <input type="number" min="0.01" step="any" value={it.qty}
-                        onChange={e=>setStartDialog(d=>({...d,selectedItems:d.selectedItems.map((s,j)=>j===i?{...s,qty:e.target.value}:s)}))}
-                        style={{width:70,padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",textAlign:"right"}}/>
-                      <span style={{fontSize:12,color:G.muted,minWidth:28}}>{it.units||"pcs"}</span>
-                      <button onClick={()=>setStartDialog(d=>({...d,selectedItems:d.selectedItems.filter((_,j)=>j!==i)}))}
-                        style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:16,lineHeight:1}}>×</button>
-                    </div>
-                  ))}
-                  {/* Add more items */}
-                  <div style={{marginTop:12}}>
-                    <label style={{fontSize:12,fontWeight:600,color:G.muted,display:"block",marginBottom:6}}>Add item</label>
-                    {(()=>{
-                      const q=(startDialog.addFilter||"").toLowerCase();
-                      const pid=startDialog.proc.procid;
-                      const avail=recipes
-                        .filter(r=>!startDialog.selectedItems.find(s=>s.rid===r.rid) && r.name.toLowerCase().includes(q))
-                        .sort((x,y)=>(String(y.procid)===String(pid))-(String(x.procid)===String(pid)) || x.name.localeCompare(y.name));
-                      return (<>
-                        <input value={startDialog.addFilter||""} placeholder="Filter items…"
-                          onChange={e=>setStartDialog(d=>({...d,addFilter:e.target.value}))}
-                          style={{width:"100%",padding:"7px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",marginBottom:8}}/>
-                        {avail.length===0
-                          ? <p style={{fontSize:12,color:G.muted,fontStyle:"italic"}}>No more items to add.</p>
-                          : <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                              {avail.map(r=>(
-                                <button key={r.rid}
-                                  onClick={()=>setStartDialog(d=>({...d,selectedItems:[...d.selectedItems,{rid:r.rid,name:r.name,qty:1,units:r.units,equipment_name:null}]}))}
-                                  style={{padding:"4px 10px",borderRadius:20,border:`1px solid ${G.caramel}60`,background:`${G.caramel}12`,color:G.caramel,fontSize:12,fontFamily:G.mono,cursor:"pointer"}}>
-                                  + {r.name}
-                                </button>
-                              ))}
-                            </div>}
-                      </>);
-                    })()}
+          </> : <>
+            <Btn variant="ghost" onClick={()=>setStartDialog(d=>({...d,step:'items'}))}><ArrowLeftIcon/>Back</Btn>
+            <div className="flex gap-2">
+              <Btn variant="ghost" onClick={()=>setStartDialog(null)}>Cancel</Btn>
+              <Btn loading={startSaving} onClick={()=>handleStartConfirm(true)}>Start anyway</Btn>
+            </div>
+          </>}>
+          {sd.step==='items'&&(
+            <div className="flex flex-col gap-4">
+              {sd.selectedItems.length===0
+                ? <p className="text-muted-foreground text-sm italic">No items selected — add from the list below.</p>
+                : (
+                  <div className="flex flex-col divide-y divide-border rounded-xl border border-border">
+                    {sd.selectedItems.map((it,i)=>(
+                      <div key={it.rid} data-slot="run-item" className="flex items-center gap-2.5 px-3 py-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-medium text-sm">{it.name}</div>
+                          {it.equipment_name&&<div className="truncate text-muted-foreground text-xs">{it.equipment_name}</div>}
+                        </div>
+                        <CInput type="number" size="sm" aria-label={`Quantity of ${it.name}`} value={it.qty} className="w-20 [&_input]:text-end"
+                          onChange={e=>setSel(s=>s.map((x,j)=>j===i?{...x,qty:e.target.value}:x))}/>
+                        <span className="w-8 text-muted-foreground text-xs">{it.units||"pcs"}</span>
+                        <Button variant="ghost" size="icon-xs" aria-label={`Remove ${it.name}`} onClick={()=>setSel(s=>s.filter((_,j)=>j!==i))}><XIcon/></Button>
+                      </div>
+                    ))}
                   </div>
-                </div>
-                <div style={{padding:"16px 24px",borderTop:`1px solid ${G.border}`,display:"flex",gap:10,justifyContent:"flex-end"}}>
-                  <Btn size="sm" loading={startSaving}
-                    onClick={()=>handleStartConfirm(false)}
-                    disabled={startDialog.selectedItems.length===0}>
-                    Start process
-                  </Btn>
-                  <Btn variant="ghost" size="sm" onClick={()=>setStartDialog(null)}>Cancel</Btn>
-                </div>
-              </>
-            )}
-
-            {startDialog.step==='warnings'&&(
-              <>
-                <div style={{padding:"20px 24px",display:"flex",flexDirection:"column",gap:14}}>
-                  {startDialog.warnings.map((w,i)=>(
-                    <div key={i} style={{background:"#fef3c7",border:"1px solid #fcd34d",borderRadius:8,padding:"12px 14px"}}>
-                      <p style={{fontSize:13,color:"#92400e",fontWeight:600,marginBottom:4}}>
-                        {w.type==='exceeds_hours'?'Working hours':w.type==='employee_no_slot'?'No roster slot today':'Employee availability'}
-                      </p>
-                      <p style={{fontSize:13,color:"#92400e"}}>{w.message}</p>
-                    </div>
-                  ))}
-                </div>
-                <div style={{padding:"16px 24px",borderTop:`1px solid ${G.border}`,display:"flex",gap:10,justifyContent:"flex-end"}}>
-                  <Btn size="sm" loading={startSaving} onClick={()=>handleStartConfirm(true)}>Start anyway</Btn>
-                  <Btn variant="ghost" size="sm" onClick={()=>setStartDialog(d=>({...d,step:'items'}))}>← Back</Btn>
-                  <Btn variant="ghost" size="sm" onClick={()=>setStartDialog(null)}>Cancel</Btn>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+                )}
+              {/* Add more items */}
+              <div className="flex flex-col gap-2">
+                <span className="font-medium text-sm">Add item</span>
+                {(()=>{
+                  const q=(sd.addFilter||"").toLowerCase();
+                  const pid=sd.proc.procid;
+                  const avail=recipes
+                    .filter(r=>!sd.selectedItems.find(s=>s.rid===r.rid) && r.name.toLowerCase().includes(q))
+                    .sort((x,y)=>(String(y.procid)===String(pid))-(String(x.procid)===String(pid)) || x.name.localeCompare(y.name));
+                  return (<>
+                    <SearchField value={sd.addFilter||""} onChange={v=>setStartDialog(d=>({...d,addFilter:v}))}
+                      onClear={()=>setStartDialog(d=>({...d,addFilter:""}))} placeholder="Filter items…" className="w-full"/>
+                    {avail.length===0
+                      ? <p className="text-muted-foreground text-xs italic">No more items to add.</p>
+                      : <div className="flex max-h-44 flex-wrap gap-1.5 overflow-y-auto">
+                          {avail.map(r=>(
+                            <Button key={r.rid} variant="outline" size="xs" className="rounded-full"
+                              onClick={()=>setSel(s=>[...s,{rid:r.rid,name:r.name,qty:1,units:r.units,equipment_name:null}])}>
+                              <PlusIcon/>{r.name}
+                            </Button>
+                          ))}
+                        </div>}
+                  </>);
+                })()}
+              </div>
+            </div>
+          )}
+          {sd.step==='warnings'&&(
+            <div className="flex flex-col gap-3">
+              {sd.warnings.map((w,i)=>(
+                <Alert key={i} variant="warning">
+                  <TriangleAlertIcon/>
+                  <AlertTitle>{w.type==='exceeds_hours'?'Working hours':w.type==='employee_no_slot'?'No roster slot today':'Employee availability'}</AlertTitle>
+                  <AlertDescription>{w.message}</AlertDescription>
+                </Alert>
+              ))}
+            </div>
+          )}
+        </Modal>
       )}
     </Page>
   );
@@ -9259,19 +9257,13 @@ function EmployeeProcessesPage({ user, toast, setPage }) {
 
   useEffect(()=>{
     if (!ownerUid) return;
-    Promise.all([
-      api.getProcessRuns(),
-      api.getSkills(), // all skills for this restaurant
-    ]).then(([r, allSkills])=>{
-      setRuns(r||[]);
-      // Get this employee's skill ids
-      setSkills(allSkills.filter(()=>true)); // we'll filter by employee_skill below
-    }).catch(e=>toast(e.message,"error"))
-    .finally(()=>setLoading(false));
-
-    // Also fetch this employee's own skills
-    fetch(`/api/skills`, { headers:{ Authorization:`Bearer ${localStorage.getItem("token")}` } })
-      .then(r=>r.json()).then(s=>setSkills(s||[])).catch(()=>{});
+    // Runs need their steps to tell which ones involve this employee
+    api.getProcessRunsWithSteps()
+      .then(r=>setRuns((r||[]).map(run=>({...run, steps:(run.steps||[]).map(s=>({...s, skill_name:s.skill_name||s.step_name}))}))))
+      .catch(e=>toast(e.message,"error"))
+      .finally(()=>setLoading(false));
+    // This employee's own skills
+    api.getMySkills().then(s=>setSkills(s||[])).catch(()=>{});
   },[]);
 
   const [stopRunD, setStopRunD] = useState(null);
@@ -9309,9 +9301,6 @@ function EmployeeProcessesPage({ user, toast, setPage }) {
     return new Date(a.started_at) - new Date(b.started_at);
   });
 
-  const STATUS_COL = { in_progress:G.caramel, on_hold:"#eab308", completed:G.green, cancelled:G.red, pending:G.muted };
-  const STEP_COL   = { in_progress:G.caramel, on_hold:"#eab308", completed:G.green, pending:G.muted, skipped:G.muted };
-
   const fmtDur = (d,u) => {
     if (!d) return "—";
     return `${intDur(d)} ${durAbbr(u)}`;
@@ -9331,18 +9320,26 @@ function EmployeeProcessesPage({ user, toast, setPage }) {
 
   if (!ownerUid) return (
     <Page title={tl("Processes")}>
-      <p style={{color:G.muted,textAlign:"center",padding:40}}>
-        {user?.is_manufacturer
-          ? "Manage and run your processes from the Processes page."
-          : "Not associated with a restaurant."}
-      </p>
+      <Empty className="rounded-2xl border border-border border-dashed bg-card">
+        <EmptyHeader>
+          <EmptyMedia variant="icon"><WorkflowIcon/></EmptyMedia>
+          <EmptyDescription>
+            {user?.is_manufacturer
+              ? "Manage and run your processes from the Processes page."
+              : "Not associated with a restaurant."}
+          </EmptyDescription>
+        </EmptyHeader>
+      </Empty>
     </Page>
   );
+
+  const H = "h-10 px-4 font-semibold text-[11px] text-muted-foreground uppercase tracking-wider";
+  const busy = (prid, action, psrid=null) => !!saving[`${prid}-${action}-${psrid}`];
 
   return (
     <Page title={tl("My Processes")} actions={
       user?.is_manufacturer && (
-        <Btn size="sm" variant="secondary" onClick={()=>setPage("processes")}>← Process design</Btn>
+        <Btn size="sm" variant="ghost" onClick={()=>setPage("processes")}><ArrowLeftIcon/>Process design</Btn>
       )
     }>
       {completeD&&<StopRunDialog run={completeD.run} mode="complete" psrid={completeD.psrid} toast={toast} onClose={()=>setCompleteD(null)}
@@ -9350,104 +9347,104 @@ function EmployeeProcessesPage({ user, toast, setPage }) {
       {stopRunD&&<StopRunDialog run={stopRunD} toast={toast} onClose={()=>setStopRunD(null)}
         onStopped={u=>{ setRuns(p=>p.map(r=>r.prid===u.prid?u:r)); setStopRunD(null); toast("Process stopped"); }}/>}
       {loading ? <Spinner/> : sorted.length===0 ? (
-        <p style={{color:G.muted,textAlign:"center",padding:60,fontStyle:"italic"}}>{tl("No active processes. Processes will appear here when started by your restaurant.")}</p>
-      ) : sorted.map(run=>{
-        const involved = iInvolved(run);
-        const col = STATUS_COL[run.status]||G.muted;
-
-        return (
-          <div key={run.prid} style={{background:G.white,border:`1.5px solid ${involved?col:G.border}`,borderRadius:14,marginBottom:12,overflow:"hidden"}}>
-            {/* Card header */}
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 18px",background:involved?`${col}08`:G.sand}}>
-              <div style={{display:"flex",alignItems:"center",gap:12}}>
-                <span style={{fontWeight:700,fontSize:15,color:G.dark}}>{run.process_name}</span>
-                <span style={{fontSize:12,padding:"2px 10px",borderRadius:20,fontWeight:600,background:`${col}20`,color:col}}>
-                  {run.status.replace("_"," ")}
-                </span>
-                <span style={{fontSize:12,color:G.muted}}>
-                  {new Date(run.started_at).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}
-                </span>
-              </div>
-              {/* Run-level controls (for involved runs) */}
-              {involved && (
-                <div style={{display:"flex",gap:6}}>
-                  {run.status==="in_progress"&&<>
-                    <button onClick={()=>runAction(run.prid,"pause")}
-                      style={{background:"none",border:`1px solid ${G.border}`,borderRadius:7,padding:"4px 10px",cursor:"pointer",fontSize:16}}>⏸</button>
-                    <button onClick={()=>runAction(run.prid,"stop")}
-                      style={{background:"none",border:`1px solid ${G.red}`,borderRadius:7,padding:"4px 10px",cursor:"pointer",fontSize:16,color:G.red}}>⏹</button>
-                  </>}
-                  {run.status==="on_hold"&&<>
-                    <button onClick={()=>runAction(run.prid,"resume")}
-                      style={{background:G.caramel,border:"none",borderRadius:7,padding:"4px 12px",cursor:"pointer",fontSize:16,color:G.white}}>▶</button>
-                    <button onClick={()=>runAction(run.prid,"stop")}
-                      style={{background:"none",border:`1px solid ${G.red}`,borderRadius:7,padding:"4px 10px",cursor:"pointer",fontSize:16,color:G.red}}>⏹</button>
-                  </>}
+        <Empty className="rounded-2xl border border-border border-dashed bg-card">
+          <EmptyHeader>
+            <EmptyMedia variant="icon"><WorkflowIcon/></EmptyMedia>
+            <EmptyDescription>{tl("No active processes. Processes will appear here when started by your restaurant.")}</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {sorted.map(run=>{
+            const involved = iInvolved(run);
+            return (
+              <Card key={run.prid} data-slot="emp-run" className={`gap-0 overflow-hidden py-0 ${involved&&run.status==="in_progress"?"border-brand/50":""}`}>
+                {/* Card header */}
+                <div className={`flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-5 ${involved?"":"bg-muted"}`}>
+                  <div className="flex min-w-0 flex-wrap items-center gap-2.5">
+                    <span className="font-semibold">{run.process_name}</span>
+                    <RunStatusBadge status={run.status}/>
+                    {run.started_at&&<span className="text-muted-foreground text-xs">
+                      {new Date(run.started_at).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}
+                    </span>}
+                  </div>
+                  {/* Run-level controls (for involved runs) */}
+                  {involved && (
+                    <div className="flex gap-1">
+                      {run.status==="in_progress"&&<>
+                        <Button size="icon-sm" variant="outline" aria-label="Pause" title="Pause" loading={busy(run.prid,"pause")} onClick={()=>runAction(run.prid,"pause")}><PauseIcon/></Button>
+                        <Button size="icon-sm" variant="destructive-outline" aria-label="Stop" title="Stop" onClick={()=>runAction(run.prid,"stop")}><SquareIcon/></Button>
+                      </>}
+                      {run.status==="on_hold"&&<>
+                        <Button size="icon-sm" aria-label="Resume" title="Resume" loading={busy(run.prid,"resume")} onClick={()=>runAction(run.prid,"resume")}><PlayIcon/></Button>
+                        <Button size="icon-sm" variant="destructive-outline" aria-label="Stop" title="Stop" onClick={()=>runAction(run.prid,"stop")}><SquareIcon/></Button>
+                      </>}
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
 
-            {/* Steps table — only shown when employee is involved */}
-            {involved && (
-              <div style={{overflowX:"auto"}}>
-                <table style={{width:"100%",borderCollapse:"collapse"}}>
-                  <thead>
-                    <tr style={{background:G.sand,borderTop:`1px solid ${G.border}`}}>
-                      {["#","Step","Assignee","Duration","Status"].map(h=>(
-                        <th key={h} style={{padding:"8px 14px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,letterSpacing:"0.04em"}}>{h}</th>
-                      ))}
-                      <th style={{width:80}}/>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(run.steps||[]).map((step,i)=>{
-                      const sc  = STEP_COL[step.status]||G.muted;
-                      const isMe = String(step.uid)===String(user?.uid);
-                      const myStep = isMe || mySkidSet.has(String(step.skid));
-                      const tl = timeLeft(step);
-                      return (
-                        <tr key={step.psrid} style={{borderTop:`1px solid ${G.border}`,background:isMe?`${sc}08`:"transparent"}}>
-                          <td style={{padding:"10px 14px",fontSize:12,color:G.muted,fontFamily:G.mono}}>{step.seq}</td>
-                          <td style={{padding:"10px 14px",fontWeight:isMe?700:400,color:isMe?G.dark:G.dark,fontSize:14}}>
-                            {step.skill_name}
-                          </td>
-                          <td style={{padding:"10px 14px",fontSize:13,color:G.muted}}>
-                            {step.first_name?`${step.first_name} ${step.last_name||""}`.trim():"—"}
-                          </td>
-                          <td style={{padding:"10px 14px",fontSize:13,color:G.muted,fontFamily:G.mono}}>
-                            {fmtDur(step.duration, step.duration_unit)}
-                          </td>
-                          <td style={{padding:"10px 14px"}}>
-                            <span style={{fontSize:12,fontWeight:600,color:sc}}>
-                              {step.status.replace("_"," ")}
-                              {tl&&<span style={{fontSize:11,color:G.muted,fontWeight:400,marginLeft:6}}>({tl})</span>}
-                            </span>
-                          </td>
-                          <td style={{padding:"10px 14px"}}>
-                            {myStep && step.status==="pending" && run.status==="in_progress" && (
-                              <Btn size="sm" onClick={()=>runAction(run.prid,"start-step",step.psrid)}>▶ Start</Btn>
-                            )}
-                            {myStep && step.status==="in_progress" && (
-                              <Btn size="sm" onClick={()=>runAction(run.prid,"complete-step",step.psrid)}>✓ Done</Btn>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {/* Collapsed hint for uninvolved processes */}
-            {!involved && (
-              <div style={{padding:"8px 18px",fontSize:12,color:G.muted,fontStyle:"italic"}}>
-                No steps requiring your skills in this process.
-              </div>
-            )}
-          </div>
-        );
-      })}
+                {/* Steps table — only shown when employee is involved */}
+                {involved ? (
+                  <div className="border-border border-t [&_thead_tr]:bg-muted">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className={`${H} w-10`}>#</TableHead>
+                          <TableHead className={H}>Step</TableHead>
+                          <TableHead className={`${H} max-sm:hidden`}>Assignee</TableHead>
+                          <TableHead className={`${H} max-sm:hidden`}>Duration</TableHead>
+                          <TableHead className={H}>Status</TableHead>
+                          <TableHead className="w-28"/>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {(run.steps||[]).map(step=>{
+                          const isMe = String(step.uid)===String(user?.uid);
+                          const myStep = isMe || mySkidSet.has(String(step.skid));
+                          const left = timeLeft(step);
+                          return (
+                            <TableRow key={step.psrid} data-state={isMe?"selected":undefined}>
+                              <TableCell className={`${CELL} font-mono text-muted-foreground text-xs`}>{step.seq}</TableCell>
+                              <TableCell className={`${CELL} ${isMe?"font-semibold":""}`}>
+                                {step.skill_name}
+                                {isMe&&<CBadge variant="outline" size="sm" className="ms-2 border-transparent bg-brand/16 text-accent-foreground">You</CBadge>}
+                              </TableCell>
+                              <TableCell className={`${CELL} text-muted-foreground max-sm:hidden`}>
+                                {step.first_name?`${step.first_name} ${step.last_name||""}`.trim():"—"}
+                              </TableCell>
+                              <TableCell className={`${CELL} font-mono text-muted-foreground text-xs tabular-nums max-sm:hidden`}>
+                                {fmtDur(step.duration, step.duration_unit)}
+                              </TableCell>
+                              <TableCell className={CELL}>
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <RunStatusBadge status={step.status}/>
+                                  {left&&<span className="text-muted-foreground text-xs tabular-nums">{left}</span>}
+                                </div>
+                              </TableCell>
+                              <TableCell className="px-4 py-2 text-end">
+                                {myStep && step.status==="pending" && run.status==="in_progress" && (
+                                  <Btn size="sm" loading={busy(run.prid,"start-step",step.psrid)} onClick={()=>runAction(run.prid,"start-step",step.psrid)}><PlayIcon/>Start</Btn>
+                                )}
+                                {myStep && step.status==="in_progress" && (
+                                  <Btn size="sm" loading={busy(run.prid,"complete-step",step.psrid)} onClick={()=>runAction(run.prid,"complete-step",step.psrid)}><CheckIcon/>Done</Btn>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ) : (
+                  <div className="border-border border-t px-4 py-2.5 text-muted-foreground text-xs italic sm:px-5">
+                    No steps requiring your skills in this process.
+                  </div>
+                )}
+              </Card>
+            );
+          })}
+        </div>
+      )}
     </Page>
   );
 }

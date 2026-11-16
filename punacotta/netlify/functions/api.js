@@ -2949,6 +2949,12 @@ async function route(method, segments, body, headers, event) {
   }
 
   // ── SKILLS ─────────────────────────────────────────────────────────────────
+  // GET /my-skills — the signed-in user's own skills (staff can't list the restaurant's skills)
+  if (r0 === 'my-skills' && method === 'GET') {
+    if (!user) return [401, { error: 'Unauthorized' }]
+    return [200, await dbq(`SELECT s.* FROM employee_skill es JOIN skill s ON s.skid=es.skid WHERE es.uid=$1 ORDER BY s.name`, [user.uid])]
+  }
+
   if (r0 === 'skills') {
     if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
     if (method === 'GET') {

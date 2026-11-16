@@ -113,6 +113,7 @@ export const api = {
   deleteRoles:    (ids)       => req('DELETE', '/roles', { ids }),
   // Skills
   getSkills:      ()          => req('GET',    '/skills'),
+  getMySkills:    ()          => req('GET',    '/my-skills'),
   createSkill:    (data)      => req('POST',   '/skills', data),
   updateSkill:    (skid,data) => req('PATCH',  `/skills/${skid}`, data),
   deleteSkills:   (ids)       => req('DELETE', '/skills', { ids }),
