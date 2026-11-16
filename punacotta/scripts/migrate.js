@@ -11,6 +11,8 @@ const client = new Client({
 })
 
 const schema = `
+-- gen_random_bytes() (embed API keys) comes from pgcrypto
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- Users
 CREATE TABLE IF NOT EXISTS "user" (
   uid              SERIAL PRIMARY KEY,
@@ -67,8 +69,6 @@ CREATE TABLE IF NOT EXISTS recipe (
 );
 
 -- Add walkin_name and delivery_comments to order table (safe to re-run)
-ALTER TABLE "order" ADD COLUMN IF NOT EXISTS walkin_name        VARCHAR(100);
-ALTER TABLE "order" ADD COLUMN IF NOT EXISTS delivery_comments  VARCHAR(100);
 
 -- Address book for saved customer addresses (safe to re-run)
 CREATE TABLE IF NOT EXISTS address_book (
@@ -123,9 +123,6 @@ ALTER TABLE product ADD COLUMN IF NOT EXISTS sku VARCHAR(50);
 ALTER TABLE "user" ADD COLUMN IF NOT EXISTS schedule JSONB;
 
 -- Add availability hours columns to menu (safe to re-run)
-ALTER TABLE menu ADD COLUMN IF NOT EXISTS hours_from  VARCHAR(5);
-ALTER TABLE menu ADD COLUMN IF NOT EXISTS hours_until VARCHAR(5);
-ALTER TABLE menu ADD COLUMN IF NOT EXISTS hours_days  TEXT[] DEFAULT '{}';
 
 -- Add new columns to recipe if they don't exist yet (safe to re-run)
 ALTER TABLE recipe ADD COLUMN IF NOT EXISTS deliverable    BOOLEAN DEFAULT true;
@@ -183,6 +180,12 @@ ALTER TABLE "order" ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'app';
 ALTER TABLE "order" ADD COLUMN IF NOT EXISTS delivery_street TEXT;
 ALTER TABLE "order" ADD COLUMN IF NOT EXISTS delivery_city TEXT;
 ALTER TABLE "order" ADD COLUMN IF NOT EXISTS delivery_zip TEXT;
+-- (moved here: these used to run before the tables were created)
+ALTER TABLE "order" ADD COLUMN IF NOT EXISTS walkin_name        VARCHAR(100);
+ALTER TABLE "order" ADD COLUMN IF NOT EXISTS delivery_comments  VARCHAR(100);
+ALTER TABLE menu ADD COLUMN IF NOT EXISTS hours_from  VARCHAR(5);
+ALTER TABLE menu ADD COLUMN IF NOT EXISTS hours_until VARCHAR(5);
+ALTER TABLE menu ADD COLUMN IF NOT EXISTS hours_days  TEXT[] DEFAULT '{}';
 
 -- Seed lookup data (idempotent)
 INSERT INTO units (name) VALUES
@@ -240,6 +243,8 @@ CREATE TABLE IF NOT EXISTS product_forecast (
   computed_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(pid, owner_uid)
 );
+
+CREATE TABLE IF NOT EXISTS supplier_order (
   soid          SERIAL PRIMARY KEY,
   owner_uid     INTEGER NOT NULL REFERENCES "user"(uid),
   sid           INTEGER NOT NULL REFERENCES supplier(sid),

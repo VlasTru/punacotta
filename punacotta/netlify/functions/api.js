@@ -1227,7 +1227,8 @@ async function route(method, segments, body, headers, event) {
         `SELECT uid, first_name, last_name, email, phone,
                 street_address, city, zip, business_name,
                 logo_url, logo_cloudinary_id,
-                lat, lng, address_display, notify_email
+                lat, lng, address_display, notify_email,
+                is_manufacturer, is_employee, employer_uid
          FROM "user" WHERE uid=$1`, [user.uid])
       // The restaurant this person administers (if any): its name is what has to be typed to delete it
       const restUid = user.is_manufacturer ? user.uid : user.employer_uid
