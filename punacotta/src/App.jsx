@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo, createContext, useContext } from "react";
 import React from "react";
+import { createPortal } from "react-dom";
 import ReactCrop from "react-image-crop";
 import "react-image-crop/dist/ReactCrop.css";
 import { api } from "./api.js";
@@ -22,7 +23,8 @@ import { Dialog as CDialog, DialogPopup, DialogHeader, DialogTitle, DialogDescri
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetPopup, SheetHeader, SheetTitle, SheetPanel } from "@/components/ui/sheet";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { CopyIcon, ImageIcon, ImageUpIcon, Trash2Icon, CheckIcon, MicIcon, SquareIcon, Undo2Icon, LayoutGridIcon, ListIcon, ListFilterIcon, PencilIcon, ArrowDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, ChevronsLeftIcon, ChevronsRightIcon, ChevronsUpDownIcon, MinusIcon, PlusIcon } from "lucide-react";
+import { CopyIcon, ImageIcon, ImageUpIcon, Trash2Icon, CheckIcon, MicIcon, SquareIcon, Undo2Icon, LayoutGridIcon, ListIcon, ListFilterIcon, PencilIcon, ArrowDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, ChevronsLeftIcon, ChevronsRightIcon, ChevronsUpDownIcon, MinusIcon, PlusIcon, CalendarDaysIcon, TagsIcon, UsersIcon, MailIcon } from "lucide-react";
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator, MenuRadioGroup, MenuRadioItem, MenuCheckboxItem } from "@/components/ui/menu";
 import { AlertDialog, AlertDialogPopup, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from "@/components/ui/alert-dialog";
 import { ArrowLeftIcon, ChefHatIcon, MailCheckIcon, PartyPopperIcon, StoreIcon, TriangleAlertIcon, BellIcon, ChevronDownIcon, CircleAlertIcon, CircleCheckIcon, CircleUserIcon, ClockIcon, GlobeIcon, InfoIcon, Link2Icon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SettingsIcon, SunIcon, XIcon } from "lucide-react";
@@ -6912,10 +6914,41 @@ function StopRunDialog({ run, mode="stop", psrid=null, onClose, onStopped, toast
 
 
 // ─── SKILL COMBO ──────────────────────────────────────────────────────────────
-function SkillCombo({ allSkills, selected, excluded=[], onChange, onCreateSkill, onClickPill, pillColor }) {
+// Coloured pill for a skill/role (colours come from the database).
+// Text uses --ink, lifted towards white in dark mode so dark DB colours stay readable.
+const SKILL_INK = "text-(--ink) dark:text-[color-mix(in_oklab,var(--ink)_55%,white)]";
+function SkillPill({ name, color, onClick, onRemove, size="md" }) {
+  const c = color || G.caramel;
+  return (
+    <span data-slot="skill-pill" className={`inline-flex max-w-full items-center gap-1 rounded-full border font-medium leading-none ${SKILL_INK} ${size==="sm"?"px-2 py-1 text-[11px]":"px-2.5 py-1 text-xs"}`}
+      style={{ background:`${c}1c`, borderColor:`${c}4d`, "--ink":c }}>
+      {onClick
+        ? <button type="button" data-slot="skill-pill-name" onClick={e=>{ e.stopPropagation(); onClick(); }} className="truncate font-semibold underline decoration-dotted underline-offset-2 hover:decoration-solid">{name}</button>
+        : <span className="truncate">{name}</span>}
+      {onRemove&&(
+        <button type="button" data-slot="skill-pill-remove" aria-label={`Remove ${name}`} onClick={e=>{ e.stopPropagation(); onRemove(); }}
+          className="-me-1 inline-flex size-4 items-center justify-center rounded-full opacity-70 hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10">
+          <XIcon className="size-3"/>
+        </button>
+      )}
+    </span>
+  );
+}
+
+function SkillCombo({ allSkills, selected, excluded=[], onChange, onCreateSkill, onClickPill, pillColor, placeholder="Type to search or add…" }) {
   const [input, setInput] = useState("");
   const [open, setOpen]   = useState(false);
+  const [hi, setHi]       = useState(0);
+  const [rect, setRect]   = useState(null);
   const ref = useRef(null);
+  // The list is portalled (so tables/dialogs can't clip it) and follows the field while open
+  useEffect(()=>{
+    if (!open) return;
+    const upd = () => { const r = ref.current?.getBoundingClientRect(); if (r) setRect({ top:r.top, bottom:r.bottom, left:r.left, width:r.width }); };
+    upd();
+    window.addEventListener("scroll", upd, true); window.addEventListener("resize", upd);
+    return () => { window.removeEventListener("scroll", upd, true); window.removeEventListener("resize", upd); };
+  },[open, selected.length]);
 
   // Filter: not already selected, not in excluded list, matches input
   const available = allSkills.filter(s =>
@@ -6925,66 +6958,60 @@ function SkillCombo({ allSkills, selected, excluded=[], onChange, onCreateSkill,
   );
   const canCreate = onCreateSkill && input.trim() &&
     !allSkills.find(s=>s.name.toLowerCase()===input.trim().toLowerCase());
+  const options = [...(canCreate?[{ _create:true }]:[]), ...available];
 
-  const add    = s => { onChange([...selected, s]); setInput(""); setOpen(false); };
+  const add    = s => { onChange([...selected, s]); setInput(""); setOpen(false); setHi(0); };
   const remove = id => onChange(selected.filter(s=>(s.skid||s.rid)!==id));
+  const pick = async o => {
+    if (o._create) { const n = await onCreateSkill(input.trim()); if (n) add(n); }
+    else add(o);
+  };
 
   const handleKey = async e => {
     if (e.key==="Backspace" && !input && selected.length) {
       const last = selected[selected.length-1]; remove(last.skid||last.rid);
     }
-    if (e.key==="Enter" && input.trim()) {
+    if (e.key==="ArrowDown") { e.preventDefault(); setOpen(true); setHi(h=>Math.min(h+1, options.length-1)); }
+    if (e.key==="ArrowUp")   { e.preventDefault(); setHi(h=>Math.max(h-1, 0)); }
+    if (e.key==="Enter" && (input.trim() || (open && options.length))) {
       e.preventDefault();
-      if (canCreate) { const n=await onCreateSkill(input.trim()); if(n) add(n); }
-      else if (available.length) add(available[0]);
+      const o = options[Math.min(hi, options.length-1)];
+      if (o) await pick(o);
     }
-    if (e.key==="Escape") setOpen(false);
+    // Close only the list; keep an enclosing dialog open
+    if (e.key==="Escape" && open && options.length) { e.stopPropagation(); e.nativeEvent.stopImmediatePropagation?.(); setOpen(false); }
   };
 
   const getColor = s => pillColor || s.color || G.caramel;
 
   return (
-    <div style={{ position:"relative" }} ref={ref}>
-      <div onClick={()=>{ setOpen(true); ref.current.querySelector("input")?.focus(); }}
-        style={{ display:"flex", flexWrap:"wrap", gap:6, padding:"8px 10px", borderRadius:8, border:`1px solid ${G.border}`, minHeight:40, cursor:"text", background:G.white }}>
+    <div className="relative w-full" ref={ref}>
+      <div data-slot="skill-combo" onClick={()=>{ setOpen(true); ref.current.querySelector("input")?.focus(); }}
+        className="flex min-h-9 w-full cursor-text flex-wrap items-center gap-1.5 rounded-lg border border-input bg-background px-2 py-1.5 text-sm shadow-xs/5 transition-shadow focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/24 dark:bg-input/32">
         {selected.map(s=>{
           const id = s.skid||s.rid;
-          const col = getColor(s);
-          return (
-            <span key={id} style={{ display:"flex", alignItems:"center", gap:4, background:`${col}18`, border:`1px solid ${col}40`, borderRadius:20, padding:"3px 10px", fontSize:12, fontWeight:500, color:col }}>
-              {onClickPill ? (
-                <button onClick={e=>{ e.stopPropagation(); onClickPill(s); }}
-                  style={{ background:"none", border:"none", cursor:"pointer", color:col, fontSize:12, fontWeight:600, padding:0, textDecoration:"underline dotted" }}>
-                  {s.name}
-                </button>
-              ) : s.name}
-              <button onClick={e=>{ e.stopPropagation(); remove(id); }} style={{ background:"none", border:"none", cursor:"pointer", color:col, fontSize:13, lineHeight:1, padding:0, opacity:0.7 }}>×</button>
-            </span>
-          );
+          return <SkillPill key={id} name={s.name} color={getColor(s)} onClick={onClickPill?()=>onClickPill(s):undefined} onRemove={()=>remove(id)}/>;
         })}
-        <input value={input} onChange={e=>{ setInput(e.target.value); setOpen(true); }}
+        <input data-slot="skill-combo-input" value={input} onChange={e=>{ setInput(e.target.value); setOpen(true); setHi(0); }}
           onFocus={()=>setOpen(true)} onBlur={()=>setTimeout(()=>setOpen(false),150)}
           onKeyDown={handleKey}
-          placeholder={selected.length?"":"Type to search or add…"}
-          style={{ border:"none", outline:"none", fontSize:13, fontFamily:G.mono, minWidth:140, flex:1, background:"transparent" }}/>
+          placeholder={selected.length?"":placeholder}
+          className="h-6 min-w-32 flex-1 bg-transparent px-1 text-sm outline-none placeholder:text-muted-foreground"/>
       </div>
-      {open&&(available.length>0||canCreate)&&(
-        <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, background:G.white, border:`1px solid ${G.border}`, borderRadius:8, boxShadow:"0 4px 16px rgba(44,24,16,0.12)", zIndex:500, maxHeight:220, overflowY:"auto" }}>
-          {canCreate&&(
-            <button onMouseDown={async()=>{ if(onCreateSkill){const s=await onCreateSkill(input.trim()); if(s)add(s);} }}
-              style={{ width:"100%", textAlign:"left", padding:"9px 14px", background:"none", border:"none", cursor:"pointer", fontSize:13, fontFamily:G.mono, color:G.caramel, fontWeight:600, borderBottom:`1px solid ${G.border}` }}>
-              + Add "{input.trim()}"
-            </button>
-          )}
-          {available.map(s=>(
-            <button key={s.skid||s.rid} onMouseDown={()=>add(s)}
-              style={{ width:"100%", textAlign:"left", padding:"9px 14px", background:"none", border:"none", cursor:"pointer", fontSize:13, fontFamily:G.mono, color:G.dark, display:"block" }}
-              onMouseEnter={e=>e.currentTarget.style.background=G.sand}
-              onMouseLeave={e=>e.currentTarget.style.background="none"}>
-              {s.name}
+      {open&&options.length>0&&rect&&createPortal(
+        <div data-slot="skill-combo-popup" role="listbox"
+          style={{ position:"fixed", top:rect.bottom+4, left:rect.left, width:rect.width, zIndex:2500 }}
+          className="max-h-56 overflow-y-auto rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg/5">
+          {options.map((o,i)=>(
+            <button type="button" key={o._create?"__new":(o.skid||o.rid)} data-slot="skill-combo-item" role="option" aria-selected={i===hi}
+              onMouseDown={e=>{ e.preventDefault(); pick(o); }} onMouseEnter={()=>setHi(i)}
+              className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-start text-sm ${i===hi?"bg-accent text-accent-foreground":""}`}>
+              {o._create
+                ? <><PlusIcon className="size-4 text-brand"/><span>Add <span className="font-semibold">“{input.trim()}”</span></span></>
+                : <><span className="size-2 shrink-0 rounded-full" style={{ background:o.color||G.caramel }}/>{o.name}</>}
             </button>
           ))}
-        </div>
+        </div>, document.body
       )}
     </div>
   );
@@ -6997,75 +7024,61 @@ function SkillEditDialog({ skill, allSkills, onSave, onClose }) {
     duration: intDur(skill.duration)||"",
     duration_unit: skill.duration_unit||"minutes",
     dep_type: skill.dep_type||"",
-    dep_skid: skill.dep_skid||"",
+    dep_skid: skill.dep_skid ? String(skill.dep_skid) : "",
   });
   const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
   const set = (k,v) => setForm(p=>({...p,[k]:v}));
 
   const save = async () => {
-    setSaving(true);
+    if (!form.name.trim()) { setErr("Name is required"); return; }
+    setSaving(true); setErr("");
     try {
       const updated = await api.updateSkill(skill.skid, {
         name: form.name.trim(),
         duration: form.duration ? Number(form.duration) : null,
         duration_unit: form.duration_unit,
         dep_type: form.dep_type||null,
-        dep_skid: form.dep_skid ? Number(form.dep_skid) : null,
+        dep_skid: form.dep_type && form.dep_skid ? Number(form.dep_skid) : null,
       });
       onSave(updated);
-    } catch(e){ alert(e.message); } finally{ setSaving(false); }
+    } catch(e){ setErr(e.message); } finally{ setSaving(false); }
   };
 
   const otherSkills = allSkills.filter(s=>s.skid!==skill.skid);
+  const depItems = [{ label:"Select skill…", value:"" }, ...otherSkills.map(s=>({ label:s.name, value:String(s.skid) }))];
 
   return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1100, display:"flex", alignItems:"center", justifyContent:"center" }}>
-      <div style={{ background:G.white, borderRadius:16, padding:28, maxWidth:440, width:"90%", boxShadow:"0 20px 60px rgba(44,24,16,0.2)", animation:"fadeIn 0.2s ease" }}>
-        <h3 style={{ fontFamily:G.font, fontSize:18, marginBottom:18 }}>Edit skill: {skill.name}</h3>
-        <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-          <Input label="Name" value={form.name} onChange={v=>set("name",v)} required />
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-            <Input label="Duration" type="number" min="0" value={String(form.duration)} onChange={v=>set("duration", Math.max(0, parseInt(v,10)||0))} placeholder="e.g. 30" />
-            <div>
-              <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Unit</label>
-              <select value={form.duration_unit} onChange={e=>set("duration_unit",e.target.value)}
-                style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}>
-                {DUR_UNITS.map(u=><option key={u.value} value={u.value}>{u.label}</option>)}
-              </select>
-            </div>
-          </div>
-          <div style={{ borderTop:`1px solid ${G.border}`, paddingTop:12 }}>
-            <p style={{fontSize:13,fontWeight:600,color:G.dark,marginBottom:8}}>Dependency</p>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-              <div>
-                <label style={{fontSize:12,color:G.muted,display:"block",marginBottom:4}}>Type</label>
-                <select value={form.dep_type} onChange={e=>set("dep_type",e.target.value)}
-                  style={{width:"100%",padding:"8px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}>
-                  <option value="">None</option>
-                  {DEP_TYPES.map(d=><option key={d.value} value={d.value}>{d.label}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={{fontSize:12,color:G.muted,display:"block",marginBottom:4}}>Depends on</label>
-                <select value={form.dep_skid} onChange={e=>set("dep_skid",e.target.value)}
-                  disabled={!form.dep_type}
-                  style={{width:"100%",padding:"8px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",background:!form.dep_type?G.sand:G.white}}>
-                  <option value="">Select skill…</option>
-                  {otherSkills.map(s=><option key={s.skid} value={s.skid}>{s.name}</option>)}
-                </select>
-              </div>
-            </div>
-            {form.dep_type&&(
-              <p style={{fontSize:11,color:G.muted,marginTop:6}}>{DEP_TYPES.find(d=>d.value===form.dep_type)?.label}</p>
-            )}
-          </div>
+    <Modal onClose={onClose} title="Edit skill" description={skill.name} className="max-w-md"
+      footer={<>
+        <span className="text-destructive-foreground text-sm">{err}</span>
+        <div className="flex gap-2">
+          <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+          <Btn onClick={save} loading={saving}>Save</Btn>
         </div>
-        <div style={{display:"flex",gap:10,marginTop:20}}>
-          <Btn size="sm" onClick={save} loading={saving}>Save</Btn>
-          <Btn variant="ghost" size="sm" onClick={onClose}>Cancel</Btn>
+      </>}>
+      <div className="flex flex-col gap-4">
+        <Input label="Name" value={form.name} onChange={v=>set("name",v)} required />
+        <div className="grid grid-cols-2 gap-3">
+          <Input label="Duration" type="number" value={String(form.duration)} onChange={v=>set("duration", Math.max(0, parseInt(v,10)||0))} placeholder="e.g. 30" />
+          <Select label="Unit" value={form.duration_unit} onChange={v=>set("duration_unit",v)} options={DUR_UNITS}/>
+        </div>
+        <div className="flex flex-col gap-3 border-t border-border pt-4">
+          <span className="font-medium text-sm">Dependency</span>
+          <div className="grid grid-cols-2 gap-3">
+            <Select label="Type" value={form.dep_type} onChange={v=>set("dep_type",v)} options={DEP_TYPES} placeholder="None"/>
+            <Field className="w-full gap-1.5">
+              <FieldLabel>Depends on</FieldLabel>
+              <CSelect items={depItems} value={form.dep_skid} onValueChange={v=>set("dep_skid",v??"")} disabled={!form.dep_type}>
+                <SelectTrigger size="lg" className={form.dep_skid===""?"text-muted-foreground":undefined}><SelectValue/></SelectTrigger>
+                <SelectPopup>{depItems.map(it=><SelectItem key={it.value} value={it.value}>{it.label}</SelectItem>)}</SelectPopup>
+              </CSelect>
+            </Field>
+          </div>
+          {form.dep_type&&<p className="text-muted-foreground text-xs">{DEP_TYPES.find(d=>d.value===form.dep_type)?.label}</p>}
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -7074,32 +7087,33 @@ function RoleEditDialog({ role, allSkills, onSave, onClose, createSkill }) {
   const [name, setName]       = useState(role.name);
   const [selSkills, setSelSkills] = useState(role.skills||[]);
   const [saving, setSaving]   = useState(false);
+  const [err, setErr] = useState("");
 
   const save = async () => {
-    setSaving(true);
+    if (!name.trim()) { setErr("Role name is required"); return; }
+    setSaving(true); setErr("");
     try {
       const updated = await api.updateRole(role.rid, { name:name.trim(), skill_ids: selSkills.map(s=>s.skid) });
       onSave(updated);
-    } catch(e){ alert(e.message); } finally{ setSaving(false); }
+    } catch(e){ setErr(e.message); } finally{ setSaving(false); }
   };
 
   return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1100, display:"flex", alignItems:"center", justifyContent:"center" }}>
-      <div style={{ background:G.white, borderRadius:16, padding:28, maxWidth:480, width:"90%", boxShadow:"0 20px 60px rgba(44,24,16,0.2)", animation:"fadeIn 0.2s ease" }}>
-        <h3 style={{ fontFamily:G.font, fontSize:18, marginBottom:18 }}>Edit role</h3>
-        <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-          <Input label="Role name" value={name} onChange={setName} required />
-          <div>
-            <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:6}}>Skills</label>
-            <SkillCombo allSkills={allSkills} selected={selSkills} onChange={setSelSkills} onCreateSkill={createSkill} pillColor={role.color}/>
-          </div>
+    <Modal onClose={onClose} title="Edit role" className="max-w-lg"
+      footer={<>
+        <span className="text-destructive-foreground text-sm">{err}</span>
+        <div className="flex gap-2">
+          <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+          <Btn onClick={save} loading={saving}>Save</Btn>
         </div>
-        <div style={{display:"flex",gap:10,marginTop:20}}>
-          <Btn size="sm" onClick={save} loading={saving}>Save</Btn>
-          <Btn variant="ghost" size="sm" onClick={onClose}>Cancel</Btn>
-        </div>
+      </>}>
+      <div className="flex flex-col gap-4">
+        <Input label="Role name" value={name} onChange={setName} required />
+        <FieldBlock label="Skills">
+          <SkillCombo allSkills={allSkills} selected={selSkills} onChange={setSelSkills} onCreateSkill={createSkill} pillColor={role.color}/>
+        </FieldBlock>
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -7119,7 +7133,7 @@ function OwnerSkillsPanel({ user, skills, createSkill, toast }) {
       // Fetch owner's own employee_skill entries
       fetch('/api/staff/self-skills', {
         headers:{ Authorization:`Bearer ${localStorage.getItem("token")}` }
-      }).then(r=>r.json()).then(s=>setMySkills(s||[])).catch(()=>{});
+      }).then(r=>r.json()).then(s=>setMySkills(Array.isArray(s)?s:[])).catch(()=>{});
     }).catch(()=>{});
   },[]);
 
@@ -7138,29 +7152,22 @@ function OwnerSkillsPanel({ user, skills, createSkill, toast }) {
   };
 
   return (
-    <div style={{background:G.sand,borderRadius:12,padding:"12px 16px",marginBottom:16,border:`1px solid ${G.border}`}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <span style={{fontSize:13,fontWeight:600,color:G.dark}}>{tl("Your skills")}</span>
-          {mySkills.length>0&&!expanded&&(
-            <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-              {mySkills.map(s=>(
-                <span key={s.skid} style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:`${s.color||G.muted}18`,color:s.color||G.muted,border:`1px solid ${s.color||G.muted}40`}}>
-                  {s.name}
-                </span>
-              ))}
-            </div>
-          )}
-          {mySkills.length===0&&!expanded&&<span style={{fontSize:12,color:G.muted,fontStyle:"italic"}}>None assigned — add skills to be eligible for process steps</span>}
+    <div className="mb-5 rounded-2xl border border-border bg-muted px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="flex items-center gap-1.5 font-semibold text-sm"><CircleUserIcon className="size-4 text-muted-foreground"/>{tl("Your skills")}</span>
+          {!expanded&&(mySkills.length>0
+            ? mySkills.map(s=><SkillPill key={s.skid} name={s.name} color={s.color||G.muted} size="sm"/>)
+            : <span className="text-muted-foreground text-xs italic">None assigned — add skills to be eligible for process steps</span>)}
         </div>
-        <button onClick={()=>setExpanded(e=>!e)} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:G.caramel,fontWeight:600}}>
-          {expanded?"Done":"Edit"}
-        </button>
+        <Button variant="ghost" size="sm" onClick={()=>setExpanded(e=>!e)} loading={saving}>
+          {expanded?<><CheckIcon/>Done</>:<><PencilIcon/>Edit</>}
+        </Button>
       </div>
       {expanded&&(
-        <div style={{marginTop:12}}>
+        <div className="mt-3 flex flex-col gap-1.5">
           <SkillCombo allSkills={skills} selected={mySkills} onChange={s=>save(s)} onCreateSkill={createSkill}/>
-          <p style={{fontSize:11,color:G.muted,marginTop:6}}>These skills make you eligible to be assigned to process steps.</p>
+          <p className="text-muted-foreground text-xs">These skills make you eligible to be assigned to process steps.</p>
         </div>
       )}
     </div>
@@ -7182,6 +7189,8 @@ function StaffPage({ user, toast }) {
   const [saving,    setSaving]    = useState(false);
   const [editSkill, setEditSkill] = useState(null);
   const [editRole,  setEditRole]  = useState(null);
+  const [confirmDel, setConfirmDel] = useState(false);
+  const [resending, setResending] = useState(null);
 
   const load = useCallback(async()=>{
     setLoading(true);
@@ -7194,9 +7203,11 @@ function StaffPage({ user, toast }) {
   useEffect(()=>{ load(); },[]);
 
   const toggleSel = uid => setSelected(p=>p.includes(uid)?p.filter(x=>x!==uid):[...p,uid]);
+  const allSel  = employees.length>0 && selected.length===employees.length;
+  const someSel = selected.length>0 && !allSel;
 
   const doDelete = async () => {
-    if (!window.confirm(`Delete ${selected.length} employee(s)?`)) return;
+    setConfirmDel(false);
     try { await api.deleteEmployees(selected); setEmployees(p=>p.filter(e=>!selected.includes(e.uid))); setSelected([]); toast("Deleted"); }
     catch(e){ toast(e.message,"error"); }
   };
@@ -7291,9 +7302,11 @@ function StaffPage({ user, toast }) {
   const openNew = () => {
     setEditEmp(null); setLinkedUser(null); setForm(emptyForm); setFormRoles([]); setFormSkills([]); setShowNew(true);
   };
+  const closeForm = () => { setShowNew(false); setEditEmp(null); };
 
   const saveEmployee = async () => {
     if (!form.first_name.trim()||!form.last_name.trim()) { toast("First and last name required","error"); return; }
+    if (!form.email.trim()) { toast("Email is required — the invite is sent there","error"); return; }
     setSaving(true);
     try {
       const payload = { ...form, role_ids: formRoles.map(r=>r.rid), skill_ids: formSkills.map(s=>s.skid) };
@@ -7306,8 +7319,15 @@ function StaffPage({ user, toast }) {
         setEmployees(p=>[...p,{...c,roles:c.roles?.map(r=>r.name)||[],skills:c.skills?.map(s=>s.name)||[]}].sort((a,b)=>a.first_name.localeCompare(b.first_name)));
         toast(`${c.first_name} ${c.last_name} added`);
       }
-      setEditEmp(null); setShowNew(false);
+      closeForm();
     } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
+  };
+
+  const resend = async e => {
+    setResending(e.uid);
+    try{ await api.resendInvite(e.uid); toast(`Invite resent to ${e.email}`); }
+    catch(err){ toast(err.message,"error"); }
+    finally{ setResending(null); }
   };
 
   // Find role color for a role name
@@ -7318,126 +7338,138 @@ function StaffPage({ user, toast }) {
   if (showRoster) return <RosterPage user={user} toast={toast} onBack={()=>setShowRoster(false)} />;
   if (showRoles)  return <RolesPage roles={roles} skills={skills} setRoles={setRoles} setSkills={setSkills} createSkill={createSkill} toast={toast} onBack={()=>setShowRoles(false)} />;
 
+  const H = "h-11 px-4 font-semibold text-[11px] text-muted-foreground uppercase tracking-wider";
+
   return (
-    <Page title={tl("Staff")} actions={
-      <div style={{display:"flex",gap:10}}>
-        {selected.length>0&&<Btn variant="danger" size="sm" onClick={doDelete}>Delete ({selected.length})</Btn>}
-        <Btn variant="secondary" size="sm" onClick={()=>setShowRoster(true)}>Roster →</Btn>
-        <Btn variant="secondary" size="sm" onClick={()=>setShowRoles(true)}>Roles & Skills →</Btn>
-        <Btn size="sm" onClick={openNew}>+ Employee</Btn>
-      </div>
-    }>
+    <Page title={tl("Staff")} actions={<>
+      {selected.length>0&&<Btn variant="danger" size="sm" onClick={()=>setConfirmDel(true)}><Trash2Icon/>Delete ({selected.length})</Btn>}
+      <Btn variant="secondary" size="sm" onClick={()=>setShowRoster(true)}><CalendarDaysIcon/>Roster</Btn>
+      <Btn variant="secondary" size="sm" onClick={()=>setShowRoles(true)}><TagsIcon/>Roles & Skills</Btn>
+      <Btn size="sm" onClick={openNew}><PlusIcon/>Employee</Btn>
+    </>}>
       {/* Owner self-skills — so the owner can be assigned to process steps */}
       <OwnerSkillsPanel user={user} skills={skills} createSkill={createSkill} toast={toast}/>
 
       {/* Form */}
       {(showNew||editEmp)&&(
-        <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
-          <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>{editEmp?`${editEmp.first_name} ${editEmp.last_name}`:"New employee"}</h3>
-          {linkedUser&&(
-            <div style={{ background:"#f0fdf4", border:"1px solid #86efac", borderRadius:8, padding:"10px 14px", marginBottom:14, fontSize:13, color:"#166534", display:"flex", alignItems:"center", gap:8 }}>
-              <span>✓</span>
-              <span>Linked to <strong>{linkedUser.first_name} {linkedUser.last_name}</strong> — personal fields are read-only. Uncheck "Has Tanelu account" to enter a different person.</span>
+        <Card className="mb-6" style={{ animation:"fadeIn 0.2s ease" }}>
+          <CardHeader>
+            <CardTitle className="font-heading text-lg">{editEmp?`${editEmp.first_name} ${editEmp.last_name}`:"New employee"}</CardTitle>
+            <CardAction><Button variant="ghost" size="icon-sm" aria-label="Close" onClick={closeForm}><XIcon/></Button></CardAction>
+          </CardHeader>
+          <CardPanel className="flex flex-col gap-5">
+            {linkedUser&&(
+              <Alert variant="success">
+                <CircleCheckIcon/>
+                <AlertTitle>Linked to {linkedUser.first_name} {linkedUser.last_name}</AlertTitle>
+                <AlertDescription>Personal fields are read-only. Uncheck “Has Tanelu account” to enter a different person.</AlertDescription>
+              </Alert>
+            )}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Input label="First name" value={form.first_name} onChange={v=>setForm(p=>({...p,first_name:v}))} required disabled={!!linkedUser}/>
+              <Input label="Last name"  value={form.last_name}  onChange={v=>setForm(p=>({...p,last_name:v}))}  required disabled={!!linkedUser}/>
+              <Input label="Email" value={form.email} onChange={v=>setForm(p=>({...p,email:v}))} type="email" onBlur={handleEmailBlur} disabled={!!linkedUser} required
+                hint={lookingUp?"Looking up…":undefined}/>
+              <Input label="Phone" value={form.phone} onChange={v=>setForm(p=>({...p,phone:v}))} disabled={!!linkedUser}/>
+              <Input label="Street address" value={form.street_address} onChange={v=>setForm(p=>({...p,street_address:v}))} disabled={!!linkedUser}/>
+              <Input label="City" value={form.city} onChange={v=>setForm(p=>({...p,city:v}))} disabled={!!linkedUser}/>
+              <Input label="ZIP"  value={form.zip}  onChange={v=>setForm(p=>({...p,zip:v}))}  disabled={!!linkedUser}/>
+              <div className="flex items-end pb-2">
+                <Label className="cursor-pointer font-normal">
+                  <Checkbox checked={!!form.is_employee} onCheckedChange={v=>handleIsEmployeeToggle(!!v)}/>
+                  Has Tanelu account
+                </Label>
+              </div>
             </div>
-          )}
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
-            <Input label="First name" value={form.first_name} onChange={v=>setForm(p=>({...p,first_name:v}))} required disabled={!!linkedUser}/>
-            <Input label="Last name"  value={form.last_name}  onChange={v=>setForm(p=>({...p,last_name:v}))}  required disabled={!!linkedUser}/>
-            <div>
-              <Input label="Email" value={form.email} onChange={v=>setForm(p=>({...p,email:v}))} type="email" onBlur={handleEmailBlur} disabled={!!linkedUser}/>
-              {lookingUp&&<span style={{fontSize:11,color:G.muted}}>Looking up…</span>}
-            </div>
-            <Input label="Phone" value={form.phone} onChange={v=>setForm(p=>({...p,phone:v}))} disabled={!!linkedUser}/>
-            <Input label="Street address" value={form.street_address} onChange={v=>setForm(p=>({...p,street_address:v}))} disabled={!!linkedUser}/>
-            <Input label="City" value={form.city} onChange={v=>setForm(p=>({...p,city:v}))} disabled={!!linkedUser}/>
-            <Input label="ZIP"  value={form.zip}  onChange={v=>setForm(p=>({...p,zip:v}))}  disabled={!!linkedUser}/>
-            <div style={{display:"flex",alignItems:"center",gap:10,paddingTop:28}}>
-              <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:14}}>
-                <input type="checkbox" checked={!!form.is_employee} onChange={e=>handleIsEmployeeToggle(e.target.checked)} style={{accentColor:G.caramel}}/>
-                Has Tanelu account
-              </label>
-            </div>
-          </div>
-          <div style={{ marginBottom:14 }}>
-            <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:6}}>Roles</label>
-            <SkillCombo
-              allSkills={roles.map(r=>({...r,skid:r.rid}))}
-              selected={formRoles.map(r=>({...r,skid:r.rid}))}
-              onChange={sel=>handleRolesChange(sel.map(s=>({...s,rid:s.rid||s.skid})))}
-              onClickPill={r=>setEditRole(roles.find(x=>x.rid===(r.rid||r.skid)))}
-              pillColor={null}
-            />
-          </div>
-          <div style={{ marginBottom:20 }}>
-            <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:6}}>Skills</label>
-            <SkillCombo
-              allSkills={skills}
-              selected={formSkills}
-              excluded={roleSkillIds}
-              onChange={setFormSkills}
-              onCreateSkill={createSkill}
-              onClickPill={s=>setEditSkill(s)}
-            />
-            {roleSkillIds.length>0&&<p style={{fontSize:11,color:G.muted,marginTop:4}}>Skills from assigned roles are shown automatically and excluded from manual selection.</p>}
-          </div>
-          <div style={{ display:"flex", gap:10 }}>
-            <Btn size="sm" onClick={saveEmployee} loading={saving}>Save</Btn>
-            <Btn variant="ghost" size="sm" onClick={()=>{ setShowNew(false); setEditEmp(null); }}>Cancel</Btn>
-          </div>
-        </div>
+            <FieldBlock label="Roles">
+              <SkillCombo
+                allSkills={roles.map(r=>({...r,skid:r.rid}))}
+                selected={formRoles.map(r=>({...r,skid:r.rid}))}
+                onChange={sel=>handleRolesChange(sel.map(s=>({...s,rid:s.rid||s.skid})))}
+                onClickPill={r=>setEditRole(roles.find(x=>x.rid===(r.rid||r.skid)))}
+                pillColor={null}
+                placeholder="Type to search roles…"
+              />
+            </FieldBlock>
+            <FieldBlock label="Skills" hint={roleSkillIds.length>0?"Skills from assigned roles are shown automatically and excluded from manual selection.":undefined}>
+              <SkillCombo
+                allSkills={skills}
+                selected={formSkills}
+                excluded={roleSkillIds}
+                onChange={setFormSkills}
+                onCreateSkill={createSkill}
+                onClickPill={s=>setEditSkill(s)}
+              />
+            </FieldBlock>
+          </CardPanel>
+          <CardFooter className="justify-end gap-2 border-t border-border pt-4">
+            <Btn variant="ghost" onClick={closeForm}>Cancel</Btn>
+            <Btn onClick={saveEmployee} loading={saving}>Save</Btn>
+          </CardFooter>
+        </Card>
       )}
 
       {/* Table */}
-      {loading?<Spinner/>:(
-        <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, overflow:"hidden" }}>
-          <table style={{ width:"100%", borderCollapse:"collapse" }}>
-            <thead>
-              <tr style={{ background:G.sand, borderBottom:`1px solid ${G.border}` }}>
-                <th style={{ width:40, padding:"10px 14px" }}></th>
-                {["#","First name","Last name","Role(s)","Skill(s)",""].map(h=>(
-                  <th key={h} style={{ padding:"10px 14px", textAlign:"left", fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:G.muted }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {employees.length===0?(
-                <tr><td colSpan={6} style={{padding:40,textAlign:"center",color:G.muted}}>No employees yet.</td></tr>
-              ):employees.map((e,i)=>(
-                <tr key={e.uid} style={{ borderBottom:i<employees.length-1?`1px solid ${G.border}`:"none", background:selected.includes(e.uid)?`${G.caramel}08`:"transparent" }}>
-                  <td style={{padding:"10px 14px"}}><input type="checkbox" checked={selected.includes(e.uid)} onChange={()=>toggleSel(e.uid)} style={{accentColor:G.caramel}}/></td>
-                  <td style={{padding:"10px 14px",fontSize:13,color:G.muted,fontFamily:G.mono}}>{e.employee_seq}</td>
-                  <td style={{padding:"10px 14px"}}>
-                    <button onClick={()=>openEdit(e)} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:G.dark,fontWeight:600,padding:0,textDecoration:"underline dotted",textUnderlineOffset:3}}>{e.first_name}</button>
-                  </td>
-                  <td style={{padding:"10px 14px",fontSize:14}}>{e.last_name}</td>
-                  <td style={{padding:"10px 14px"}}>
-                    {(e.roles||[]).map(r=>{const c=roleColor(r);return(
-                      <span key={r} onClick={()=>setEditRole(roles.find(x=>x.name===r))} style={{display:"inline-flex",alignItems:"center",gap:4,background:`${c}18`,border:`1px solid ${c}40`,borderRadius:20,padding:"2px 10px",fontSize:12,fontWeight:500,color:c,marginRight:4,marginBottom:2,cursor:"pointer"}}>{r}</span>
-                    );})}
-                  </td>
-                  <td style={{padding:"10px 14px"}}>
-                    {(e.skills||[]).map(s=>{const c=skillColor(s);return(
-                      <span key={s} onClick={()=>setEditSkill(skills.find(x=>x.name===s))} style={{display:"inline-flex",alignItems:"center",gap:4,background:`${c}18`,border:`1px solid ${c}40`,borderRadius:20,padding:"2px 10px",fontSize:12,fontWeight:500,color:c,marginRight:4,marginBottom:2,cursor:"pointer"}}>{s}</span>
-                    );})}
-                  </td>
-                  <td style={{padding:"10px 14px",whiteSpace:"nowrap"}}>
+      {loading?<Spinner/>:employees.length===0?(
+        <Empty className="rounded-2xl border border-border border-dashed bg-card">
+          <EmptyHeader>
+            <EmptyMedia variant="icon"><UsersIcon/></EmptyMedia>
+            <EmptyTitle>No employees yet</EmptyTitle>
+            <EmptyDescription>Add the people who work in your kitchen to assign roles, skills and shifts.</EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent><Btn size="sm" onClick={openNew}><PlusIcon/>Employee</Btn></EmptyContent>
+        </Empty>
+      ):(
+        <TableShell>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-10 ps-4"><Checkbox aria-label="Select all" checked={allSel} indeterminate={someSel} onCheckedChange={()=>setSelected(allSel?[]:employees.map(e=>e.uid))}/></TableHead>
+                <TableHead className={`${H} w-12 max-sm:hidden`}>#</TableHead>
+                <TableHead className={H}>Name</TableHead>
+                <TableHead className={H}>Role(s)</TableHead>
+                <TableHead className={`${H} max-md:hidden`}>Skill(s)</TableHead>
+                <TableHead className={`${H} text-end`}>Account</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {employees.map(e=>(
+                <TableRow key={e.uid} data-state={selected.includes(e.uid)?"selected":undefined}>
+                  <TableCell className="ps-4"><Checkbox aria-label={`Select ${e.first_name}`} checked={selected.includes(e.uid)} onCheckedChange={()=>toggleSel(e.uid)}/></TableCell>
+                  <TableCell className={`${CELL} font-mono text-muted-foreground text-xs tabular-nums max-sm:hidden`}>{e.employee_seq}</TableCell>
+                  <TableCell className={CELL}>
+                    <button type="button" data-slot="row-link" onClick={()=>openEdit(e)} className="text-start font-semibold underline decoration-dotted underline-offset-3 hover:decoration-solid">{`${e.first_name||""} ${e.last_name||""}`.trim()||<span className="font-normal text-muted-foreground italic">No name</span>}</button>
+                    {e.email&&<div className="truncate text-muted-foreground text-xs">{e.email}</div>}
+                  </TableCell>
+                  <TableCell className={CELL}>
+                    <div className="flex flex-wrap gap-1">
+                      {(e.roles||[]).map(r=><SkillPill key={r} name={r} color={roleColor(r)} onClick={()=>setEditRole(roles.find(x=>x.name===r))}/>)}
+                      {!(e.roles||[]).length&&<span className="text-muted-foreground">—</span>}
+                    </div>
+                  </TableCell>
+                  <TableCell className={`${CELL} max-md:hidden`}>
+                    <div className="flex flex-wrap gap-1">
+                      {(e.skills||[]).map(s=><SkillPill key={s} name={s} color={skillColor(s)} onClick={()=>setEditSkill(skills.find(x=>x.name===s))}/>)}
+                      {!(e.skills||[]).length&&<span className="text-muted-foreground">—</span>}
+                    </div>
+                  </TableCell>
+                  <TableCell className={`${CELL} whitespace-nowrap text-end`}>
                     {e.email && !e.email_verified && (
-                      <button onClick={async()=>{
-                        try{ await api.resendInvite(e.uid); toast(`Invite resent to ${e.email}`); }
-                        catch(err){ toast(err.message,"error"); }
-                      }} style={{fontSize:11,padding:"3px 8px",borderRadius:5,border:`1px solid ${G.caramel}`,background:"none",color:G.caramel,cursor:"pointer",fontFamily:G.mono}}>
-                        Resend invite
-                      </button>
+                      <Button variant="outline" size="xs" loading={resending===e.uid} onClick={()=>resend(e)}><MailIcon/>Resend invite</Button>
                     )}
-                    {e.email_verified && <span style={{fontSize:11,color:G.green}}>✓ Active</span>}
-                    {!e.email && <span style={{fontSize:11,color:G.muted}}>No email</span>}
-                  </td>
-                </tr>
+                    {e.email_verified && <CBadge variant="success"><CheckIcon/>Active</CBadge>}
+                    {!e.email && <span className="text-muted-foreground text-xs">No email</span>}
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </TableShell>
       )}
+
+      <Dialog open={confirmDel} title={`Delete ${selected.length} employee(s)?`} onConfirm={doDelete} onCancel={()=>setConfirmDel(false)}>
+        This cannot be undone.
+      </Dialog>
 
       {editSkill&&<SkillEditDialog skill={editSkill} allSkills={skills}
         onSave={s=>{ setSkills(p=>p.map(x=>x.skid===s.skid?s:x)); setEditSkill(null); toast(`"${s.name}" saved`); }}
@@ -7458,9 +7490,9 @@ function SkillUsageCount({ skid }) {
       headers:{ Authorization:`Bearer ${localStorage.getItem("token")}` }
     }).then(r=>r.json()).then(d=>setCount(d.employee_count??0)).catch(()=>setCount(0));
   },[skid]);
-  if (count===null) return <span style={{fontSize:12,color:G.muted}}>…</span>;
+  if (count===null) return <span className="text-muted-foreground text-xs">…</span>;
   return (
-    <span style={{fontSize:12,color:count>0?G.dark:G.muted,fontStyle:count===0?"italic":"normal"}}>
+    <span className={count>0?"text-sm":"text-muted-foreground text-xs italic"}>
       {count===0?"None":`${count} employee${count!==1?"s":""}`}
     </span>
   );
@@ -7470,39 +7502,47 @@ function RolesPage({ roles, skills, setRoles, setSkills, createSkill, toast, onB
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
   const [selected,   setSelected]   = useState([]);
-  const [saving,     setSaving]     = useState(false);
+  const [saving,     setSaving]     = useState(null); // rid being saved
   const [localRoles, setLocalRoles] = useState(roles.map(r=>({...r,_skills:r.skills||[],_name:r.name})));
   const [deleting,   setDeleting]   = useState({}); // skid → true while deleting
+  const [newRole,    setNewRole]    = useState(null); // name while the "+ Role" dialog is open
+  const [creating,   setCreating]   = useState(false);
+  const [dialog,     setDialog]     = useState(null); // {kind:"roles"} | {kind:"skill",skid,name}
   useEffect(()=>setLocalRoles(roles.map(r=>({...r,_skills:r.skills||[],_name:r.name}))),[roles]);
 
   const toggleSel = rid => setSelected(p=>p.includes(rid)?p.filter(x=>x!==rid):[...p,rid]);
+  const allSel  = localRoles.length>0 && selected.length===localRoles.length;
+  const someSel = selected.length>0 && !allSel;
 
   const addRole = async () => {
-    const name = window.prompt("Role name:");
-    if (!name?.trim()) return;
-    try { const r = await api.createRole({name:name.trim(),skill_ids:[]}); setRoles(p=>[...p,r].sort((a,b)=>a.name.localeCompare(b.name))); }
+    const name = newRole?.trim();
+    if (!name) return;
+    setCreating(true);
+    try { const r = await api.createRole({name,skill_ids:[]}); setRoles(p=>[...p,r].sort((a,b)=>a.name.localeCompare(b.name))); setNewRole(null); toast(`"${r.name}" added`); }
     catch(e){ toast(e.message,"error"); }
+    finally{ setCreating(false); }
   };
 
   const deleteSelected = async () => {
-    if (!window.confirm(`Delete ${selected.length} role(s)?`)) return;
+    setDialog(null);
     try { await api.deleteRoles(selected); setRoles(p=>p.filter(r=>!selected.includes(r.rid))); setSelected([]); toast("Deleted"); }
     catch(e){ toast(e.message,"error"); }
   };
 
   const saveRole = async local => {
-    setSaving(true);
+    setSaving(local.rid);
     try {
       const updated = await api.updateRole(local.rid, { name:local._name, skill_ids:local._skills.map(s=>s.skid) });
       setRoles(p=>p.map(r=>r.rid===updated.rid?updated:r));
       toast(`"${updated.name}" saved`);
-    } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
+    } catch(e){ toast(e.message,"error"); } finally{ setSaving(null); }
   };
 
   const updateLocal = (rid,patch) => setLocalRoles(p=>p.map(r=>r.rid===rid?{...r,...patch}:r));
+  const isDirty = r => r._name!==r.name || r._skills.map(s=>s.skid).join()!==(r.skills||[]).map(s=>s.skid).join();
 
   const deleteSkill = async (skid, name) => {
-    if (!window.confirm(`Delete skill "${name}"? This will also remove it from all roles.`)) return;
+    setDialog(null);
     setDeleting(p=>({...p,[skid]:true}));
     try {
       await api.deleteSkills([skid]);
@@ -7522,109 +7562,124 @@ function RolesPage({ roles, skills, setRoles, setSkills, createSkill, toast, onB
 
   // Build usage map: which roles use each skill
   const skillRoles = {};
-  roles.forEach(r=>(r.skills||[]).forEach(s=>{ (skillRoles[s.skid]=skillRoles[s.skid]||[]).push(r.name); }));
+  roles.forEach(r=>(r.skills||[]).forEach(s=>{ (skillRoles[s.skid]=skillRoles[s.skid]||[]).push({ name:r.name, color:r.color }); }));
+
+  const H = "h-11 px-4 font-semibold text-[11px] text-muted-foreground uppercase tracking-wider";
 
   return (
-    <Page title={tl("Roles & Skills")} actions={
-      <div style={{display:"flex",gap:10}}>
-        {selected.length>0&&<Btn variant="danger" size="sm" onClick={deleteSelected}>Delete ({selected.length})</Btn>}
-        <Btn variant="secondary" size="sm" onClick={addRole}>+ Role</Btn>
-        <Btn variant="ghost" size="sm" onClick={onBack}>← Staff</Btn>
-      </div>
-    }>
+    <Page title={tl("Roles & Skills")} actions={<>
+      <Btn variant="ghost" size="sm" onClick={onBack}><ArrowLeftIcon/>Staff</Btn>
+      {selected.length>0&&<Btn variant="danger" size="sm" onClick={()=>setDialog({kind:"roles"})}><Trash2Icon/>Delete ({selected.length})</Btn>}
+      <Btn size="sm" onClick={()=>setNewRole("")}><PlusIcon/>Role</Btn>
+    </>}>
       {/* Roles table */}
-      <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, overflow:"visible", marginBottom:24 }}>
-        <table style={{ width:"100%", borderCollapse:"collapse" }}>
-          <thead>
-            <tr style={{ background:G.sand, borderBottom:`1px solid ${G.border}` }}>
-              <th style={{ width:40, padding:"10px 14px" }}></th>
-              <th style={{ padding:"10px 14px", textAlign:"left", fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:G.muted, width:"30%" }}>Role</th>
-              <th style={{ padding:"10px 14px", textAlign:"left", fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:G.muted }}>Skills</th>
-              <th style={{ width:80 }}></th>
-            </tr>
-          </thead>
-          <tbody>
+      <TableShell className="mb-8">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-10 ps-4"><Checkbox aria-label="Select all" checked={allSel} indeterminate={someSel} onCheckedChange={()=>setSelected(allSel?[]:localRoles.map(r=>r.rid))}/></TableHead>
+              <TableHead className={`${H} w-[30%]`}>Role</TableHead>
+              <TableHead className={H}>Skills</TableHead>
+              <TableHead className="w-24"/>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {localRoles.length===0?(
-              <tr><td colSpan={4} style={{padding:40,textAlign:"center",color:G.muted}}>No roles yet. Click "+ Role".</td></tr>
-            ):localRoles.map((r,i)=>(
-              <tr key={r.rid} style={{ borderBottom:i<localRoles.length-1?`1px solid ${G.border}`:"none", verticalAlign:"top" }}>
-                <td style={{padding:"12px 14px"}}><input type="checkbox" checked={selected.includes(r.rid)} onChange={()=>toggleSel(r.rid)} style={{accentColor:G.caramel}}/></td>
-                <td style={{padding:"12px 14px"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:8}}>
-                    <div style={{width:10,height:10,borderRadius:"50%",background:r.color,flexShrink:0}}/>
-                    <input value={r._name} onChange={e=>updateLocal(r.rid,{_name:e.target.value})}
+              <TableRow><TableCell colSpan={4} className="py-12 text-center text-muted-foreground">No roles yet. Click “+ Role”.</TableCell></TableRow>
+            ):localRoles.map(r=>(
+              <TableRow key={r.rid} className="align-top" data-state={selected.includes(r.rid)?"selected":undefined}>
+                <TableCell className="ps-4 pt-4"><Checkbox aria-label={`Select ${r.name}`} checked={selected.includes(r.rid)} onCheckedChange={()=>toggleSel(r.rid)}/></TableCell>
+                <TableCell className="px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <span className="size-2.5 shrink-0 rounded-full" style={{ background:r.color }}/>
+                    <CInput aria-label="Role name" value={r._name} onChange={e=>updateLocal(r.rid,{_name:e.target.value})}
                       onBlur={()=>r._name!==r.name&&saveRole(r)}
-                      style={{border:"none",outline:"none",fontSize:14,fontFamily:G.mono,fontWeight:600,color:r.color,width:"100%",background:"transparent",borderBottom:`1px dashed ${G.border}`,paddingBottom:3}}/>
+                      className="font-semibold"/>
                   </div>
-                </td>
-                <td style={{padding:"12px 14px"}}>
+                </TableCell>
+                <TableCell className="min-w-64 whitespace-normal px-4 py-3">
                   <SkillCombo allSkills={skills} selected={r._skills} onChange={sel=>updateLocal(r.rid,{_skills:sel})} onCreateSkill={createSkill} pillColor={r.color}/>
-                </td>
-                <td style={{padding:"12px 14px"}}>
-                  <Btn size="sm" onClick={()=>saveRole(r)} loading={saving}>Save</Btn>
-                </td>
-              </tr>
+                </TableCell>
+                <TableCell className="px-4 py-3 text-end">
+                  <Btn size="sm" variant={isDirty(r)?"primary":"secondary"} onClick={()=>saveRole(r)} loading={saving===r.rid}>Save</Btn>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
-      </div>
+          </TableBody>
+        </Table>
+      </TableShell>
 
       {/* Skills list with delete */}
-      <h3 style={{fontFamily:G.font,fontSize:16,marginBottom:12,color:G.dark}}>{tl("All skills")}</h3>
-      <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,overflow:"hidden"}}>
-        {skills.length===0?(
-          <p style={{padding:32,textAlign:"center",color:G.muted,fontStyle:"italic"}}>No skills yet. Add them via the Skills column in the Roles table above.</p>
-        ):(
-          <table style={{width:"100%",borderCollapse:"collapse"}}>
-            <thead>
-              <tr style={{background:G.sand,borderBottom:`1px solid ${G.border}`}}>
-                {["Skill","Duration","Used in roles","Used by employees",""].map(h=>(
-                  <th key={h} style={{padding:"9px 14px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,letterSpacing:"0.04em"}}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {skills.map((s,i)=>{
+      <h2 className="mb-3 font-heading font-semibold text-xl">{tl("All skills")}</h2>
+      {skills.length===0?(
+        <Empty className="rounded-2xl border border-border border-dashed bg-card">
+          <EmptyHeader>
+            <EmptyMedia variant="icon"><TagsIcon/></EmptyMedia>
+            <EmptyTitle>No skills yet</EmptyTitle>
+            <EmptyDescription>Add them via the Skills column in the Roles table above.</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      ):(
+        <TableShell>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className={H}>Skill</TableHead>
+                <TableHead className={H}>Duration</TableHead>
+                <TableHead className={`${H} max-sm:hidden`}>Used in roles</TableHead>
+                <TableHead className={H}>Used by employees</TableHead>
+                <TableHead className="w-16"/>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {skills.map(s=>{
                 const col      = s.color||G.muted;
                 const inRoles  = skillRoles[s.skid]||[];
                 const durStr   = s.duration ? `${intDur(s.duration)} ${durAbbr(s.duration_unit)}` : "—";
-                const inProcess = false; // would need process data — blocked at API level
                 return (
-                  <tr key={s.skid} style={{borderBottom:i<skills.length-1?`1px solid ${G.border}`:"none"}}>
-                    <td style={{padding:"10px 14px"}}>
-                      <span style={{fontSize:13,fontWeight:600,color:col,display:"flex",alignItems:"center",gap:6}}>
-                        <span style={{width:8,height:8,borderRadius:"50%",background:col,display:"inline-block",flexShrink:0}}/>
+                  <TableRow key={s.skid}>
+                    <TableCell className={CELL}>
+                      <span className={`flex items-center gap-2 font-semibold ${SKILL_INK}`} style={{ "--ink":col }}>
+                        <span className="size-2 shrink-0 rounded-full" style={{ background:col }}/>
                         {s.name}
                       </span>
-                    </td>
-                    <td style={{padding:"10px 14px",fontSize:13,color:G.muted,fontFamily:G.mono}}>{durStr}</td>
-                    <td style={{padding:"10px 14px"}}>
+                    </TableCell>
+                    <TableCell className={`${CELL} font-mono text-muted-foreground text-xs tabular-nums`}>{durStr}</TableCell>
+                    <TableCell className={`${CELL} max-sm:hidden`}>
                       {inRoles.length===0
-                        ? <span style={{fontSize:12,color:G.muted,fontStyle:"italic"}}>None</span>
-                        : inRoles.map(r=>(
-                          <span key={r} style={{fontSize:12,padding:"2px 8px",borderRadius:20,background:`${G.caramel}18`,color:G.caramel,marginRight:4}}>{r}</span>
-                        ))}
-                    </td>
-                    <td style={{padding:"10px 14px"}}>
-                      <SkillUsageCount skid={s.skid}/>
-                    </td>
-                    <td style={{padding:"10px 14px"}}>
-                      <button
-                        onClick={()=>deleteSkill(s.skid, s.name)}
-                        disabled={!!deleting[s.skid]}
-                        title="Delete skill"
-                        style={{background:"none",border:`1px solid ${G.border}`,borderRadius:6,cursor:"pointer",color:G.muted,fontSize:12,padding:"3px 10px",fontFamily:G.mono}}
-                      >
-                        {deleting[s.skid]?"…":"Delete"}
-                      </button>
-                    </td>
-                  </tr>
+                        ? <span className="text-muted-foreground text-xs italic">None</span>
+                        : <div className="flex flex-wrap gap-1">{inRoles.map(r=><SkillPill key={r.name} name={r.name} color={r.color} size="sm"/>)}</div>}
+                    </TableCell>
+                    <TableCell className={CELL}><SkillUsageCount skid={s.skid}/></TableCell>
+                    <TableCell className="px-4 py-2 text-end">
+                      <Button variant="ghost" size="icon-sm" aria-label={`Delete ${s.name}`} title="Delete skill"
+                        loading={!!deleting[s.skid]} onClick={()=>setDialog({kind:"skill",skid:s.skid,name:s.name})}
+                        className="text-muted-foreground hover:text-destructive-foreground">
+                        <Trash2Icon/>
+                      </Button>
+                    </TableCell>
+                  </TableRow>
                 );
               })}
-            </tbody>
-          </table>
-        )}
-      </div>
+            </TableBody>
+          </Table>
+        </TableShell>
+      )}
+
+      {newRole!==null&&(
+        <Modal onClose={()=>setNewRole(null)} title="New role" className="max-w-sm"
+          footer={<><span/><div className="flex gap-2"><Btn variant="ghost" onClick={()=>setNewRole(null)}>Cancel</Btn><Btn onClick={addRole} loading={creating} disabled={!newRole.trim()}>Add role</Btn></div></>}>
+          <form onSubmit={e=>{ e.preventDefault(); addRole(); }}>
+            <Input label="Role name" value={newRole} onChange={setNewRole} placeholder="e.g. Pastry chef" required/>
+          </form>
+        </Modal>
+      )}
+      <Dialog open={dialog?.kind==="roles"} title={`Delete ${selected.length} role(s)?`} onConfirm={deleteSelected} onCancel={()=>setDialog(null)}>
+        This cannot be undone.
+      </Dialog>
+      <Dialog open={dialog?.kind==="skill"} title={`Delete skill “${dialog?.name||""}”?`} onConfirm={()=>deleteSkill(dialog.skid, dialog.name)} onCancel={()=>setDialog(null)}>
+        This will also remove it from all roles.
+      </Dialog>
     </Page>
   );
 }

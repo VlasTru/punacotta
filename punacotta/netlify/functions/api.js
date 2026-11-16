@@ -2781,7 +2781,7 @@ async function route(method, segments, body, headers, event) {
       // Send invite email if this is a new (unverified) employee with an email address
       const [newEmp] = await dbq('SELECT email_verified, email FROM "user" WHERE uid=$1', [newUid])
       if (newEmp?.email && !newEmp.email_verified) {
-        const inviteToken = require('crypto').randomBytes(32).toString('hex')
+        const inviteToken = randomBytes(32).toString('hex')
         await dbr(
           `INSERT INTO auth_token (uid, token, purpose, expires_at)
            VALUES ($1, $2, 'invite', NOW() + INTERVAL '7 days')`,
@@ -2811,7 +2811,7 @@ async function route(method, segments, body, headers, event) {
       if (emp.email_verified) return [400, { error: 'This employee already has a verified account' }]
       if (!emp.email) return [400, { error: 'No email address on file for this employee' }]
       await dbr(`UPDATE auth_token SET used=true WHERE uid=$1 AND purpose='invite'`, [r1])
-      const inviteToken = require('crypto').randomBytes(32).toString('hex')
+      const inviteToken = randomBytes(32).toString('hex')
       await dbr(`INSERT INTO auth_token (uid,token,purpose,expires_at) VALUES ($1,$2,'invite',NOW()+INTERVAL '7 days')`, [r1, inviteToken])
       const [owner] = await dbq('SELECT business_name, first_name FROM "user" WHERE uid=$1', [user.uid])
       const restaurantName = owner?.business_name || owner?.first_name || 'your restaurant'
