@@ -20,7 +20,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog as CDialog, DialogPopup, DialogHeader, DialogTitle, DialogDescription, DialogPanel, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { MicIcon, SquareIcon, Undo2Icon, LayoutGridIcon, ListIcon, ListFilterIcon, PencilIcon, ArrowDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, ChevronsLeftIcon, ChevronsRightIcon, ChevronsUpDownIcon, MinusIcon, PlusIcon } from "lucide-react";
+import { ImageIcon, ImageUpIcon, Trash2Icon, CheckIcon, MicIcon, SquareIcon, Undo2Icon, LayoutGridIcon, ListIcon, ListFilterIcon, PencilIcon, ArrowDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, ChevronsLeftIcon, ChevronsRightIcon, ChevronsUpDownIcon, MinusIcon, PlusIcon } from "lucide-react";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator, MenuRadioGroup, MenuRadioItem, MenuCheckboxItem } from "@/components/ui/menu";
 import { AlertDialog, AlertDialogPopup, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from "@/components/ui/alert-dialog";
 import { ArrowLeftIcon, ChefHatIcon, MailCheckIcon, PartyPopperIcon, StoreIcon, TriangleAlertIcon, BellIcon, ChevronDownIcon, CircleAlertIcon, CircleCheckIcon, CircleUserIcon, ClockIcon, GlobeIcon, InfoIcon, Link2Icon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SettingsIcon, SunIcon, XIcon } from "lucide-react";
@@ -558,26 +558,25 @@ function ImageUploader({ existingUrl, existingThumb, onImageReady, onRemove }) {
 
   if (src) return (
     <div>
-      <p style={{ fontSize:13, color:G.muted, marginBottom:8 }}>Square crop auto-applied — drag to adjust:</p>
+      <p className="mb-2 text-muted-foreground text-sm">Square crop auto-applied — drag to adjust:</p>
       <ReactCrop crop={crop} onChange={c=>setCrop(c)} onComplete={c=>setCompletedCrop(c)} aspect={1}>
         <img ref={imgRef} src={src} style={{ maxWidth:"100%", maxHeight:280 }} alt="crop" onLoad={onImgLoad} />
       </ReactCrop>
-      <div style={{ display:"flex", gap:8, marginTop:10, alignItems:"center" }}>
+      <div className="mt-2.5 flex items-center gap-2">
         <Btn variant="secondary" size="sm" onClick={()=>{setSrc(null);setCrop(undefined);setCompletedCrop(null);onImageReady(null);}}>Clear</Btn>
-        <span style={{ fontSize:12, color:G.muted }}>Crop will be applied on save</span>
+        <span className="text-muted-foreground text-xs">Crop will be applied on save</span>
       </div>
     </div>
   );
 
   if (existingThumb||existingUrl) return (
-    <div style={{ display:"flex", gap:12, alignItems:"flex-start" }}>
-      <img src={existingThumb||existingUrl} alt="" style={{ width:56, height:56, objectFit:"cover", borderRadius:8, border:`1px solid ${G.border}` }} />
-      <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-        <p style={{ fontSize:13, fontWeight:600 }}>Current image</p>
-        <div style={{ display:"flex", gap:8 }}>
-          <button onClick={()=>fileRef.current?.click()} style={{ background:"none", border:"none", color:G.caramel, cursor:"pointer", fontSize:13, padding:0, fontFamily:G.mono }}>Replace</button>
-          <span style={{ color:G.border }}>·</span>
-          <button onClick={onRemove} style={{ background:"none", border:"none", color:G.red, cursor:"pointer", fontSize:13, padding:0, fontFamily:G.mono }}>{tl("Remove")}</button>
+    <div className="flex items-start gap-3">
+      <img src={existingThumb||existingUrl} alt="" className="size-14 rounded-lg border object-cover" />
+      <div className="flex flex-col gap-1">
+        <p className="font-semibold text-sm">Current image</p>
+        <div className="flex gap-1">
+          <Button variant="ghost" size="xs" className="-ms-2 text-brand" onClick={()=>fileRef.current?.click()}><ImageUpIcon/>Replace</Button>
+          <Button variant="ghost" size="xs" className="text-destructive-foreground" onClick={onRemove}><Trash2Icon/>{tl("Remove")}</Button>
         </div>
       </div>
       <input ref={fileRef} type="file" accept=".jpg,.jpeg,.png" style={{display:"none"}} onChange={e=>loadFile(e.target.files[0])} />
@@ -585,11 +584,13 @@ function ImageUploader({ existingUrl, existingThumb, onImageReady, onRemove }) {
   );
 
   return (
-    <div className={`drop-zone${dragging?" drag-over":""}`}
+    <div role="button" tabIndex={0} aria-label="Upload image"
+      className={`flex cursor-pointer flex-col items-center gap-1 rounded-xl border-2 border-dashed p-6 text-center transition-colors hover:border-brand/60 hover:bg-accent/40 ${dragging?"border-brand bg-accent/40":"border-border"}`}
       onDragOver={e=>{e.preventDefault();setDragging(true);}} onDragLeave={()=>setDragging(false)}
-      onDrop={onDrop} onClick={()=>fileRef.current?.click()}>
-      <p style={{ fontSize:13, color:G.muted, marginBottom:4 }}>Drop image here or <span style={{color:G.caramel,fontWeight:600}}>Browse</span></p>
-      <p style={{ fontSize:11, color:G.muted }}>(3MB max · JPG, JPEG, PNG)</p>
+      onDrop={onDrop} onClick={()=>fileRef.current?.click()} onKeyDown={e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); fileRef.current?.click(); } }}>
+      <ImageUpIcon className="mb-1 size-6 text-muted-foreground"/>
+      <p className="text-muted-foreground text-sm">Drop image here or <span className="font-semibold text-brand">Browse</span></p>
+      <p className="text-muted-foreground text-xs">(3MB max · JPG, JPEG, PNG)</p>
       <input ref={fileRef} type="file" accept=".jpg,.jpeg,.png" style={{display:"none"}} onChange={e=>loadFile(e.target.files[0])} />
     </div>
   );
@@ -654,45 +655,42 @@ function RecipeForm({
 
   // ── CONTENTS SLIDE ─────────────────────────────────────────────────────────
   if (slide==="contents") return (
-    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4 }}>
-        <h4 style={{ fontFamily:G.font, fontSize:15, color:G.dark }}>{tl("Contents")}</h4>
-        <button onClick={()=>setSlide("general")} style={{ background:"none", border:"none", color:G.caramel, cursor:"pointer", fontFamily:G.mono, fontSize:13, fontWeight:600 }}>{tl("← General")}</button>
+    <div className="flex flex-col gap-3.5">
+      <div className="flex items-center justify-between">
+        <h4 className="font-heading font-semibold text-base">{tl("Contents")}</h4>
+        <Button variant="ghost" size="sm" className="text-brand" onClick={()=>setSlide("general")}>{tl("← General")}</Button>
       </div>
 
       {contents.length===0 && (
-        <p style={{ fontSize:13, color:G.muted }}>{tl("No products added yet.")}</p>
+        <p className="text-muted-foreground text-sm">{tl("No products added yet.")}</p>
       )}
 
       {contents.map((c,i)=>(
-        <div key={i} style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 12px", background:G.sand, borderRadius:8 }}>
+        <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg bg-muted px-3 py-2.5">
           {/* Product selector */}
-          <div style={{ flex:2, position:"relative" }}>
-            <select value={c.pid} onChange={e=>setContentPid(i,e.target.value)}
-              style={{ width:"100%", padding:"7px 10px", borderRadius:8, border:`1px solid ${G.border}`, background:G.white, fontSize:13, fontFamily:G.mono, outline:"none" }}>
-              <option value="">Select product…</option>
-              {allProducts.map(p=><option key={p.pid} value={p.pid}>{p.label}</option>)}
-            </select>
+          <div className="min-w-40 flex-[2]">
+            <CSelect items={allProducts.map(p=>({label:p.label,value:String(p.pid)}))} value={c.pid?String(c.pid):null} onValueChange={v=>setContentPid(i,v||"")}>
+              <SelectTrigger aria-label="Product"><SelectValue placeholder="Select product…"/></SelectTrigger>
+              <SelectPopup>{allProducts.map(p=><SelectItem key={p.pid} value={String(p.pid)}>{p.label}</SelectItem>)}</SelectPopup>
+            </CSelect>
           </div>
           {/* Qty */}
-          <div style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>
-            <button onClick={()=>setContentQty(i,-1)} style={{ width:24,height:24,borderRadius:5,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",fontWeight:700,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center" }}>−</button>
-            <input type="number" value={c.qty} min={0} max={1000} step="any"
+          <div className="flex shrink-0 items-center gap-1">
+            <Button variant="outline" size="icon-xs" aria-label="Less" onClick={()=>setContentQty(i,-1)}><MinusIcon/></Button>
+            <CInput size="sm" type="number" value={c.qty} min={0} max={1000} step="any" aria-label="Quantity"
               onChange={e=>setContentQtyDirect(i,e.target.value)}
               onBlur={e=>setContents(p=>p.map((x,j)=>j===i?{...x,qty:Math.max(0,Math.min(1000,parseFloat(e.target.value)||0))}:x))}
-              style={{ width:64,textAlign:"center",padding:"4px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none" }} />
-            <button onClick={()=>setContentQty(i,1)} style={{ width:24,height:24,borderRadius:5,border:"none",background:G.caramel,cursor:"pointer",fontWeight:700,fontSize:14,color:G.white,display:"flex",alignItems:"center",justifyContent:"center" }}>+</button>
+              className="w-16 [&_input]:text-center"/>
+            <Button variant="outline" size="icon-xs" aria-label="More" onClick={()=>setContentQty(i,1)}><PlusIcon/></Button>
           </div>
           {/* Remove */}
-          <button onClick={()=>removeContent(i)} style={{ background:"none",border:"none",color:G.red,cursor:"pointer",fontSize:13,fontFamily:G.mono,flexShrink:0 }}>{tl("Remove")}</button>
+          <Button variant="ghost" size="sm" className="text-destructive-foreground" onClick={()=>removeContent(i)}>{tl("Remove")}</Button>
         </div>
       ))}
 
-      <button onClick={addContent} style={{ background:"none",border:`1px dashed ${G.border}`,color:G.caramel,cursor:"pointer",fontSize:13,fontFamily:G.mono,padding:"8px 14px",borderRadius:8,alignSelf:"flex-start",fontWeight:600 }}>
-        + Add product
-      </button>
+      <Button variant="outline" size="sm" className="self-start border-dashed text-brand" onClick={addContent}><PlusIcon/>Add product</Button>
 
-      <div style={{ display:"flex", gap:10, marginTop:4 }}>
+      <div className="mt-1 flex gap-2.5">
         <Btn size="sm" onClick={()=>onSave(form, imageBlob, removeImage, contents)} loading={saving}>{tl("Save")}</Btn>
         <Btn variant="ghost" size="sm" onClick={onCancel}>{tl("Cancel")}</Btn>
       </div>
@@ -707,9 +705,21 @@ function RecipeForm({
     ? `${tl("Price per unit")} (${unitAbbrStr})`
     : tl("Price");
 
+  const prepTime = (() => {
+    const proc = (lookups.processes||[]).find(p=>String(p.procid)===String(form.procid));
+    const mins = (proc?.skills||[]).reduce((s,sk)=>{
+      const d=Number(sk.duration)||0;
+      if(sk.duration_unit==="hours") return s+d*60;
+      if(sk.duration_unit==="seconds") return s+d/60;
+      return s+d;
+    },0);
+    if(!mins) return "—";
+    const h=Math.floor(mins/60),m=Math.round(mins%60);
+    return h?`${h}h ${m}min`:`${m}min`;
+  })();
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+    <div className="flex flex-col gap-3.5">
+      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
         <Input label={tl("Name")} value={form.name} onChange={v=>set("name",v)} required />
         <Input label={tl("Description")} value={form.description||""} onChange={v=>set("description",v)} />
         <Select label={tl("Units")} value={String(form.unid||"")} onChange={v=>set("unid",v)} options={lookups.units.map(u=>({value:String(u.unid),label:u.name}))} placeholder="Select units" />
@@ -720,16 +730,16 @@ function RecipeForm({
 
       {/* Submultiples */}
       {hasSub(unitName) && (
-        <div style={{ background:G.sand, borderRadius:10, padding:14, display:"flex", flexDirection:"column", gap:10 }}>
-          <label style={{ display:"flex", alignItems:"center", gap:8, fontSize:14, cursor:"pointer", fontWeight:600 }}>
-            <input type="checkbox" checked={!!form.allow_submultiples} onChange={e=>set("allow_submultiples",e.target.checked)} style={{accentColor:G.caramel}} />
+        <div className="flex flex-col gap-2.5 rounded-lg bg-muted p-3.5">
+          <Label className="cursor-pointer font-semibold">
+            <Checkbox checked={!!form.allow_submultiples} onCheckedChange={v=>set("allow_submultiples",!!v)} />
             Allow submultiples ({UNIT_META[unitName].sub_abbr})
-          </label>
+          </Label>
           {form.allow_submultiples && (
-            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-              <Input label={`MOQ (${UNIT_META[unitName].sub_abbr})`} type="number" value={String(form.moq||"")}
-                onChange={v=>set("moq",v)} placeholder={`e.g. 250`} />
-              <div style={{ fontSize:12, color:G.muted, paddingTop:20, lineHeight:1.5 }}>
+            <div className="flex flex-wrap items-end gap-2.5">
+              <div className="w-40"><Input label={`MOQ (${UNIT_META[unitName].sub_abbr})`} type="number" value={String(form.moq||"")}
+                onChange={v=>set("moq",v)} placeholder={`e.g. 250`} /></div>
+              <div className="pb-1 text-muted-foreground text-xs leading-relaxed">
                 Customer will add in {UNIT_META[unitName].sub_abbr} increments.<br/>
                 1 {unitName} = {UNIT_META[unitName].conv} {UNIT_META[unitName].sub}.
               </div>
@@ -739,61 +749,27 @@ function RecipeForm({
       )}
 
       {/* Process selector — below price, above image */}
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
-        <div>
-          <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Production process</label>
-          <select value={String(form.procid||"")} onChange={e=>set("procid",e.target.value||null)}
-            style={{width:"100%",padding:"10px 14px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}>
-            <option value="">No process</option>
-            {(lookups.processes||[]).map(p=><option key={p.procid} value={p.procid}>{p.name}</option>)}
-          </select>
-        </div>
-        {form.procid&&(
-          <div>
-            <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Prep. time</label>
-            <input readOnly value={
-              (() => {
-                const proc = (lookups.processes||[]).find(p=>String(p.procid)===String(form.procid));
-                const mins = (proc?.skills||[]).reduce((s,sk)=>{
-                  const d=Number(sk.duration)||0;
-                  if(sk.duration_unit==="hours") return s+d*60;
-                  if(sk.duration_unit==="seconds") return s+d/60;
-                  return s+d;
-                },0);
-                if(!mins) return "—";
-                const h=Math.floor(mins/60),m=Math.round(mins%60);
-                return h?`${h}h ${m}min`:`${m}min`;
-              })()
-            } style={{width:"100%",padding:"10px 14px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,background:G.sand,color:G.muted}}/>
-          </div>
-        )}
-        <div>
-          <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Expiry</label>
-          <ShelfLifeInput value={form.expiry_hours} onChange={v=>set("expiry_hours",v)} />
-        </div>
+      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+        <Select label="Production process" value={String(form.procid||"")} onChange={v=>set("procid",v||null)}
+          options={(lookups.processes||[]).map(p=>({value:String(p.procid),label:p.name}))} placeholder="No process" />
+        {form.procid&&<Input label="Prep. time" value={prepTime} onChange={()=>{}} disabled />}
+        <FieldBlock label="Expiry"><ShelfLifeInput value={form.expiry_hours} onChange={v=>set("expiry_hours",v)} /></FieldBlock>
       </div>
 
-      <div>
-        <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:8 }}>{tl("Image")}</label>
+      <FieldBlock label={tl("Image")}>
         <ImageUploader
           existingUrl={form.image_url} existingThumb={form.image_thumb_url}
           onImageReady={blob=>{ setImageBlob(blob); if(blob) setRemoveImage(false); }}
           onRemove={()=>{ setRemoveImage(true); set("image_url",null); set("image_thumb_url",null); }}
         />
+      </FieldBlock>
+
+      <div className="flex flex-col gap-2">
+        <Label className="cursor-pointer font-normal"><Checkbox checked={form.available!==false} onCheckedChange={v=>set("available",!!v)} />Available (can be added to a menu)</Label>
+        <Label className="cursor-pointer font-normal"><Checkbox checked={form.deliverable!==false} onCheckedChange={v=>set("deliverable",!!v)} />Deliverable (uncheck for pickup-only items)</Label>
       </div>
 
-      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-        <label style={{ display:"flex", alignItems:"center", gap:8, fontSize:14, cursor:"pointer" }}>
-          <input type="checkbox" checked={form.available!==false} onChange={e=>set("available",e.target.checked)} style={{accentColor:G.caramel}} />
-          Available (can be added to a menu)
-        </label>
-        <label style={{ display:"flex", alignItems:"center", gap:8, fontSize:14, cursor:"pointer" }}>
-          <input type="checkbox" checked={form.deliverable!==false} onChange={e=>set("deliverable",e.target.checked)} style={{accentColor:G.caramel}} />
-          Deliverable (uncheck for pickup-only items)
-        </label>
-      </div>
-
-      <div style={{ display:"flex", gap:10 }}>
+      <div className="flex flex-wrap gap-2.5">
         <Btn size="sm" onClick={()=>onSave(form, imageBlob, removeImage, contents)} loading={saving}>{tl("Save")}</Btn>
         <Btn variant="ghost" size="sm" onClick={onCancel}>{tl("Cancel")}</Btn>
         <Btn variant="secondary" size="sm" onClick={()=>setSlide("contents")} style={{ marginLeft:"auto" }}>{tl("Contents →")}</Btn>
@@ -1468,14 +1444,15 @@ function ShelfLifeInput({ value, onChange, compact }) {
     const mult = SHELF_UNITS.find(u => u[0] === unit)[1];
     onChange(amt === "" || isNaN(Number(amt)) ? "" : String(Math.round(Number(amt) * mult * 100) / 100));
   };
-  const box = { padding: compact ? "3px 6px" : "10px 14px", borderRadius: compact ? 6 : 8, border: `1px solid ${G.border}`, fontSize: compact ? 12 : 14, fontFamily: G.mono, outline: "none", background: G.white, color: G.dark };
+  const units = SHELF_UNITS.map(([u])=>({label:u,value:u}));
   return (
-    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-      <input type="number" min="0" step="any" value={st.amt} placeholder="0" onChange={e => emit(e.target.value, st.unit)}
-        style={{ ...box, width: compact ? 56 : "100%" }} />
-      <select value={st.unit} onChange={e => emit(st.amt, e.target.value)} style={{ ...box, cursor: "pointer" }}>
-        {SHELF_UNITS.map(([u]) => <option key={u} value={u}>{u}</option>)}
-      </select>
+    <div className="flex items-center gap-1">
+      <CInput type="number" min="0" step="any" value={st.amt} placeholder="0" onChange={e => emit(e.target.value, st.unit)} aria-label="Shelf life"
+        size={compact?"sm":"lg"} className={compact?"w-16":"flex-1"}/>
+      <CSelect items={units} value={st.unit} onValueChange={v => emit(st.amt, v||"days")}>
+        <SelectTrigger size={compact?"sm":"lg"} className="w-auto min-w-24" aria-label="Unit"><SelectValue/></SelectTrigger>
+        <SelectPopup>{units.map(u=><SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}</SelectPopup>
+      </CSelect>
     </div>
   );
 }
@@ -1997,64 +1974,63 @@ function ProductsPage({ toast }) {
   };
 
   const cols = [
-    {key:"pid",      label:tl("ID"),         sortable:true,  render:r=><span style={{color:G.muted,fontSize:13}}>#{r._id}</span>},
+    {key:"pid",      label:tl("ID"),         sortable:true,  render:r=><span className="text-muted-foreground text-xs tabular-nums">#{r._id}</span>},
     {key:"name",     label:tl("Name"),        sortable:true,  render:r=>(
-      <button onClick={()=>openEdit(r)} style={{background:"none",border:"none",cursor:"pointer",fontFamily:G.mono,fontSize:14,color:G.dark,padding:0,textAlign:"left",textDecoration:"underline dotted",textUnderlineOffset:3}}>{r.name}</button>
+      <button type="button" data-slot="link" onClick={()=>openEdit(r)} className="text-left underline decoration-dotted underline-offset-4 hover:text-brand">{r.name}</button>
     )},
-    {key:"sku",      label:tl("SKU"),         sortable:true,  render:r=>r.sku||<span style={{color:G.muted}}>—</span>},
-    {key:"category", label:tl("Category"),    sortable:true,  render:r=>r.category?<Badge>{r.category}</Badge>:<span style={{color:G.muted}}>—</span>},
+    {key:"sku",      label:tl("SKU"),         sortable:true,  render:r=>r.sku||<span className="text-muted-foreground">—</span>},
+    {key:"category", label:tl("Category"),    sortable:true,  render:r=>r.category?<Badge>{r.category}</Badge>:<span className="text-muted-foreground">—</span>},
     {key:"expiry",   label:tl("Expiry"), sortable:false, render:r=>(
       editPid===r.pid ? (
-        <div style={{ display:"flex", gap:4, alignItems:"center" }}>
+        <div className="flex items-center gap-1">
           <ShelfLifeInput key={r.pid} compact value={editExpiry} onChange={setEditExpiry} />
-          <Btn size="sm" onClick={()=>saveExpiry(r.pid)}>✓</Btn>
-          <button onClick={()=>setEditPid(null)} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:14}}>×</button>
+          <Button size="icon-xs" aria-label="Save expiry" onClick={()=>saveExpiry(r.pid)}><CheckIcon/></Button>
+          <Button size="icon-xs" variant="ghost" aria-label="Cancel" onClick={()=>setEditPid(null)}><XIcon/></Button>
         </div>
       ) : (
-        <button onClick={()=>{setEditPid(r.pid);setEditExpiry(r.expiry_hours||"");}}
-          style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:r.expiry_hours?G.dark:G.caramel,fontFamily:G.mono}}>
-          {r.expiry_hours?fmtShelfLife(r.expiry_hours):"+ Set"}
-        </button>
+        <Button variant="ghost" size="xs" className={r.expiry_hours?"":"text-brand"} onClick={()=>{setEditPid(r.pid);setEditExpiry(r.expiry_hours||"");}}>
+          {r.expiry_hours?fmtShelfLife(r.expiry_hours):<><PlusIcon/>Set</>}
+        </Button>
       )
     )},
     {key:"suppliers", label:tl("Suppliers"), sortable:false, render:r=>{
       const links = procLinks.filter(l=>l.pid===r.pid);
       return (
-        <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
+        <div className="flex min-w-44 flex-col gap-1">
           {links.map(l=>(
-            <div key={l.psid} style={{ display:"flex", alignItems:"center", gap:6, fontSize:12 }}>
-              <span style={{flex:1}}>{l.supplier_name}</span>
-              {l.price&&<span style={{color:G.caramel,fontWeight:600}}>{l.price} {l.currency}</span>}
-              <button onClick={()=>unlinkSupplier(l.sid,l.psid)} style={{background:"none",border:"none",color:G.muted,cursor:"pointer",fontSize:12,lineHeight:1}}>×</button>
+            <div key={l.psid} className="flex items-center gap-1.5 text-xs">
+              <span className="flex-1">{l.supplier_name}</span>
+              {l.price&&<span className="font-semibold text-brand tabular-nums">{l.price} {l.currency}</span>}
+              <Button variant="ghost" size="icon-xs" aria-label={`Unlink ${l.supplier_name}`} onClick={()=>unlinkSupplier(l.sid,l.psid)}><XIcon/></Button>
             </div>
           ))}
           {linkPid===r.pid ? (
-            <div style={{ marginTop:4 }}>
-              <div style={{ display:"flex", gap:4, alignItems:"center", flexWrap:"wrap" }}>
-                <select value={linkSid} onChange={e=>{ if(e.target.value==="__new__"){ setShowNewSupplierInline(true); } else { setLinkSid(e.target.value); setShowNewSupplierInline(false); } }}
-                  style={{padding:"3px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
-                  <option value="">Supplier…</option>
-                  {suppliers.map(s=><option key={s.sid} value={s.sid}>{s.name}</option>)}
-                  <option value="__new__">+ New supplier…</option>
-                </select>
-                <input type="number" value={linkPrice} onChange={e=>setLinkPrice(e.target.value)} placeholder="Price" style={{width:60,padding:"3px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}} />
-                <select value={linkCurrency} onChange={e=>setLinkCurrency(e.target.value)} style={{padding:"3px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}>
-                  {["AMD","USD","EUR","RUR"].map(c=><option key={c}>{c}</option>)}
-                </select>
-                <Btn size="sm" onClick={linkSupplier}>Link</Btn>
-                <button onClick={()=>{setLinkPid(null);setShowNewSupplierInline(false);}} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:14}}>×</button>
+            <div className="mt-1 flex flex-col gap-2">
+              <div className="flex flex-wrap items-center gap-1">
+                <CSelect items={[...suppliers.map(sp=>({label:sp.name,value:String(sp.sid)})),{label:"+ New supplier…",value:"__new__"}]} value={linkSid||null}
+                  onValueChange={v=>{ if(v==="__new__"){ setShowNewSupplierInline(true); } else { setLinkSid(v||""); setShowNewSupplierInline(false); } }}>
+                  <SelectTrigger size="sm" className="w-36"><SelectValue placeholder="Supplier…"/></SelectTrigger>
+                  <SelectPopup>{suppliers.map(sp=><SelectItem key={sp.sid} value={String(sp.sid)}>{sp.name}</SelectItem>)}<SelectItem value="__new__">+ New supplier…</SelectItem></SelectPopup>
+                </CSelect>
+                <CInput size="sm" type="number" value={linkPrice} onChange={e=>setLinkPrice(e.target.value)} placeholder="Price" aria-label="Price" className="w-20"/>
+                <CSelect items={["AMD","USD","EUR","RUR"].map(c=>({label:c,value:c}))} value={linkCurrency} onValueChange={v=>setLinkCurrency(v||"AMD")}>
+                  <SelectTrigger size="sm" className="w-20" aria-label="Currency"><SelectValue/></SelectTrigger>
+                  <SelectPopup>{["AMD","USD","EUR","RUR"].map(c=><SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectPopup>
+                </CSelect>
+                <Button size="sm" onClick={linkSupplier}>Link</Button>
+                <Button variant="ghost" size="icon-sm" aria-label="Cancel" onClick={()=>{setLinkPid(null);setShowNewSupplierInline(false);}}><XIcon/></Button>
               </div>
               {showNewSupplierInline&&(
-                <div style={{marginTop:8,padding:12,background:G.sand,borderRadius:8,display:"flex",flexDirection:"column",gap:8}}>
-                  <p style={{fontSize:12,fontWeight:700,color:G.dark,margin:0}}>New Supplier</p>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-                    <input placeholder="Name *" value={newSupplierForm.name} onChange={e=>setNewSupplierForm(p=>({...p,name:e.target.value}))} style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none",gridColumn:"1/-1"}}/>
-                    <input placeholder="Email" value={newSupplierForm.email} onChange={e=>setNewSupplierForm(p=>({...p,email:e.target.value}))} style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}/>
-                    <input placeholder="Phone" value={newSupplierForm.phone} onChange={e=>setNewSupplierForm(p=>({...p,phone:e.target.value}))} style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}/>
-                    <input placeholder="Street address" value={newSupplierForm.street_address} onChange={e=>setNewSupplierForm(p=>({...p,street_address:e.target.value}))} style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}/>
-                    <input placeholder="City" value={newSupplierForm.city} onChange={e=>setNewSupplierForm(p=>({...p,city:e.target.value}))} style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none"}}/>
+                <div className="flex flex-col gap-2 rounded-lg bg-muted p-3">
+                  <p className="font-semibold text-xs">New Supplier</p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <CInput size="sm" placeholder="Name *" aria-label="Name" value={newSupplierForm.name} onChange={e=>setNewSupplierForm(p=>({...p,name:e.target.value}))} className="col-span-2"/>
+                    <CInput size="sm" placeholder="Email" aria-label="Email" value={newSupplierForm.email} onChange={e=>setNewSupplierForm(p=>({...p,email:e.target.value}))}/>
+                    <CInput size="sm" placeholder="Phone" aria-label="Phone" value={newSupplierForm.phone} onChange={e=>setNewSupplierForm(p=>({...p,phone:e.target.value}))}/>
+                    <CInput size="sm" placeholder="Street address" aria-label="Street address" value={newSupplierForm.street_address} onChange={e=>setNewSupplierForm(p=>({...p,street_address:e.target.value}))}/>
+                    <CInput size="sm" placeholder="City" aria-label="City" value={newSupplierForm.city} onChange={e=>setNewSupplierForm(p=>({...p,city:e.target.value}))}/>
                   </div>
-                  <div style={{display:"flex",gap:6}}>
+                  <div className="flex gap-1.5">
                     <Btn size="sm" onClick={saveNewSupplierInline} loading={savingNewSupplier}>Save supplier</Btn>
                     <Btn size="sm" variant="ghost" onClick={()=>setShowNewSupplierInline(false)}>Cancel</Btn>
                   </div>
@@ -2062,10 +2038,9 @@ function ProductsPage({ toast }) {
               )}
             </div>
           ):(
-            <button onClick={()=>{setLinkPid(r.pid);setLinkSid("");setLinkPrice("");}}
-              style={{background:"none",border:"none",cursor:"pointer",fontSize:11,color:G.caramel,fontFamily:G.mono,fontWeight:600,textAlign:"left"}}>
-              + Add supplier
-            </button>
+            <Button variant="ghost" size="xs" className="-ms-2 self-start text-brand" onClick={()=>{setLinkPid(r.pid);setLinkSid("");setLinkPrice("");}}>
+              <PlusIcon/>Add supplier
+            </Button>
           )}
         </div>
       );
@@ -2074,26 +2049,19 @@ function ProductsPage({ toast }) {
       const qty = stock[r.pid] ?? 0;
       const delta = wastageDeltas[r.pid] ?? 0;
       const displayed = qty + delta;
+      const bumpW = d => setWastageDeltas(p=>{
+        const cur = p[r.pid]??0;
+        const next = d>0 ? Math.min(0, cur + 1) : Math.max(-qty, cur - 1); // stays between −stock and 0
+        return next===0 ? Object.fromEntries(Object.entries(p).filter(([k])=>k!==String(r.pid))) : {...p,[r.pid]:next};
+      });
       if (wastageMode) return (
-        <div style={{display:"flex",alignItems:"center",gap:5}}>
-          <button onClick={()=>setWastageDeltas(p=>{
-            const cur = p[r.pid]??0;
-            const next = Math.min(0, cur + 1); // can't go above 0
-            return next===0 ? Object.fromEntries(Object.entries(p).filter(([k])=>k!==String(r.pid))) : {...p,[r.pid]:next};
-          })} disabled={delta===0}
-          style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.sand,cursor:delta===0?"not-allowed":"pointer",fontSize:14,lineHeight:1,opacity:delta===0?0.4:1}}>+</button>
-          <span style={{minWidth:32,textAlign:"center",fontSize:13,fontFamily:G.mono,fontWeight:600,
-            color:displayed<qty?G.red:G.dark}}>{displayed}</span>
-          <button onClick={()=>setWastageDeltas(p=>{
-            const cur = p[r.pid]??0;
-            const next = Math.max(-qty, cur - 1); // can't go below 0 stock
-            return next===0 ? Object.fromEntries(Object.entries(p).filter(([k])=>k!==String(r.pid))) : {...p,[r.pid]:next};
-          })} disabled={displayed<=0}
-          style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.sand,cursor:displayed<=0?"not-allowed":"pointer",fontSize:14,lineHeight:1,opacity:displayed<=0?0.4:1}}>−</button>
-          {delta<0&&<span style={{fontSize:11,color:G.red,fontFamily:G.mono}}>{delta}</span>}
+        <div className="flex items-center gap-1.5">
+          <QtyStepper value={displayed} label={r.name} display={<span className={displayed<qty?"text-destructive-foreground":""}>{displayed}</span>}
+            onDec={()=>bumpW(-1)} decDisabled={displayed<=0} onInc={()=>bumpW(1)} incDisabled={delta===0}/>
+          {delta<0&&<span className="text-[11px] text-destructive-foreground tabular-nums">{delta}</span>}
         </div>
       );
-      return qty!=null ? <span style={{fontWeight:600,color:qty>0?G.dark:G.red}}>{qty}</span> : <span style={{color:G.muted}}>—</span>;
+      return qty!=null ? <span className={`font-semibold tabular-nums ${qty>0?"":"text-destructive-foreground"}`}>{qty}</span> : <span className="text-muted-foreground">—</span>;
     }},
     {key:"forecast", label:(()=>{
       const fc = Object.values(forecast)[0];
@@ -2101,7 +2069,7 @@ function ProductsPage({ toast }) {
       const end   = fc?.period_end   ? new Date(fc.period_end)   : null;
       const fmt = d => d ? `${String(d.getDate()).padStart(2,"0")}-${String(d.getMonth()+1).padStart(2,"0")}-${d.getFullYear()} 08:00 AM` : "—";
       return (
-        <span title={start&&end?`from ${fmt(start)} to ${fmt(end)}`:""} style={{textDecoration:"underline dotted",textUnderlineOffset:3,cursor:"help"}}>
+        <span title={start&&end?`from ${fmt(start)} to ${fmt(end)}`:""} className="cursor-help underline decoration-dotted underline-offset-4">
           {tl("Forecast")}
         </span>
       );
@@ -2109,118 +2077,104 @@ function ProductsPage({ toast }) {
       const fc = forecast[r.pid];
       return <Sparkline series={fc?.series||[]} tg={fc?.tg??0} />;
     }},
-    {key:"units",    label:tl("Units"),       sortable:false, render:r=>r.units||<span style={{color:G.muted}}>—</span>},
+    {key:"units",    label:tl("Units"),       sortable:false, render:r=>r.units||<span className="text-muted-foreground">—</span>},
   ];
 
   return (
-    <Page title={tl("Products")} actions={<div style={{display:"flex",gap:8}}>
+    <Page title={tl("Products")} actions={<div className="flex flex-wrap gap-2">
       {selected.length>0&&!wastageMode&&<Btn variant="danger" size="sm" onClick={openDeleteDialog}>{tl("Delete")} ({selected.length})</Btn>}
       {wastageMode && Object.keys(wastageDeltas).length>0 && (
         <Btn size="sm" onClick={()=>setWastageConfirm(true)}>Confirm</Btn>
       )}
       {wastageMode
-        ? <Btn variant="secondary" size="sm" onClick={()=>{ setWastageMode(false); setWastageDeltas({}); }}>✕ Cancel wastage</Btn>
+        ? <Btn variant="secondary" size="sm" onClick={()=>{ setWastageMode(false); setWastageDeltas({}); }}>Cancel wastage</Btn>
         : <Btn variant="secondary" size="sm" onClick={()=>setWastageMode(true)}>Wastage</Btn>
       }
       <Btn variant="secondary" size="sm" onClick={refreshForecast} loading={refreshingForecast}>↻ Forecast</Btn>
       {!wastageMode&&<Btn size="sm" onClick={()=>setShowForm(s=>!s)}>{tl("+ Product")}</Btn>}
     </div>}>
       {showForm&&(
-        <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
-          <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>New Product</h3>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:14, marginBottom:14 }}>
-            <Input label={tl("Name")} value={form.name} onChange={v=>setForm(p=>({...p,name:v}))} required />
-            <Input label={tl("SKU")} value={form.sku} onChange={v=>setForm(p=>({...p,sku:v}))} placeholder="Optional" />
-            <Select label={tl("Units")} value={form.unid} onChange={v=>setForm(p=>({...p,unid:v}))} options={lookups.units.map(u=>({value:String(u.unid),label:u.name}))} placeholder="Select units" />
-            <Select label={tl("Category")} value={form.caid} onChange={v=>setForm(p=>({...p,caid:v}))} options={lookups.categories.map(c=>({value:String(c.caid),label:c.name}))} placeholder="Select category" />
-          </div>
-          <div style={{ display:"flex", gap:10 }}>
-            <Btn size="sm" onClick={save} loading={saving}>{tl("Save")}</Btn>
-            <Btn variant="ghost" size="sm" onClick={()=>setShowForm(false)}>{tl("Cancel")}</Btn>
-          </div>
-        </div>
+        <Card className="mb-5" style={{ animation:"fadeIn 0.2s ease" }}>
+          <CardHeader><CardTitle>New Product</CardTitle></CardHeader>
+          <CardPanel className="pt-0">
+            <div className="mb-3.5 grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
+              <Input label={tl("Name")} value={form.name} onChange={v=>setForm(p=>({...p,name:v}))} required />
+              <Input label={tl("SKU")} value={form.sku} onChange={v=>setForm(p=>({...p,sku:v}))} placeholder="Optional" />
+              <Select label={tl("Units")} value={form.unid} onChange={v=>setForm(p=>({...p,unid:v}))} options={lookups.units.map(u=>({value:String(u.unid),label:u.name}))} placeholder="Select units" />
+              <Select label={tl("Category")} value={form.caid} onChange={v=>setForm(p=>({...p,caid:v}))} options={lookups.categories.map(c=>({value:String(c.caid),label:c.name}))} placeholder="Select category" />
+            </div>
+            <div className="flex gap-2.5">
+              <Btn size="sm" onClick={save} loading={saving}>{tl("Save")}</Btn>
+              <Btn variant="ghost" size="sm" onClick={()=>setShowForm(false)}>{tl("Cancel")}</Btn>
+            </div>
+          </CardPanel>
+        </Card>
       )}
       {loading?<Spinner/>:<DataTable columns={cols} rows={sorted.map(p=>({...p,_id:p.pid}))} selected={selected} onSelect={toggleSel} onSelectAll={setSelected} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
       {editProduct&&(
-        <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center" }}>
-          <div style={{ background:G.white, borderRadius:16, padding:32, maxWidth:480, width:"90%", animation:"fadeIn 0.2s ease", boxShadow:"0 20px 60px rgba(44,24,16,0.2)" }}>
-            <h3 style={{ fontFamily:G.font, fontSize:20, marginBottom:20 }}>Edit Product</h3>
-            <div style={{ display:"flex", flexDirection:"column", gap:14, marginBottom:20 }}>
-              <Input label={tl("Name")} value={editForm.name||""} onChange={v=>setEditForm(p=>({...p,name:v}))} required />
-              <Input label={tl("SKU")} value={editForm.sku||""} onChange={v=>setEditForm(p=>({...p,sku:v}))} placeholder="Optional" />
-              <Select label={tl("Units")} value={editForm.unid||""} onChange={v=>setEditForm(p=>({...p,unid:v}))} options={lookups.units.map(u=>({value:String(u.unid),label:u.name}))} placeholder="Select units" />
-              <Select label={tl("Category")} value={editForm.caid||""} onChange={v=>setEditForm(p=>({...p,caid:v}))} options={lookups.categories.map(c=>({value:String(c.caid),label:c.name}))} placeholder="Select category" />
-            </div>
-            <div style={{ display:"flex", gap:10 }}>
-              <Btn size="sm" onClick={saveEdit} loading={saving}>{tl("Save")}</Btn>
-              <Btn variant="ghost" size="sm" onClick={()=>setEditProduct(null)}>{tl("Cancel")}</Btn>
-            </div>
+        <Modal title="Edit Product" onClose={()=>setEditProduct(null)}
+          footer={<><span/><div className="flex gap-2"><Btn variant="ghost" size="sm" onClick={()=>setEditProduct(null)}>{tl("Cancel")}</Btn><Btn size="sm" onClick={saveEdit} loading={saving}>{tl("Save")}</Btn></div></>}>
+          <div className="flex flex-col gap-3.5">
+            <Input label={tl("Name")} value={editForm.name||""} onChange={v=>setEditForm(p=>({...p,name:v}))} required />
+            <Input label={tl("SKU")} value={editForm.sku||""} onChange={v=>setEditForm(p=>({...p,sku:v}))} placeholder="Optional" />
+            <Select label={tl("Units")} value={editForm.unid||""} onChange={v=>setEditForm(p=>({...p,unid:v}))} options={lookups.units.map(u=>({value:String(u.unid),label:u.name}))} placeholder="Select units" />
+            <Select label={tl("Category")} value={editForm.caid||""} onChange={v=>setEditForm(p=>({...p,caid:v}))} options={lookups.categories.map(c=>({value:String(c.caid),label:c.name}))} placeholder="Select category" />
           </div>
-        </div>
+        </Modal>
       )}
       {wastageConfirm&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.45)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <div style={{background:G.white,borderRadius:16,padding:32,maxWidth:520,width:"90%",animation:"fadeIn 0.2s ease",boxShadow:"0 20px 60px rgba(44,24,16,0.2)"}}>
-            <h3 style={{fontFamily:G.font,fontSize:18,marginBottom:16}}>Confirm wastage</h3>
-            <p style={{fontSize:14,color:G.dark,lineHeight:1.6,marginBottom:16}}>
-              The following products will be wasted, and stock levels shall be changed accordingly. The action is irreversible. Are you sure you wish to proceed?
-            </p>
-            <div style={{background:G.sand,borderRadius:10,padding:"12px 16px",marginBottom:20}}>
-              {Object.entries(wastageDeltas).filter(([,d])=>d<0).map(([pid,delta])=>{
-                const prod = products.find(p=>String(p.pid)===pid);
-                return (
-                  <div key={pid} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",fontSize:13,borderBottom:`1px solid ${G.border}`}}>
-                    <span style={{fontWeight:600,color:G.dark}}>{prod?.name||pid}</span>
-                    <span style={{color:G.red,fontFamily:G.mono,fontWeight:600}}>{delta} {prod?.units||''}</span>
-                  </div>
-                );
-              })}
-            </div>
-            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-              <Btn size="sm" loading={applyingWastage} onClick={async()=>{
-                setApplyingWastage(true);
-                try {
-                  const changes = Object.entries(wastageDeltas)
-                    .filter(([,d])=>d<0)
-                    .map(([pid,delta])=>({pid:Number(pid),delta}));
-                  const updated = await api.applyWastage({changes});
-                  const newStock = {};
-                  (updated||[]).forEach(s=>{ newStock[s.pid]=Number(s.qty); });
-                  setStock(newStock);
-                  setWastageMode(false);
-                  setWastageDeltas({});
-                  setWastageConfirm(false);
-                  toast("Wastage applied");
-                } catch(e){ toast(e.message,"error"); }
-                finally{ setApplyingWastage(false); }
-              }}>OK</Btn>
-              <Btn variant="ghost" size="sm" onClick={()=>setWastageConfirm(false)}>Cancel</Btn>
-            </div>
+        <Modal title="Confirm wastage" onClose={()=>setWastageConfirm(false)}
+          description="The following products will be wasted, and stock levels shall be changed accordingly. The action is irreversible. Are you sure you wish to proceed?"
+          footer={<><span/><div className="flex gap-2">
+            <Btn variant="ghost" size="sm" onClick={()=>setWastageConfirm(false)}>Cancel</Btn>
+            <Btn size="sm" loading={applyingWastage} onClick={async()=>{
+              setApplyingWastage(true);
+              try {
+                const changes = Object.entries(wastageDeltas)
+                  .filter(([,d])=>d<0)
+                  .map(([pid,delta])=>({pid:Number(pid),delta}));
+                const updated = await api.applyWastage({changes});
+                const newStock = {};
+                (updated||[]).forEach(s=>{ newStock[s.pid]=Number(s.qty); });
+                setStock(newStock);
+                setWastageMode(false);
+                setWastageDeltas({});
+                setWastageConfirm(false);
+                toast("Wastage applied");
+              } catch(e){ toast(e.message,"error"); }
+              finally{ setApplyingWastage(false); }
+            }}>OK</Btn></div></>}>
+          <div className="rounded-lg bg-muted px-4 py-2">
+            {Object.entries(wastageDeltas).filter(([,d])=>d<0).map(([pid,delta])=>{
+              const prod = products.find(p=>String(p.pid)===pid);
+              return (
+                <div key={pid} className="flex justify-between border-b py-1.5 text-sm last:border-b-0">
+                  <span className="font-semibold">{prod?.name||pid}</span>
+                  <span className="font-semibold text-destructive-foreground tabular-nums">{delta} {prod?.units||''}</span>
+                </div>
+              );
+            })}
           </div>
-        </div>
+        </Modal>
       )}
       {dialog==="del"&&(
-        <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center" }}>
-          <div style={{ background:G.white, borderRadius:16, padding:32, maxWidth:480, width:"90%", animation:"fadeIn 0.2s ease", boxShadow:"0 20px 60px rgba(44,24,16,0.2)" }}>
-            <h3 style={{ fontFamily:G.font, fontSize:20, marginBottom:16 }}>{tl("Delete product?")}</h3>
-            {affectedItems.length===0 ? (
-              <p style={{ color:G.muted, lineHeight:1.6, marginBottom:24, fontSize:15 }}>
-                {tl("Are you sure you wish to delete")} <b>{selectedNames.join(", ")}</b>? {tl("This action may not be undone.")}
-              </p>
-            ) : (
-              <p style={{ color:G.muted, lineHeight:1.6, marginBottom:24, fontSize:15 }}>
-                <b>{selectedNames.join(", ")}</b> {tl("is included in the following items:")}{" "}
-                <b>{affectedItems.map(r=>r.name).join(", ")}</b>.{" "}
-                {tl("Unless these items are deleted, the product may not be deleted either. Do you wish to remove the above items along with the product?")}{" "}
-                {tl("This action may not be undone.")}
-              </p>
-            )}
-            <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
-              <Btn variant="ghost" onClick={()=>{setDialog(null);setUsageMap({});}}>{tl("Cancel")}</Btn>
-              <Btn variant="danger" onClick={()=>doDelete(affectedItems.length>0)}>{tl("Yes")}</Btn>
-            </div>
-          </div>
-        </div>
+        <Modal title={tl("Delete product?")} onClose={()=>{setDialog(null);setUsageMap({});}}
+          footer={<><span/><div className="flex gap-2">
+            <Btn variant="ghost" onClick={()=>{setDialog(null);setUsageMap({});}}>{tl("Cancel")}</Btn>
+            <Btn variant="danger" onClick={()=>doDelete(affectedItems.length>0)}>{tl("Yes")}</Btn></div></>}>
+          {affectedItems.length===0 ? (
+            <p className="text-muted-foreground leading-relaxed">
+              {tl("Are you sure you wish to delete")} <b className="text-foreground">{selectedNames.join(", ")}</b>? {tl("This action may not be undone.")}
+            </p>
+          ) : (
+            <p className="text-muted-foreground leading-relaxed">
+              <b className="text-foreground">{selectedNames.join(", ")}</b> {tl("is included in the following items:")}{" "}
+              <b className="text-foreground">{affectedItems.map(r=>r.name).join(", ")}</b>.{" "}
+              {tl("Unless these items are deleted, the product may not be deleted either. Do you wish to remove the above items along with the product?")}{" "}
+              {tl("This action may not be undone.")}
+            </p>
+          )}
+        </Modal>
       )}
     </Page>
   );
@@ -2308,102 +2262,94 @@ function RecipesPage({
 
   const ImgCell = ({r}) => {
     const src = r.image_url||r.image_thumb_url;
-    if (!src) return <span style={{color:G.muted,fontSize:12}}>—</span>;
+    if (!src) return <span className="text-muted-foreground text-xs">—</span>;
     return (
-      <button onClick={()=>setLightbox({src:r.image_url||r.image_thumb_url, description:r.description})}
-        style={{ background:"none", border:"none", cursor:"pointer", fontSize:20, padding:0, lineHeight:1 }}
-        title="View image">🖼</button>
+      <button type="button" data-slot="thumb" onClick={()=>setLightbox({src:r.image_url||r.image_thumb_url, description:r.description})}
+        className="block overflow-hidden rounded-md border hover:ring-2 hover:ring-ring" title="View image" aria-label={`View image of ${r.name}`}>
+        <img src={r.image_thumb_url||r.image_url} alt="" className="size-8 object-cover"/>
+      </button>
     );
   };
 
   const cols = [
-    {key:"rid",label:tl("ID"),sortable:true,render:r=><span style={{color:G.muted,fontSize:13}}>#{r._id}</span>},
-    {key:"img",label:"🖼",sortable:false,render:r=><ImgCell r={r}/>},
+    {key:"rid",label:tl("ID"),sortable:true,render:r=><span className="text-muted-foreground text-xs tabular-nums">#{r._id}</span>},
+    {key:"img",label:<ImageIcon className="size-3.5" aria-label="Image"/>,sortable:false,render:r=>ImgCell({r})},
     {key:"name",label:tl("Name"),sortable:true,render:r=>(
-      <button className="recipe-link" onClick={()=>setEditRecipe(r)} style={{ background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.dark, padding:0, textAlign:"left" }}>{r.name}</button>
+      <button type="button" data-slot="link" onClick={()=>setEditRecipe(r)} className="text-left underline-offset-4 hover:text-brand hover:underline">{r.name}</button>
     )},
-    {key:"description",label:tl("Description"),sortable:true,render:r=>r.description||<span style={{color:G.muted}}>—</span>},
+    {key:"description",label:tl("Description"),sortable:true,render:r=>r.description||<span className="text-muted-foreground">—</span>},
     {key:"stock",label:tl("Stock"),sortable:false,render:r=>{
       const qty   = recipeStock[r.rid] ?? 0;
       const min   = parseFloat(r.min_inventory ?? 0);
       const delta = wastageDeltas[r.rid] ?? 0;
       const shown = qty + delta;
       const atMin = Number(min) > 0 && shown <= Number(min);
+      const bumpW = d => setWastageDeltas(p=>{
+        const cur=p[r.rid]??0; const next = d>0 ? Math.min(0,cur+1) : Math.max(-qty,cur-1);
+        return next===0?Object.fromEntries(Object.entries(p).filter(([k])=>k!==String(r.rid))):{...p,[r.rid]:next};
+      });
       if (wastageMode) return (
-        <div style={{display:"flex",alignItems:"center",gap:5}}>
-          <button onClick={()=>setWastageDeltas(p=>{
-            const cur=p[r.rid]??0; const next=Math.min(0,cur+1);
-            return next===0?Object.fromEntries(Object.entries(p).filter(([k])=>k!==String(r.rid))):{...p,[r.rid]:next};
-          })} disabled={delta===0}
-          style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.sand,cursor:delta===0?"not-allowed":"pointer",fontSize:14,lineHeight:1,opacity:delta===0?0.4:1}}>+</button>
-          <span style={{minWidth:32,textAlign:"center",fontSize:13,fontFamily:G.mono,fontWeight:600,
-            color:shown<qty?G.red:atMin?G.red:G.dark}}>{shown}</span>
-          <button onClick={()=>setWastageDeltas(p=>{
-            const cur=p[r.rid]??0; const next=Math.max(-qty,cur-1);
-            return next===0?Object.fromEntries(Object.entries(p).filter(([k])=>k!==String(r.rid))):{...p,[r.rid]:next};
-          })} disabled={shown<=0}
-          style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.sand,cursor:shown<=0?"not-allowed":"pointer",fontSize:14,lineHeight:1,opacity:shown<=0?0.4:1}}>−</button>
-          {delta<0&&<span style={{fontSize:11,color:G.red,fontFamily:G.mono}}>{delta}</span>}
+        <div className="flex items-center gap-1.5">
+          <QtyStepper value={shown} label={r.name} display={<span className={shown<qty||atMin?"text-destructive-foreground":""}>{shown}</span>}
+            onDec={()=>bumpW(-1)} decDisabled={shown<=0} onInc={()=>bumpW(1)} incDisabled={delta===0}/>
+          {delta<0&&<span className="text-[11px] text-destructive-foreground tabular-nums">{delta}</span>}
         </div>
       );
       return (
-        <span style={{fontWeight:600,color:atMin?G.red:qty>0?G.dark:G.muted,fontFamily:G.mono}}>
+        <span className={`font-semibold tabular-nums ${atMin?"text-destructive-foreground":qty>0?"":"text-muted-foreground"}`}>
           {qty!=null?qty:"—"}
         </span>
       );
     }},
     {key:"min_inv",label:tl("Min. inventory"),sortable:false,render:r=>(
       editMinRid===r.rid ? (
-        <div style={{ display:"flex", gap:4, alignItems:"center" }}>
-          <input type="number" min="0" value={editMinVal} onChange={e=>setEditMinVal(e.target.value)}
-            style={{ width:60, padding:"3px 6px", borderRadius:6, border:`1px solid ${G.border}`, fontSize:12, fontFamily:G.mono, outline:"none" }} />
-          <Btn size="sm" onClick={()=>saveMinInv(r.rid)}>✓</Btn>
-          <button onClick={()=>setEditMinRid(null)} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:14}}>×</button>
+        <div className="flex items-center gap-1">
+          <CInput size="sm" type="number" min="0" value={editMinVal} onChange={e=>setEditMinVal(e.target.value)} aria-label="Minimum inventory" className="w-16"/>
+          <Button size="icon-xs" aria-label="Save minimum" onClick={()=>saveMinInv(r.rid)}><CheckIcon/></Button>
+          <Button size="icon-xs" variant="ghost" aria-label="Cancel" onClick={()=>setEditMinRid(null)}><XIcon/></Button>
         </div>
       ) : (
-        <button onClick={()=>{setEditMinRid(r.rid);setEditMinVal(String(parseFloat(r.min_inventory??0)));}}
-          style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:G.dark,fontFamily:G.mono}}>
+        <Button variant="ghost" size="xs" className="tabular-nums" aria-label={`Edit minimum for ${r.name}`} onClick={()=>{setEditMinRid(r.rid);setEditMinVal(String(parseFloat(r.min_inventory??0)));}}>
           {parseFloat(r.min_inventory??0)}
-        </button>
+        </Button>
       )
     )},
     {key:"units",label:tl("Units"),sortable:false,render:r=>r.units||"—"},
-    {key:"available",label:tl("Avail."),sortable:false,render:r=><span>{r.available?"✅":"❌"}</span>},
-    {key:"deliverable",label:tl("Deliv."),sortable:false,render:r=><span>{r.deliverable!==false?"✅":"❌"}</span>},
-    {key:"price",label:tl("Price"),sortable:false,render:r=><span style={{fontWeight:600}}>{r.price} {r.currency}</span>},
-    {key:"category",label:tl("Category"),sortable:true,render:r=>r.category?<Badge>{r.category}</Badge>:<span style={{color:G.muted}}>—</span>},
+    {key:"available",label:tl("Avail."),sortable:false,render:r=>r.available?<CheckIcon className="size-4 text-success-foreground" aria-label="Yes"/>:<XIcon className="size-4 text-destructive-foreground" aria-label="No"/>},
+    {key:"deliverable",label:tl("Deliv."),sortable:false,render:r=>r.deliverable!==false?<CheckIcon className="size-4 text-success-foreground" aria-label="Yes"/>:<XIcon className="size-4 text-destructive-foreground" aria-label="No"/>},
+    {key:"price",label:tl("Price"),sortable:false,render:r=><span className="whitespace-nowrap font-semibold tabular-nums">{r.price} {r.currency}</span>},
+    {key:"category",label:tl("Category"),sortable:true,render:r=>r.category?<Badge>{r.category}</Badge>:<span className="text-muted-foreground">—</span>},
   ];
 
   return (
     <Page title={tl("Items")} actions={
-      <div style={{display:"flex",gap:8}}>
+      <div className="flex flex-wrap gap-2">
         {selected.length>0&&!wastageMode&&<Btn variant="danger" size="sm" onClick={askDelete}>{tl("Delete")} ({selected.length})</Btn>}
         {wastageMode&&Object.keys(wastageDeltas).length>0&&(
           <Btn size="sm" onClick={()=>setWastageConfirm(true)}>Confirm</Btn>
         )}
         {wastageMode
-          ? <Btn variant="secondary" size="sm" onClick={()=>{setWastageMode(false);setWastageDeltas({});}}>✕ Cancel wastage</Btn>
+          ? <Btn variant="secondary" size="sm" onClick={()=>{setWastageMode(false);setWastageDeltas({});}}>Cancel wastage</Btn>
           : <Btn variant="secondary" size="sm" onClick={()=>setWastageMode(true)}>Wastage</Btn>
         }
         {!wastageMode&&<Btn size="sm" onClick={()=>setShowNew(s=>!s)}>{tl("+ Item")}</Btn>}
       </div>
     }>
       {showNew&&(
-        <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
-          <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>New Item</h3>
-          <RecipeForm initial={BLANK} lookups={lookups} saving={saving} onSave={(f,b,r,c)=>handleSave(f,b,r,c,null)} onCancel={()=>setShowNew(false)} />
-        </div>
+        <Card className="mb-5" style={{ animation:"fadeIn 0.2s ease" }}>
+          <CardHeader><CardTitle>New Item</CardTitle></CardHeader>
+          <CardPanel className="pt-0">
+            <RecipeForm initial={BLANK} lookups={lookups} saving={saving} onSave={(f,b,r,c)=>handleSave(f,b,r,c,null)} onCancel={()=>setShowNew(false)} />
+          </CardPanel>
+        </Card>
       )}
       {loading?<Spinner/>:<DataTable columns={cols} rows={sorted.map(r=>({...r,_id:r.rid}))} selected={selected} onSelect={toggleSel} onSelectAll={setSelected} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
 
       {/* EDIT MODAL */}
       {editRecipe&&(
-        <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
-          <div style={{ background:G.white, borderRadius:16, padding:32, maxWidth:640, width:"100%", maxHeight:"90vh", overflowY:"auto", animation:"fadeIn 0.2s ease", boxShadow:"0 20px 60px rgba(44,24,16,0.2)" }}>
-            <h3 style={{ fontFamily:G.font, fontSize:20, marginBottom:20 }}>Edit Item</h3>
-            <RecipeForm initial={editRecipe} lookups={lookups} saving={saving} onSave={(f,b,r,c)=>handleSave(f,b,r,c,editRecipe.rid)} onCancel={()=>setEditRecipe(null)} />
-          </div>
-        </div>
+        <Modal title="Edit Item" onClose={()=>setEditRecipe(null)} className="max-w-2xl">
+          <RecipeForm initial={editRecipe} lookups={lookups} saving={saving} onSave={(f,b,r,c)=>handleSave(f,b,r,c,editRecipe.rid)} onCancel={()=>setEditRecipe(null)} />
+        </Modal>
       )}
 
       <Dialog open={dialog==="del"} title="Delete recipes?" onConfirm={doDelete} onCancel={()=>setDialog(null)}>
@@ -2416,54 +2362,48 @@ function RecipesPage({
             return names.length?<div key={label+rid}><b>{recipes.find(r=>r.rid===rid)?.name}</b> is {label} {names.join(", ")}.</div>:null;
           });
           return (
-            <div style={{marginTop:12,padding:"10px 12px",background:"#fef3c7",border:"1px solid #fcd34d",borderRadius:8,fontSize:13,color:"#92400e"}}>
+            <Alert variant="warning" className="mt-3"><TriangleAlertIcon/><AlertDescription>
               {lines(procRows,"process_name","used in")}
               {lines(menuRows,"menu_name","on the menu")}
-              <div style={{marginTop:6}}>Deleting will also remove {rids.length>1?"these items":"this item"} from {[procRows.length&&`the process${new Set(procRows.map(u=>u.process_name)).size>1?"es":""}`,menuRows.length&&`the menu${new Set(menuRows.map(u=>u.menu_name)).size>1?"s":""}`].filter(Boolean).join(" and ")} listed above.</div>
-            </div>
+              <div className="mt-1.5">Deleting will also remove {rids.length>1?"these items":"this item"} from {[procRows.length&&`the process${new Set(procRows.map(u=>u.process_name)).size>1?"es":""}`,menuRows.length&&`the menu${new Set(menuRows.map(u=>u.menu_name)).size>1?"s":""}`].filter(Boolean).join(" and ")} listed above.</div>
+            </AlertDescription></Alert>
           );
         })()}
       </Dialog>
       <Lightbox src={lightbox?.src} description={lightbox?.description} onClose={()=>setLightbox(null)} />
 
       {wastageConfirm&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.45)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <div style={{background:G.white,borderRadius:16,padding:32,maxWidth:520,width:"90%",animation:"fadeIn 0.2s ease",boxShadow:"0 20px 60px rgba(44,24,16,0.2)"}}>
-            <h3 style={{fontFamily:G.font,fontSize:18,marginBottom:16}}>Confirm wastage</h3>
-            <p style={{fontSize:14,color:G.dark,lineHeight:1.6,marginBottom:16}}>
-              The following items will be wasted, and stock levels shall be changed accordingly. The action is irreversible. Are you sure you wish to proceed?
-            </p>
-            <div style={{background:G.sand,borderRadius:10,padding:"12px 16px",marginBottom:20}}>
-              {Object.entries(wastageDeltas).filter(([,d])=>d<0).map(([rid,delta])=>{
-                const item = recipes.find(r=>String(r.rid)===rid);
-                return (
-                  <div key={rid} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",fontSize:13,borderBottom:`1px solid ${G.border}`}}>
-                    <span style={{fontWeight:600,color:G.dark}}>{item?.name||rid}</span>
-                    <span style={{color:G.red,fontFamily:G.mono,fontWeight:600}}>{delta} {item?.units||''}</span>
-                  </div>
-                );
-              })}
-            </div>
-            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-              <Btn size="sm" loading={applyingWastage} onClick={async()=>{
-                setApplyingWastage(true);
-                try {
-                  const changes = Object.entries(wastageDeltas)
-                    .filter(([,d])=>d<0)
-                    .map(([rid,delta])=>({rid:Number(rid),delta}));
-                  const updated = await api.applyItemWastage({changes});
-                  const sm={}; (updated||[]).forEach(x=>{ sm[x.rid]=Number(x.qty); });
-                  setRecipeStock(sm);
-                  setWastageMode(false); setWastageDeltas({});
-                  setWastageConfirm(false);
-                  toast("Wastage applied");
-                } catch(e){ toast(e.message,"error"); }
-                finally{ setApplyingWastage(false); }
-              }}>OK</Btn>
-              <Btn variant="ghost" size="sm" onClick={()=>setWastageConfirm(false)}>Cancel</Btn>
-            </div>
+        <Modal title="Confirm wastage" onClose={()=>setWastageConfirm(false)}
+          description="The following items will be wasted, and stock levels shall be changed accordingly. The action is irreversible. Are you sure you wish to proceed?"
+          footer={<><span/><div className="flex gap-2">
+            <Btn variant="ghost" size="sm" onClick={()=>setWastageConfirm(false)}>Cancel</Btn>
+            <Btn size="sm" loading={applyingWastage} onClick={async()=>{
+              setApplyingWastage(true);
+              try {
+                const changes = Object.entries(wastageDeltas)
+                  .filter(([,d])=>d<0)
+                  .map(([rid,delta])=>({rid:Number(rid),delta}));
+                const updated = await api.applyItemWastage({changes});
+                const sm={}; (updated||[]).forEach(x=>{ sm[x.rid]=Number(x.qty); });
+                setRecipeStock(sm);
+                setWastageMode(false); setWastageDeltas({});
+                setWastageConfirm(false);
+                toast("Wastage applied");
+              } catch(e){ toast(e.message,"error"); }
+              finally{ setApplyingWastage(false); }
+            }}>OK</Btn></div></>}>
+          <div className="rounded-lg bg-muted px-4 py-2">
+            {Object.entries(wastageDeltas).filter(([,d])=>d<0).map(([rid,delta])=>{
+              const item = recipes.find(r=>String(r.rid)===rid);
+              return (
+                <div key={rid} className="flex justify-between border-b py-1.5 text-sm last:border-b-0">
+                  <span className="font-semibold">{item?.name||rid}</span>
+                  <span className="font-semibold text-destructive-foreground tabular-nums">{delta} {item?.units||''}</span>
+                </div>
+              );
+            })}
           </div>
-        </div>
+        </Modal>
       )}
     </Page>
   );
@@ -3607,18 +3547,16 @@ function PackageItemPicker({ recipes, chosen, onPick, tl }) {
     .sort((a,b)=>a.name.localeCompare(b.name));
   const pick = r => { onPick(r); setQ(""); setOpen(false); };
   return (
-    <div style={{position:"relative"}}>
-      <input value={q} onChange={e=>{setQ(e.target.value);setOpen(true);}} onFocus={()=>setOpen(true)} onBlur={()=>setTimeout(()=>setOpen(false),150)}
+    <div className="relative">
+      <CInput size="lg" value={q} onChange={e=>{setQ(e.target.value);setOpen(true);}} onFocus={()=>setOpen(true)} onBlur={()=>setTimeout(()=>setOpen(false),150)}
         onKeyDown={e=>{ if(e.key==="Escape") setOpen(false); if(e.key==="Enter"&&avail.length){ e.preventDefault(); pick(avail[0]); } }}
-        placeholder={tl("Type to search items…")}
-        style={{width:"100%",boxSizing:"border-box",padding:"9px 12px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none",background:G.white,color:G.dark}}/>
+        placeholder={tl("Type to search items…")} aria-label={tl("Type to search items…")}/>
       {open&&avail.length>0&&(
-        <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,background:G.white,border:`1px solid ${G.border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(44,24,16,0.12)",zIndex:500,maxHeight:240,overflowY:"auto"}}>
+        <div className="absolute inset-x-0 top-[calc(100%+4px)] z-[500] max-h-60 overflow-y-auto rounded-lg border bg-popover p-1 shadow-lg/10">
           {avail.map(r=>(
-            <button key={r.rid} onMouseDown={()=>pick(r)}
-              style={{width:"100%",textAlign:"left",padding:"9px 14px",background:"none",border:"none",cursor:"pointer",fontSize:13,fontFamily:G.mono,color:G.dark}}
-              onMouseEnter={e=>e.currentTarget.style.background=G.sand} onMouseLeave={e=>e.currentTarget.style.background="none"}>
-              {r.name}{r.units&&<span style={{color:G.muted}}> · {r.units}</span>}
+            <button key={r.rid} type="button" data-slot="picker-option" onMouseDown={()=>pick(r)}
+              className="w-full rounded-sm px-3 py-2 text-left text-sm hover:bg-accent">
+              {r.name}{r.units&&<span className="text-muted-foreground"> · {r.units}</span>}
             </button>
           ))}
         </div>
@@ -3690,39 +3628,42 @@ function PackagingPage({ toast, onBack }) {
     catch(e){ toast(e.message,"error"); } finally{ setRefreshingForecast(false); }
   };
 
-  const inp = {padding:"3px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none",background:G.white,color:G.dark};
+  const CURS = ["AMD","USD","EUR","RUR"];
   const cols = [
     {key:"name", label:tl("Name"), sortable:true, render:r=>(
-      <button onClick={()=>openEdit(r)} style={{background:"none",border:"none",cursor:"pointer",fontFamily:G.mono,fontSize:14,color:G.dark,padding:0,textAlign:"left",textDecoration:"underline dotted",textUnderlineOffset:3}}>{r.name}</button>
+      <button type="button" data-slot="link" onClick={()=>openEdit(r)} className="text-left underline decoration-dotted underline-offset-4 hover:text-brand">{r.name}</button>
     )},
-    {key:"sku", label:tl("SKU"), sortable:true, render:r=>r.sku||<span style={{color:G.muted}}>—</span>},
+    {key:"sku", label:tl("SKU"), sortable:true, render:r=>r.sku||<span className="text-muted-foreground">—</span>},
     {key:"items", label:tl("Items"), sortable:false, render:r=>(r.items||[]).length
-      ? <div style={{display:"flex",flexDirection:"column",gap:2,fontSize:12}}>{r.items.map(i=><span key={i.rid}>{i.name} <span style={{color:G.muted}}>≤ {Number(i.max_cap)} {i.unit||""}</span></span>)}</div>
-      : <span style={{color:G.muted}}>—</span>},
+      ? <div className="flex flex-col gap-0.5 text-xs">{r.items.map(i=><span key={i.rid}>{i.name} <span className="text-muted-foreground">≤ {Number(i.max_cap)} {i.unit||""}</span></span>)}</div>
+      : <span className="text-muted-foreground">—</span>},
     {key:"suppliers", label:tl("Suppliers"), sortable:false, render:r=>{
       const links = procLinks.filter(l=>l.pid===r.pid);
       return (
-        <div style={{display:"flex",flexDirection:"column",gap:3}}>
+        <div className="flex min-w-44 flex-col gap-1">
           {links.map(l=>(
-            <div key={l.psid} style={{display:"flex",alignItems:"center",gap:6,fontSize:12}}>
-              <span style={{flex:1}}>{l.supplier_name}</span>
-              {l.price&&<span style={{color:G.caramel,fontWeight:600}}>{l.price} {l.currency}</span>}
-              <button onClick={()=>unlinkSupplier(l.sid,l.psid)} style={{background:"none",border:"none",color:G.muted,cursor:"pointer",fontSize:12,lineHeight:1}}>×</button>
+            <div key={l.psid} className="flex items-center gap-1.5 text-xs">
+              <span className="flex-1">{l.supplier_name}</span>
+              {l.price&&<span className="font-semibold text-brand tabular-nums">{l.price} {l.currency}</span>}
+              <Button variant="ghost" size="icon-xs" aria-label={`Unlink ${l.supplier_name}`} onClick={()=>unlinkSupplier(l.sid,l.psid)}><XIcon/></Button>
             </div>
           ))}
           {linkPid===r.pid ? (
-            <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap",marginTop:4}}>
-              <select value={linkSid} onChange={e=>setLinkSid(e.target.value)} style={inp}>
-                <option value="">{tl("Supplier…")}</option>
-                {suppliers.map(s=><option key={s.sid} value={s.sid}>{s.name}</option>)}
-              </select>
-              <input type="number" value={linkPrice} onChange={e=>setLinkPrice(e.target.value)} placeholder={tl("Price")} style={{...inp,width:60}}/>
-              <select value={linkCurrency} onChange={e=>setLinkCurrency(e.target.value)} style={inp}>{["AMD","USD","EUR","RUR"].map(c=><option key={c}>{c}</option>)}</select>
-              <Btn size="sm" onClick={linkSupplier}>{tl("Link")}</Btn>
-              <button onClick={()=>setLinkPid(null)} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:14}}>×</button>
+            <div className="mt-1 flex flex-wrap items-center gap-1">
+              <CSelect items={suppliers.map(sp=>({label:sp.name,value:String(sp.sid)}))} value={linkSid||null} onValueChange={v=>setLinkSid(v||"")}>
+                <SelectTrigger size="sm" className="w-36"><SelectValue placeholder={tl("Supplier…")}/></SelectTrigger>
+                <SelectPopup>{suppliers.map(sp=><SelectItem key={sp.sid} value={String(sp.sid)}>{sp.name}</SelectItem>)}</SelectPopup>
+              </CSelect>
+              <CInput size="sm" type="number" value={linkPrice} onChange={e=>setLinkPrice(e.target.value)} placeholder={tl("Price")} aria-label={tl("Price")} className="w-20"/>
+              <CSelect items={CURS.map(c=>({label:c,value:c}))} value={linkCurrency} onValueChange={v=>setLinkCurrency(v||"AMD")}>
+                <SelectTrigger size="sm" className="w-20" aria-label="Currency"><SelectValue/></SelectTrigger>
+                <SelectPopup>{CURS.map(c=><SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectPopup>
+              </CSelect>
+              <Button size="sm" onClick={linkSupplier}>{tl("Link")}</Button>
+              <Button variant="ghost" size="icon-sm" aria-label="Cancel" onClick={()=>setLinkPid(null)}><XIcon/></Button>
             </div>
           ) : (
-            <button onClick={()=>{setLinkPid(r.pid);setLinkSid("");setLinkPrice("");}} style={{background:"none",border:"none",cursor:"pointer",fontSize:11,color:G.caramel,fontFamily:G.mono,fontWeight:600,textAlign:"left"}}>+ {tl("Add supplier")}</button>
+            <Button variant="ghost" size="xs" className="-ms-2 self-start text-brand" onClick={()=>{setLinkPid(r.pid);setLinkSid("");setLinkPrice("");}}><PlusIcon/>{tl("Add supplier")}</Button>
           )}
         </div>
       );
@@ -3734,104 +3675,92 @@ function PackagingPage({ toast, onBack }) {
         return next===0 ? Object.fromEntries(Object.entries(p).filter(([k])=>k!==String(r.pid))) : {...p,[r.pid]:next};
       });
       if (wastageMode) return (
-        <div style={{display:"flex",alignItems:"center",gap:5}}>
-          <button onClick={()=>step(1)} disabled={delta===0} style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.sand,cursor:delta===0?"not-allowed":"pointer",opacity:delta===0?0.4:1}}>+</button>
-          <span style={{minWidth:32,textAlign:"center",fontSize:13,fontFamily:G.mono,fontWeight:600,color:displayed<qty?G.red:G.dark}}>{displayed}</span>
-          <button onClick={()=>step(-1)} disabled={displayed<=0} style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.sand,cursor:displayed<=0?"not-allowed":"pointer",opacity:displayed<=0?0.4:1}}>−</button>
-          {delta<0&&<span style={{fontSize:11,color:G.red,fontFamily:G.mono}}>{delta}</span>}
+        <div className="flex items-center gap-1.5">
+          <QtyStepper value={displayed} label={r.name} display={<span className={displayed<qty?"text-destructive-foreground":""}>{displayed}</span>}
+            onDec={()=>step(-1)} decDisabled={displayed<=0} onInc={()=>step(1)} incDisabled={delta===0}/>
+          {delta<0&&<span className="text-[11px] text-destructive-foreground tabular-nums">{delta}</span>}
         </div>
       );
-      return <span style={{fontWeight:600,color:qty>0?G.dark:G.red}}>{Number(qty.toFixed(2))}</span>;
+      return <span className={`font-semibold tabular-nums ${qty>0?"":"text-destructive-foreground"}`}>{Number(qty.toFixed(2))}</span>;
     }},
     {key:"forecast", label:tl("Forecast"), sortable:false, render:r=><MiniSpark series={forecast[r.pid]?.series||[]} tg={forecast[r.pid]?.tg??0}/>},
   ];
 
   const chosen = form ? form.rows.map(r=>r.rid) : [];
+  const delNames = selected.map(id=>packages.find(p=>p.pid===id)?.name).filter(Boolean).join(", ");
   return (
-    <Page title={tl("Packaging")} actions={<div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-      <Btn variant="secondary" size="sm" onClick={onBack}>{"<- "}{tl("Products")}</Btn>
+    <Page title={tl("Packaging")} actions={<div className="flex flex-wrap gap-2">
+      <Btn variant="secondary" size="sm" onClick={onBack}><ArrowLeftIcon/>{tl("Products")}</Btn>
       {selected.length>0&&!wastageMode&&<Btn variant="danger" size="sm" onClick={()=>setConfirmDel(true)}>{tl("Delete")} ({selected.length})</Btn>}
       {wastageMode && Object.keys(wastageDeltas).length>0 && <Btn size="sm" onClick={()=>setWastageConfirm(true)}>{tl("Confirm")}</Btn>}
       {wastageMode
-        ? <Btn variant="secondary" size="sm" onClick={()=>{ setWastageMode(false); setWastageDeltas({}); }}>✕ {tl("Cancel wastage")}</Btn>
+        ? <Btn variant="secondary" size="sm" onClick={()=>{ setWastageMode(false); setWastageDeltas({}); }}>{tl("Cancel wastage")}</Btn>
         : <Btn variant="secondary" size="sm" onClick={()=>setWastageMode(true)}>{tl("Wastage")}</Btn>}
       <Btn variant="secondary" size="sm" onClick={refreshForecast} loading={refreshingForecast}>↻ {tl("Forecast")}</Btn>
       {!wastageMode&&<Btn size="sm" onClick={openNew}>{tl("+ Package")}</Btn>}
     </div>}>
       {form&&(
-        <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,padding:24,marginBottom:20,animation:"fadeIn 0.2s ease"}}>
-          <h3 style={{fontFamily:G.font,fontSize:17,marginBottom:16}}>{form.pid?tl("Edit Package"):tl("New Package")}</h3>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
-            <Input label={tl("Name")} value={form.name} onChange={v=>setForm(f=>({...f,name:v}))} required/>
-            <Input label={tl("SKU")} value={form.sku} onChange={v=>setForm(f=>({...f,sku:v}))} placeholder="Optional"/>
-          </div>
-          <div style={{marginBottom:12}}>
-            <label style={{fontSize:12,fontWeight:600,color:G.muted,display:"block",marginBottom:6}}>{tl("Items")}</label>
-            <PackageItemPicker recipes={recipes} chosen={chosen} onPick={addRow} tl={tl}/>
-          </div>
-          {form.rows.length>0&&(
-            <div style={{border:`1px solid ${G.border}`,borderRadius:10,overflow:"hidden",marginBottom:14}}>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 180px 32px",gap:10,padding:"8px 12px",background:G.sand,fontSize:12,fontWeight:700,color:G.muted}}>
-                <span>{tl("Name")}</span><span>{tl("Max. capacity")}</span><span/>
-              </div>
-              {form.rows.map(r=>(
-                <div key={r.rid} style={{display:"grid",gridTemplateColumns:"1fr 180px 32px",gap:10,padding:"8px 12px",alignItems:"center",borderTop:`1px solid ${G.border}`}}>
-                  <span style={{fontSize:14,color:G.dark}}>{r.name}</span>
-                  <span style={{display:"flex",alignItems:"center",gap:6}}>
-                    <input type="number" min="0" step="any" value={r.max_cap} onChange={e=>setCap(r.rid,e.target.value)}
-                      style={{width:80,padding:"6px 8px",borderRadius:6,border:`1px solid ${badCap(r)?G.red:G.border}`,fontFamily:G.mono,fontSize:13,background:G.white,color:G.dark}}/>
-                    <span style={{fontSize:12,color:G.muted}}>{r.unit||""}</span>
-                  </span>
-                  <button onClick={()=>removeRow(r.rid)} title={tl("Remove")} style={{background:"none",border:"none",cursor:"pointer",color:G.muted,fontSize:16}}>×</button>
-                </div>
-              ))}
+        <Card className="mb-5" style={{ animation:"fadeIn 0.2s ease" }}>
+          <CardHeader><CardTitle>{form.pid?tl("Edit Package"):tl("New Package")}</CardTitle></CardHeader>
+          <CardPanel className="flex flex-col gap-3.5 pt-0">
+            <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+              <Input label={tl("Name")} value={form.name} onChange={v=>setForm(f=>({...f,name:v}))} required/>
+              <Input label={tl("SKU")} value={form.sku} onChange={v=>setForm(f=>({...f,sku:v}))} placeholder="Optional"/>
             </div>
-          )}
-          <div style={{display:"flex",gap:10}}>
-            <Btn size="sm" onClick={save} loading={saving}>{tl("Save")}</Btn>
-            <Btn variant="ghost" size="sm" onClick={()=>setForm(null)}>{tl("Cancel")}</Btn>
-          </div>
-        </div>
+            <FieldBlock label={tl("Items")}>
+              <PackageItemPicker recipes={recipes} chosen={chosen} onPick={addRow} tl={tl}/>
+            </FieldBlock>
+            {form.rows.length>0&&(
+              <div className="overflow-hidden rounded-xl border">
+                <div className="grid grid-cols-[1fr_180px_32px] gap-2.5 bg-muted px-3 py-2 font-semibold text-muted-foreground text-xs">
+                  <span>{tl("Name")}</span><span>{tl("Max. capacity")}</span><span/>
+                </div>
+                {form.rows.map(r=>(
+                  <div key={r.rid} className="grid grid-cols-[1fr_180px_32px] items-center gap-2.5 border-t px-3 py-2">
+                    <span className="text-sm">{r.name}</span>
+                    <span className="flex items-center gap-1.5">
+                      <CInput size="sm" type="number" min="0" step="any" value={r.max_cap} onChange={e=>setCap(r.rid,e.target.value)}
+                        aria-label={`Max. capacity of ${r.name}`} aria-invalid={badCap(r)||undefined} className="w-20"/>
+                      <span className="text-muted-foreground text-xs">{r.unit||""}</span>
+                    </span>
+                    <Button variant="ghost" size="icon-xs" aria-label={`${tl("Remove")} ${r.name}`} onClick={()=>removeRow(r.rid)}><XIcon/></Button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2.5">
+              <Btn size="sm" onClick={save} loading={saving}>{tl("Save")}</Btn>
+              <Btn variant="ghost" size="sm" onClick={()=>setForm(null)}>{tl("Cancel")}</Btn>
+            </div>
+          </CardPanel>
+        </Card>
       )}
       {loading?<Spinner/>:<DataTable columns={cols} rows={sorted.map(p=>({...p,_id:p.pid}))} selected={selected} onSelect={toggleSel} onSelectAll={setSelected} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort}/>}
-      {confirmDel&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.45)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <div style={{background:G.white,borderRadius:16,padding:32,maxWidth:460,width:"90%",boxShadow:"0 20px 60px rgba(44,24,16,0.2)"}}>
-            <h3 style={{fontFamily:G.font,fontSize:20,marginBottom:12}}>{tl("Delete package?")}</h3>
-            <p style={{color:G.muted,lineHeight:1.6,marginBottom:24,fontSize:15}}>{tl("Are you sure you wish to delete")} <b>{selected.map(id=>packages.find(p=>p.pid===id)?.name).filter(Boolean).join(", ")}</b>? {tl("This action may not be undone.")}</p>
-            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-              <Btn variant="ghost" onClick={()=>setConfirmDel(false)}>{tl("Cancel")}</Btn>
-              <Btn variant="danger" onClick={doDelete}>{tl("Yes")}</Btn>
-            </div>
-          </div>
-        </div>
-      )}
+      <Dialog open={confirmDel} title={tl("Delete package?")} confirmLabel={tl("Yes")} onConfirm={doDelete} onCancel={()=>setConfirmDel(false)}>
+        {tl("Are you sure you wish to delete")} <b className="text-foreground">{delNames}</b>? {tl("This action may not be undone.")}
+      </Dialog>
       {wastageConfirm&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(44,24,16,0.45)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <div style={{background:G.white,borderRadius:16,padding:32,maxWidth:520,width:"90%",boxShadow:"0 20px 60px rgba(44,24,16,0.2)"}}>
-            <h3 style={{fontFamily:G.font,fontSize:18,marginBottom:16}}>{tl("Confirm wastage")}</h3>
-            <p style={{fontSize:14,color:G.dark,lineHeight:1.6,marginBottom:16}}>{tl("The following packaging will be wasted, and stock levels shall be changed accordingly. The action is irreversible. Are you sure you wish to proceed?")}</p>
-            <div style={{background:G.sand,borderRadius:10,padding:"12px 16px",marginBottom:20}}>
-              {Object.entries(wastageDeltas).filter(([,d])=>d<0).map(([pid,delta])=>(
-                <div key={pid} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",fontSize:13}}>
-                  <span style={{fontWeight:600,color:G.dark}}>{packages.find(p=>String(p.pid)===pid)?.name||pid}</span>
-                  <span style={{color:G.red,fontFamily:G.mono,fontWeight:600}}>{delta}</span>
-                </div>
-              ))}
-            </div>
-            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-              <Btn size="sm" loading={applyingWastage} onClick={async()=>{
-                setApplyingWastage(true);
-                try {
-                  const upd = await api.applyWastage({changes:Object.entries(wastageDeltas).filter(([,d])=>d<0).map(([pid,delta])=>({pid:Number(pid),delta}))});
-                  const m = {}; (upd||[]).forEach(s=>{ m[s.pid]=Number(s.qty); }); setStock(m);
-                  setWastageMode(false); setWastageDeltas({}); setWastageConfirm(false); toast(tl("Wastage applied"));
-                } catch(e){ toast(e.message,"error"); } finally{ setApplyingWastage(false); }
-              }}>OK</Btn>
-              <Btn variant="ghost" size="sm" onClick={()=>setWastageConfirm(false)}>{tl("Cancel")}</Btn>
-            </div>
+        <Modal title={tl("Confirm wastage")} onClose={()=>setWastageConfirm(false)}
+          description={tl("The following packaging will be wasted, and stock levels shall be changed accordingly. The action is irreversible. Are you sure you wish to proceed?")}
+          footer={<><span/><div className="flex gap-2">
+            <Btn variant="ghost" size="sm" onClick={()=>setWastageConfirm(false)}>{tl("Cancel")}</Btn>
+            <Btn size="sm" loading={applyingWastage} onClick={async()=>{
+              setApplyingWastage(true);
+              try {
+                const upd = await api.applyWastage({changes:Object.entries(wastageDeltas).filter(([,d])=>d<0).map(([pid,delta])=>({pid:Number(pid),delta}))});
+                const m = {}; (upd||[]).forEach(s=>{ m[s.pid]=Number(s.qty); }); setStock(m);
+                setWastageMode(false); setWastageDeltas({}); setWastageConfirm(false); toast(tl("Wastage applied"));
+              } catch(e){ toast(e.message,"error"); } finally{ setApplyingWastage(false); }
+            }}>OK</Btn></div></>}>
+          <div className="rounded-lg bg-muted px-4 py-2">
+            {Object.entries(wastageDeltas).filter(([,d])=>d<0).map(([pid,delta])=>(
+              <div key={pid} className="flex justify-between border-b py-1.5 text-sm last:border-b-0">
+                <span className="font-semibold">{packages.find(p=>String(p.pid)===pid)?.name||pid}</span>
+                <span className="font-semibold text-destructive-foreground tabular-nums">{delta}</span>
+              </div>
+            ))}
           </div>
-        </div>
+        </Modal>
       )}
     </Page>
   );
