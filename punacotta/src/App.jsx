@@ -9413,6 +9413,8 @@ function RosterPage({ user, toast, onBack }) {
 // Shows processes as cards, sorted chronologically by when the employee's step
 // is due. Cards are collapsed if employee has no matching skill, expanded if they do.
 function EmployeeProcessesPage({ user, toast, setPage }) {
+  const lang = useLangContext();
+  const tl = k => lang==='ru'?(RU[k]||k):k;
   const [runs,    setRuns]    = useState([]);
   const [skills,  setSkills]  = useState([]); // employee's skills (skids)
   const [loading, setLoading] = useState(true);
@@ -10119,7 +10121,6 @@ export default function App() {
           {page==="processes-emp" &&<EmployeeProcessesPage user={user} setPage={setPage} toast={toast}/>}
           {page==="equipment"    &&<EquipmentPage  toast={toast}/>}
           {page==="roster-emp"   &&<RosterPage            user={user} toast={toast}/>}
-          {page==="processes-emp"&&<EmployeeProcessesPage user={user} setPage={setPage} toast={toast}/>}
           {page==="embed"        &&<EmbedMenuPage toast={toast}/>}
           {(page==="orders-manuf"||page==="quick-sale") &&<OrdersHub toast={toast}/>}
           {page==="restaurants"  &&<RestaurantsPage setPage={setPage} setActiveMenu={setActiveMenu}/>}
