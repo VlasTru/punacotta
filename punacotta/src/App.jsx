@@ -5,6 +5,13 @@ import "react-image-crop/dist/ReactCrop.css";
 import { api } from "./api.js";
 import "./tanelu-logo.css";
 import { parseVoiceSale } from "./voiceSale.js";
+import { Button } from "@/components/ui/button";
+import { Input as CInput } from "@/components/ui/input";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { Card, CardHeader, CardTitle, CardDescription, CardPanel, CardFooter } from "@/components/ui/card";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+
+const BoardOfArrivals = React.lazy(() => import('./screens/BoardOfArrivals.jsx'));
 
 // ─── DESIGN TOKENS ────────────────────────────────────────────────────────────
 const G = {
@@ -30,7 +37,7 @@ function resolveTheme(pref) {
 function applyTheme(pref) {
   const mode = resolveTheme(pref);
   Object.assign(G, mode === 'dark' ? THEME_DARK : THEME_LIGHT);
-  try { document.documentElement.style.colorScheme = mode; document.documentElement.style.background = G.cream; } catch {}
+  try { document.documentElement.style.colorScheme = mode; document.documentElement.style.background = G.cream; document.documentElement.classList.toggle('dark', mode === 'dark'); } catch {}
 }
 applyTheme(getThemePref());
 
@@ -50,7 +57,7 @@ function useLang() {
 let _currentLang = getLang();
 function t(en, ru) { return _currentLang === 'ru' ? (ru || en) : en; }
 
-const RU = {
+export const RU = {
   // Nav tabs
   "Orders":"Заказы","Products":"Продукты","Items":"Блюда","Menus":"Меню",
   "Procurement":"Снабжение","Suppliers":"Поставщики",
@@ -103,7 +110,7 @@ const RU = {
   "Latest order no later than":"Последний заказ может быть принят не позже",
   "before closing":"до закрытия","Add period":"+ Период","Closed":"Закрыто",
   "Log in":"Зайти","Forgot password?":"Пароль подзабылся?",
-  "Create account":"Зарегистрироваться","Welcome back":"И снова здравствуйте","Restore":"Восстановить","Security area":"Зона безопасности","Delete restaurant":"Удалить ресторан",
+  "Create account":"Зарегистрироваться","Welcome back":"И снова здравствуйте","Restore":"Восстановить","Log in to your Tanelu account.":"Войдите в свой аккаунт Tanelu.","New to Tanelu?":"Впервые в Tanelu?","Create account →":"Создать аккаунт →","Security area":"Зона безопасности","Delete restaurant":"Удалить ресторан",
   "password":"пароль","Reset password":"Сбросить пароль",
   "Send recovery link":"Отправить ссылку","Back to login":"Обратно к авторизации",
   "Password":"Пароль",
@@ -304,9 +311,9 @@ const UNIT_META = {
   pounds:    { abbr:"lb", sub:"ounces",       sub_abbr:"oz", conv:16   },
 };
 // Returns abbreviated unit string for a unit name
-function unitAbbr(name) { return UNIT_META[name]?.abbr || name || ""; }
-function subAbbr(name)  { return UNIT_META[name]?.sub_abbr || ""; }
-function conv(name)     { return UNIT_META[name]?.conv || 1; }
+export function unitAbbr(name) { return UNIT_META[name]?.abbr || name || ""; }
+export function subAbbr(name)  { return UNIT_META[name]?.sub_abbr || ""; }
+export function conv(name)     { return UNIT_META[name]?.conv || 1; }
 function hasSub(name)   { return !!UNIT_META[name]; }
 
 const STATUS_CONFIG = {
@@ -321,10 +328,13 @@ const STATUS_CONFIG = {
 
 const makeCss = () => `
   @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=DM+Sans:wght@300;400;500;600&display=swap');
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: ${G.mono}; background: ${G.cream}; color: ${G.dark}; min-height: 100vh; }
-  input, select, textarea, button { font-family: ${G.mono}; }
-  ::placeholder { color: ${G.muted}; opacity: 0.7; }
+  /* In the 'base' cascade layer so the Tailwind utilities used by the coss ui screens can override it */
+  @layer base {
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: ${G.mono}; background: ${G.cream}; color: ${G.dark}; min-height: 100vh; }
+    input, select, textarea, button { font-family: ${G.mono}; }
+    ::placeholder { color: ${G.muted}; opacity: 0.7; }
+  }
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track { background: ${G.sand}; }
   ::-webkit-scrollbar-thumb { background: ${G.caramel}; border-radius: 3px; }
@@ -1526,39 +1536,83 @@ function LoginPage({ onLogin, setPage, setLang }) {
       }
     } finally { setLoading(false); }
   };
+  const slide = (on) => ({ width:"50%", visibility:on?"visible":"hidden", transition:"visibility 0s linear "+(on?"0s":"0.45s") });
   return (
-    <AuthLayout>
-      <div style={{ overflow:"hidden", margin:-4, padding:4 }}>
-      <div style={{ display:"flex", width:"200%", transform:gone?"translateX(-50%)":"translateX(0)", transition:"transform 0.45s cubic-bezier(.4,0,.2,1)" }}>
-      <div style={{ width:"50%", paddingRight:4, boxSizing:"border-box", visibility:gone?"hidden":"visible", transition:"visibility 0s linear "+(gone?"0.45s":"0s") }} aria-hidden={!!gone}>
-      <h2 style={{ fontFamily:G.font, fontSize:22, marginBottom:24 }}>Welcome back</h2>
-      <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-        <Input label={tl("Email")} type="email" value={email} onChange={setEmail} placeholder="you@example.com" required />
-        <Input label={tl("Password")} type="password" value={pw} onChange={setPw} placeholder="••••••••" required error={err} />
-        <Btn size="lg" onClick={submit} loading={loading}>Log in</Btn>
-        <div style={{ display:"flex", justifyContent:"space-between" }}>
-          <button onClick={()=>setPage("forgot")} style={{ background:"none", border:"none", color:G.caramel, cursor:"pointer", fontSize:13 }}>Forgot password?</button>
-          <button onClick={()=>setPage("signup")} style={{ background:"none", border:"none", color:G.muted, cursor:"pointer", fontSize:13 }}>Create account →</button>
+    <CossAuthShell>
+      <Card className="overflow-hidden">
+        <div className="flex w-[200%] transition-transform duration-[450ms] ease-[cubic-bezier(.4,0,.2,1)]" style={{ transform:gone?"translateX(-50%)":"translateX(0)" }}>
+          {/* Slide 1 — log in */}
+          <form style={slide(!gone)} aria-hidden={!!gone} onSubmit={e=>{ e.preventDefault(); submit(); }} noValidate>
+            <CardHeader>
+              <CardTitle className="text-2xl">Welcome back</CardTitle>
+              <CardDescription>{tl("Log in to your Tanelu account.")}</CardDescription>
+            </CardHeader>
+            <CardPanel className="flex flex-col gap-4 pt-0">
+              <Field>
+                <FieldLabel>{tl("Email")}</FieldLabel>
+                <CInput type="email" autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com" size="lg" required tabIndex={gone?-1:undefined} />
+              </Field>
+              <Field>
+                <div className="flex w-full items-center justify-between">
+                  <FieldLabel>{tl("Password")}</FieldLabel>
+                  <button type="button" onClick={()=>setPage("forgot")} tabIndex={gone?-1:undefined}
+                    className="text-brand text-sm hover:underline underline-offset-4">Forgot password?</button>
+                </div>
+                <CInput type="password" autoComplete="current-password" value={pw} onChange={e=>setPw(e.target.value)} placeholder="••••••••" size="lg" required aria-invalid={!!err&&!gone||undefined} tabIndex={gone?-1:undefined} />
+              </Field>
+              {err&&!gone&&(
+                <Alert variant="error"><AlertDescription>{err}</AlertDescription></Alert>
+              )}
+              <Button type="submit" size="lg" loading={loading} className="w-full" tabIndex={gone?-1:undefined}>Log in</Button>
+            </CardPanel>
+            <CardFooter className="justify-center gap-1 pt-0 text-muted-foreground text-sm">
+              {tl("New to Tanelu?")}
+              <button type="button" onClick={()=>setPage("signup")} tabIndex={gone?-1:undefined}
+                className="font-medium text-foreground hover:underline underline-offset-4">{tl("Create account →")}</button>
+            </CardFooter>
+          </form>
+          {/* Slide 2 — restore a deleted restaurant */}
+          <div style={slide(!!gone)} aria-hidden={!gone}>
+            <CardHeader>
+              <CardTitle className="text-2xl">{tl("Restore")}</CardTitle>
+              <CardDescription>{gone?.restaurant_name}</CardDescription>
+            </CardHeader>
+            <CardPanel className="flex flex-col gap-4 pt-0">
+              <Alert variant="warning">
+                <AlertDescription>
+                  <p><b>{gone?.restaurant_name}</b> will be deleted in {gone?.days_left} {gone?.days_left===1?"day":"days"}. If you wish to resume operation, click Restore button. Otherwise click "Log in →" to login with a different account.</p>
+                </AlertDescription>
+              </Alert>
+              {err&&gone&&(<Alert variant="error"><AlertDescription>{err}</AlertDescription></Alert>)}
+              <Button size="lg" loading={loading} className="w-full" onClick={restore} tabIndex={gone?undefined:-1}>{tl("Restore")}</Button>
+              <Button variant="ghost" className="w-full" tabIndex={gone?undefined:-1}
+                onClick={()=>{ setGone(null); setPw(""); setErr(""); }}>{tl("Log in →")}</Button>
+            </CardPanel>
+          </div>
         </div>
-        <div style={{ marginTop:8, padding:12, background:G.sand, borderRadius:8, fontSize:12, color:G.muted, lineHeight:1.7 }}>
-          <b>Demo:</b> sophie@example.com / password &nbsp;|&nbsp; arman@puncotta.com / password
+      </Card>
+      <p className="mt-4 text-center text-muted-foreground text-xs leading-relaxed">
+        <span className="font-semibold">Demo:</span> sophie@example.com / password · arman@puncotta.com / password
+      </p>
+    </CossAuthShell>
+  );
+}
+
+// Auth screen frame for the coss ui screens (login): cream background, animated logo, centred card
+function CossAuthShell({ children }) {
+  return (
+    <div className="coss flex min-h-screen items-center justify-center p-6"
+      style={{ backgroundImage:"radial-gradient(circle at 20% 20%, rgba(200,135,58,0.10) 0%, transparent 60%), radial-gradient(circle at 85% 90%, rgba(61,11,69,0.06) 0%, transparent 55%)" }}>
+      <div className="w-full max-w-[420px]" style={{ animation:"fadeIn 0.4s ease" }}>
+        <div className="mx-auto mb-6 size-24">
+          <svg className="tn-logo" viewBox="190 200 700 700" role="img" aria-label="Tanelu">
+            <g className="tn-board"><circle cx="540" cy="673" r="208"/><rect className="tn-bar" x="288.75" y="224.75" width="502.5" height="232.5"/></g>
+            <g className="tn-wink" style={{ opacity:0 }}><ellipse className="tn-eye" cx="541.25" cy="671.25" rx="206.25" ry="210"/><rect className="tn-brow" x="292.5" y="225" width="502.5" height="232.5"/></g>
+          </svg>
         </div>
+        {children}
       </div>
-      </div>
-      <div style={{ width:"50%", paddingLeft:4, boxSizing:"border-box", visibility:gone?"visible":"hidden", transition:"visibility 0s linear "+(gone?"0s":"0.45s") }} aria-hidden={!gone}>
-        <h2 style={{ fontFamily:G.font, fontSize:22, marginBottom:24 }}>{tl("Restore")}</h2>
-        <p style={{ fontSize:14, lineHeight:1.7, color:G.dark, marginBottom:24 }}>
-          <b>{gone?.restaurant_name}</b> will be deleted in {gone?.days_left} {gone?.days_left===1?"day":"days"}. If you wish to resume operation, click Restore button. Otherwise click "Log in →" to login with a different account.
-        </p>
-        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-          <Btn size="lg" onClick={restore} loading={loading}>{tl("Restore")}</Btn>
-          {err&&<span style={{ fontSize:12, color:G.red }}>{err}</span>}
-          <button onClick={()=>{ setGone(null); setPw(""); setErr(""); }} style={{ background:"none", border:"none", color:G.muted, cursor:"pointer", fontSize:13, textAlign:"center" }}>{tl("Log in →")}</button>
-        </div>
-      </div>
-      </div>
-      </div>
-    </AuthLayout>
+    </div>
   );
 }
 
@@ -6789,551 +6843,10 @@ function SuppliersPage({
 
 // ─── BOARD OF ARRIVALS ────────────────────────────────────────────────────────
 // ETA timestamps arrive as ISO (UTC); show them in the viewer's local time as HH:MM
-const fmtLocalTime = iso => {
+export const fmtLocalTime = iso => {
   const d = new Date(iso);
   return isNaN(d) ? (iso || "") : d.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit", hour12:false });
 };
-
-function BoardOfArrivals({ toast }) {
-  const [arrivals, setArrivals] = useState([]);
-  const [loading,  setLoading]  = useState(true);
-  const [cart,     setCart]     = useState({}); // rid+prid key → {rid,prid,qty,owner_uid,item}
-  const [checkout, setCheckout] = useState(false);
-  const [guest,    setGuest]    = useState({ name:'', email:'', phone:'+374 ' });
-  const lookupGuest = async (email) => {
-    const em = (email||'').trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) return;
-    try {
-      const f = await api.lookupGuestByEmail(em);
-      if (!f) return;
-      setGuest(g => g.email.trim()!==em ? g : {
-        ...g,
-        name:  g.name.trim()  ? g.name  : (f.name||''),
-      });
-    } catch(e){ /* lookup is best-effort */ }
-  };
-  const [fulfillment, setFulfillment] = useState('pickup');
-  const [deliveryAddr, setDeliveryAddr] = useState('');
-  const [placing,  setPlacing]  = useState(false);
-  const [orderResult, setOrderResult] = useState(null); // null | {results}
-  const [sortKey,  setSortKey]  = useState('item_name');
-  const [sortDir,  setSortDir]  = useState('asc');
-  const [page,     setPage]     = useState(1);
-  const [filterItems,   setFilterItems]   = useState([]);
-  const [filterSellers, setFilterSellers] = useState([]);
-  const [sellerOpen,    setSellerOpen]    = useState(false);
-  const [sellerSearch,  setSellerSearch]  = useState('');
-  const [readyOnly,     setReadyOnly]     = useState(false);
-  const [itemSearch,    setItemSearch]    = useState('');
-  const [distanceKm,    setDistanceKm]    = useState(null); // null = all
-  const [userLat,       setUserLat]       = useState(null);
-  const [userLng,       setUserLng]       = useState(null);
-  const [geoStatus,     setGeoStatus]     = useState('idle'); // idle|loading|granted|denied
-  const sellerRef = useRef(null);
-
-  // Language support for Board of Arrivals — reads from localStorage
-  const [boaLang, setBoaLang] = useState(()=>localStorage.getItem('lang')||'en');
-  const BOA_RU = RU; // reuse same dictionary
-  const boaTl = k => boaLang==='ru' ? (BOA_RU[k]||k) : k;
-
-  // Close seller dropdown on outside click
-  useEffect(()=>{
-    const handler = e => { if (sellerRef.current && !sellerRef.current.contains(e.target)) setSellerOpen(false); };
-    document.addEventListener('mousedown', handler);
-    return ()=>document.removeEventListener('mousedown', handler);
-  },[]);
-  const PER_PAGE = 20;
-
-  const RECENT_KEY = 'boa_recent_items';
-  const getRecent = () => { try { return JSON.parse(localStorage.getItem(RECENT_KEY)||'[]'); } catch{ return []; } };
-  const pushRecent = name => {
-    const prev = getRecent().filter(x=>x!==name);
-    localStorage.setItem(RECENT_KEY, JSON.stringify([name,...prev].slice(0,10)));
-  };
-
-  const load = useCallback(async()=>{
-    setLoading(true);
-    try {
-      const rows = await api.getArrivals();
-      setArrivals(rows);
-      return rows;
-    }
-    catch(e){ toast(e.message,"error"); }
-    finally{ setLoading(false); }
-  },[]);
-
-  useEffect(()=>{
-    // Count the visit once (not the 60 s refresh) for the BoA funnel in Reports
-    load().then(rows=>{
-      const uids=[...new Set((rows||[]).map(r=>r.owner_uid).filter(Boolean))];
-      if(uids.length) api.recordArrivalsView(uids).catch(()=>{});
-    });
-    const t=setInterval(load,60000);
-    return()=>clearInterval(t);
-  },[]);
-
-  // Request geolocation on mount
-  useEffect(()=>{
-    if (!navigator.geolocation) { setGeoStatus('denied'); return; }
-    setGeoStatus('loading');
-    navigator.geolocation.getCurrentPosition(
-      pos=>{ setUserLat(pos.coords.latitude); setUserLng(pos.coords.longitude); setGeoStatus('granted'); },
-      ()=>setGeoStatus('denied'),
-      { timeout:8000 }
-    );
-  },[]);
-
-  // Haversine distance in km
-  const haversine = (lat1, lng1, lat2, lng2) => {
-    const R = 6371;
-    const dLat = (lat2-lat1)*Math.PI/180;
-    const dLng = (lng2-lng1)*Math.PI/180;
-    const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  };
-
-  // Sellers within distance
-  const nearbySellerSet = useMemo(()=>{
-    if (!distanceKm || !userLat || !userLng) return null; // null = no filter
-    const set = new Set();
-    arrivals.forEach(a=>{
-      if (a.owner_lat && a.owner_lng) {
-        const d = haversine(userLat, userLng, a.owner_lat, a.owner_lng);
-        if (d <= distanceKm) set.add(a.sold_by);
-      }
-    });
-    return set;
-  },[arrivals, distanceKm, userLat, userLng]);
-
-  // Unique filter options — restricted by distance if active
-  const allItemNames  = [...new Set(arrivals
-    .filter(a=>!nearbySellerSet || nearbySellerSet.has(a.sold_by))
-    .map(a=>a.item_name))].sort();
-  const allSellers    = [...new Set(arrivals
-    .filter(a=>!nearbySellerSet || nearbySellerSet.has(a.sold_by))
-    .map(a=>a.sold_by))].sort();
-
-  // Apply filters
-  let filtered = arrivals.filter(a=>{
-    if ((a.remaining_qty ?? a.run_qty ?? 0) <= 0) return false; // hide sold-out items
-    if (nearbySellerSet && !nearbySellerSet.has(a.sold_by)) return false;
-    if (filterItems.length   && !filterItems.includes(a.item_name)) return false;
-    if (filterSellers.length && !filterSellers.includes(a.sold_by)) return false;
-    if (readyOnly && a.run_status!=='completed') return false;
-    return true;
-  });
-
-  // Sort
-  filtered = [...filtered].sort((a,b)=>{
-    let va = a[sortKey]??'', vb = b[sortKey]??'';
-    if (typeof va==='number') return sortDir==='asc'?va-vb:vb-va;
-    return sortDir==='asc'?String(va).localeCompare(String(vb)):String(vb).localeCompare(String(va));
-  });
-
-  // Pagination
-  const totalPages = Math.max(1, Math.ceil(filtered.length/PER_PAGE));
-  const pageRows   = filtered.slice((page-1)*PER_PAGE, page*PER_PAGE);
-
-  const toggleSort = key => {
-    if (sortKey===key) setSortDir(d=>d==='asc'?'desc':'asc');
-    else { setSortKey(key); setSortDir('asc'); }
-    setPage(1);
-  };
-
-  const cartKey = (a) => `${a.prid}-${a.rid}`;
-
-  // Items sold in sub-unit steps (e.g. 250 g of an item counted in kg): one click = one MOQ step.
-  const stepOf = a => (a.allow_submultiples && Number(a.moq)>0) ? Number(a.moq)/conv(a.units) : 1;
-  const rnd = n => Math.round(n*1000)/1000;
-  const maxOf = a => { const st=stepOf(a); const m=a.remaining_qty ?? a.run_qty ?? 999; return rnd(Math.floor(m/st+1e-9)*st); };
-  const fmtQ = (a,q) => stepOf(a)<1 ? `${rnd(q*conv(a.units))} ${subAbbr(a.units)}` : `${rnd(q)}`;
-  const setQty = (arrival, delta) => setCart(p=>{
-    const key = cartKey(arrival);
-    const cur = p[key]?.qty || 0;
-    const max = maxOf(arrival);
-    const next = rnd(Math.max(0, Math.min(max, cur + delta*stepOf(arrival))));
-    if (next === 0) {
-      const { [key]: _, ...rest } = p;
-      return rest;
-    }
-    return { ...p, [key]: { rid:arrival.rid, prid:arrival.prid, qty:next, owner_uid:arrival.owner_uid, item:arrival } };
-  });
-
-  // Freshness colour: white→amber→red over 60 minutes
-  const freshnessColor = f => {
-    if (f<=0) return 'transparent';
-    const r = Math.round(255);
-    const g = Math.round(255*(1-f));
-    const b = Math.round(255*(1-f));
-    return `rgba(${r},${g},${b},${Math.min(0.35, f*0.5)})`;
-  };
-
-  const cartEntries = Object.values(cart);
-  const cartTotal = cartEntries.reduce((sum, entry) => sum + (entry.item?.price||0) * entry.qty, 0);  // price is per unit, qty in units
-  const cartCurrency = cartEntries[0]?.item?.currency || 'AMD';
-
-  const SortTh = ({label, k, style={}}) => (
-    <th onClick={()=>toggleSort(k)}
-      style={{padding:"10px 12px",textAlign:"left",fontSize:11,fontWeight:700,
-        textTransform:"uppercase",letterSpacing:"0.04em",color:G.muted,cursor:"pointer",
-        userSelect:"none",whiteSpace:"nowrap",...style}}>
-      {label}{sortKey===k?(sortDir==='asc'?' ▴':' ▾'):''}
-    </th>
-  );
-
-  const recentItems = getRecent();
-
-  return (
-    <div style={{minHeight:"100vh",background:G.cream,fontFamily:G.mono}}>
-      {/* Header */}
-      <div style={{background:G.white,borderBottom:`1px solid ${G.border}`,padding:"0 24px",height:56,display:"flex",alignItems:"center",gap:16}}>
-        {/* tanelu logo — icon first, then wordmark */}
-        <span style={{display:"flex",alignItems:"center",gap:6}}>
-          <svg width="10" height="14" viewBox="0 0 12 16" fill="none" style={{display:"block",marginBottom:1}}>
-            <rect x="0.5" y="0.5" width="11" height="4" fill={G.caramel}/>
-            <circle cx="6" cy="11" r="4" fill={G.caramel}/>
-          </svg>
-          <span style={{fontFamily:"Georgia, serif",fontSize:20,fontWeight:600,
-            color:G.caramel,letterSpacing:"-0.3px",lineHeight:1}}>tanelu</span>
-        </span>
-        <span style={{fontSize:14,color:G.muted}}>{boaTl("Board of Arrivals")}</span>
-        <button onClick={load} style={{marginLeft:"auto",background:"none",border:`1px solid ${G.border}`,borderRadius:7,cursor:"pointer",padding:"5px 12px",fontSize:12,color:G.muted}}>↻ {boaTl("Refresh")}</button>
-        <button onClick={()=>{ const nl=boaLang==='en'?'ru':'en'; setBoaLang(nl); localStorage.setItem('lang',nl); }}
-          style={{background:"none",border:`1px solid ${G.border}`,borderRadius:7,cursor:"pointer",padding:"5px 10px",fontSize:12,color:G.muted}}>
-          🌐 {boaLang==='en'?'RU':'EN'}
-        </button>
-      </div>
-
-      <div style={{display:"flex",maxWidth:1300,margin:"0 auto",padding:24,gap:20}}>
-        {/* Main */}
-        <div style={{flex:1,minWidth:0}}>
-          {/* Filters */}
-          <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:12,padding:"14px 16px",marginBottom:16,display:"flex",flexWrap:"wrap",gap:16,alignItems:"flex-end"}}>
-            {/* Item name filter */}
-            <div style={{flex:"1 1 220px"}}>
-              <label style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,display:"block",marginBottom:5}}>Item name</label>
-              <div style={{position:"relative"}}>
-                <input value={itemSearch} onChange={e=>setItemSearch(e.target.value)}
-                  placeholder={boaTl("Search items…")}
-                  style={{width:"100%",padding:"7px 10px",borderRadius:7,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}/>
-                {itemSearch&&(
-                  <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,background:G.white,border:`1px solid ${G.border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(44,24,16,0.1)",zIndex:50,maxHeight:200,overflowY:"auto"}}>
-                    {allItemNames.filter(n=>n.toLowerCase().includes(itemSearch.toLowerCase())).map(n=>(
-                      <button key={n} onMouseDown={()=>{
-                        setFilterItems(p=>p.includes(n)?p:([...p,n]));
-                        pushRecent(n); setItemSearch(''); setPage(1);
-                      }} style={{width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",cursor:"pointer",fontSize:13,fontFamily:G.mono,color:G.dark,display:"flex",justifyContent:"space-between"}}
-                        onMouseEnter={e=>e.currentTarget.style.background=G.sand}
-                        onMouseLeave={e=>e.currentTarget.style.background="none"}>
-                        {n}
-                        {recentItems.includes(n)&&<span style={{fontSize:10,color:G.muted}}>recent</span>}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-              {filterItems.length>0&&(
-                <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:6}}>
-                  {filterItems.map(n=>(
-                    <span key={n} style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:`${G.caramel}18`,color:G.caramel,display:"flex",alignItems:"center",gap:4}}>
-                      {n}<button onClick={()=>setFilterItems(p=>p.filter(x=>x!==n))} style={{background:"none",border:"none",cursor:"pointer",color:G.caramel,fontSize:12,padding:0}}>×</button>
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-            {/* Sold by filter — searchable dropdown, default = all */}
-            <div style={{flex:"1 1 220px",position:"relative"}} ref={sellerRef}>
-              <label style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,display:"block",marginBottom:5}}>
-                {boaTl("Sold by")}
-              </label>
-              <div onClick={()=>setSellerOpen(o=>!o)}
-                style={{padding:"7px 10px",borderRadius:7,border:`1px solid ${G.border}`,fontSize:13,
-                  fontFamily:G.mono,cursor:"pointer",background:G.white,minHeight:34,
-                  display:"flex",flexWrap:"wrap",gap:4,alignItems:"center"}}>
-                {filterSellers.length===0
-                  ? <span style={{color:G.muted}}>{boaTl("All restaurants")}</span>
-                  : filterSellers.map(s=>(
-                    <span key={s} style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:`${G.caramel}18`,
-                      color:G.caramel,display:"flex",alignItems:"center",gap:3}}>
-                      {s}
-                      <button onClick={e=>{e.stopPropagation();setFilterSellers(p=>p.filter(x=>x!==s));setPage(1);}}
-                        style={{background:"none",border:"none",cursor:"pointer",color:G.caramel,fontSize:12,padding:0,lineHeight:1}}>×</button>
-                    </span>
-                  ))
-                }
-                <span style={{marginLeft:"auto",color:G.muted,fontSize:11}}>▾</span>
-              </div>
-              {sellerOpen&&(
-                <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,background:G.white,
-                  border:`1px solid ${G.border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(44,24,16,0.12)",
-                  zIndex:100,maxHeight:200,overflowY:"auto"}}>
-                  <div style={{padding:"6px 8px",borderBottom:`1px solid ${G.border}`}}>
-                    <input autoFocus value={sellerSearch} onChange={e=>setSellerSearch(e.target.value)}
-                      placeholder="Search…"
-                      style={{width:"100%",border:"none",outline:"none",fontSize:13,fontFamily:G.mono}}/>
-                  </div>
-                  {allSellers.filter(s=>s.toLowerCase().includes(sellerSearch.toLowerCase())).map(s=>(
-                    <label key={s} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",cursor:"pointer",
-                      background:filterSellers.includes(s)?`${G.caramel}10`:G.white,fontSize:13}}
-                      onMouseEnter={e=>e.currentTarget.style.background=G.sand}
-                      onMouseLeave={e=>e.currentTarget.style.background=filterSellers.includes(s)?`${G.caramel}10`:G.white}>
-                      <input type="checkbox" checked={filterSellers.includes(s)}
-                        onChange={e=>{
-                          setFilterSellers(p=>e.target.checked?[...p,s]:p.filter(x=>x!==s));
-                          setPage(1);
-                        }} style={{accentColor:G.caramel}}/>
-                      {s}
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-            {/* Distance filter */}
-            <div style={{flex:"0 0 auto"}}>
-              <label style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,display:"block",marginBottom:5}}>
-                {boaTl("Distance within")}, km
-              </label>
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <select
-                  value={distanceKm||''}
-                  disabled={geoStatus==='denied'}
-                  onChange={e=>{ setDistanceKm(e.target.value?Number(e.target.value):null); setPage(1); }}
-                  style={{padding:"7px 10px",borderRadius:7,border:`1px solid ${G.border}`,
-                    fontSize:13,fontFamily:G.mono,outline:"none",
-                    opacity:geoStatus==='denied'?0.4:1,cursor:geoStatus==='denied'?'not-allowed':'pointer'}}>
-                  <option value="">All</option>
-                  {[1,5,10,20,30,40,50].map(d=><option key={d} value={d}>{d} km</option>)}
-                </select>
-                {geoStatus==='loading'&&<span style={{fontSize:11,color:G.muted}}>Locating…</span>}
-                {geoStatus==='denied'&&<span style={{fontSize:11,color:G.red}}>Location denied</span>}
-                {geoStatus==='granted'&&<span style={{fontSize:11,color:G.green}}>✓</span>}
-              </div>
-            </div>
-
-            {/* Ready only */}
-            <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,cursor:"pointer",whiteSpace:"nowrap"}}>
-              <input type="checkbox" checked={readyOnly} onChange={e=>{setReadyOnly(e.target.checked);setPage(1);}} style={{accentColor:G.caramel}}/>
-              {boaTl("Display only ready items")}
-            </label>
-          </div>
-
-          {loading ? <Spinner/> : (
-            <>
-              {pageRows.length===0 ? (
-                <div style={{textAlign:"center",padding:60,color:G.muted,fontStyle:"italic"}}>
-                  No items currently in production or recently completed.
-                </div>
-              ) : (
-                <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:12,overflow:"hidden"}}>
-                  <table style={{width:"100%",borderCollapse:"collapse"}}>
-                    <thead>
-                      <tr style={{background:G.sand,borderBottom:`1px solid ${G.border}`}}>
-                        <SortTh label={boaTl("Item name")}       k="item_name"/>
-                        <SortTh label={boaTl("Sold by")}         k="sold_by"/>
-                        <SortTh label={boaTl("Unit price")}      k="price"/>
-                        <SortTh label={boaTl("ETA pickup")}      k="eta_pickup"/>
-                        <SortTh label={boaTl("ETA delivery")}    k="eta_delivery"/>
-                        <th style={{padding:"10px 12px",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted}}>Qty</th>
-                        <SortTh label={boaTl("Units")}           k="units"/>
-                        <th style={{padding:"10px 12px",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted}}>Cost</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {pageRows.map((a,i)=>{
-                        const key     = cartKey(a);
-                        const qty     = cart[key]?.qty || 0;
-                        const remaining = a.remaining_qty ?? a.run_qty ?? 0;
-                        const isReady = a.run_status==='completed';
-                        const rowBg   = freshnessColor(a.freshness);
-                        const atMax   = qty >= maxOf(a) - 1e-9;
-                        return (
-                          <tr key={`${a.rid}-${a.prid}`}
-                            style={{borderBottom:i<pageRows.length-1?`1px solid ${G.border}`:"none",background:rowBg,transition:"background 0.5s"}}>
-                            <td style={{padding:"10px 12px",fontWeight:600,fontSize:14,color:G.dark}}>{a.item_name}</td>
-                            <td style={{padding:"10px 12px",fontSize:13,color:G.muted}}>{a.sold_by}</td>
-                            <td style={{padding:"10px 12px",fontSize:13,fontFamily:G.mono}}>{a.price} {a.currency}</td>
-                            <td style={{padding:"10px 12px",fontFamily:G.mono,fontSize:13,
-                              color:isReady?G.green:a.mins_left<15?G.red:G.dark,fontWeight:isReady?700:400}}>
-                              {isReady?<span style={{color:G.green}}>✓ Ready</span>:fmtLocalTime(a.eta_pickup)}
-                            </td>
-                            <td style={{padding:"10px 12px",fontFamily:G.mono,fontSize:13,color:G.muted}}>{fmtLocalTime(a.eta_delivery)}</td>
-                            <td style={{padding:"10px 12px"}}>
-                              <div style={{display:"flex",alignItems:"center",gap:6}}>
-                                <button onClick={()=>setQty(a,-1)} disabled={qty===0}
-                                  style={{width:24,height:24,borderRadius:6,border:`1px solid ${G.border}`,background:G.sand,cursor:qty===0?"not-allowed":"pointer",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",opacity:qty===0?0.4:1}}>−</button>
-                                <span style={{minWidth:stepOf(a)<1?52:28,textAlign:"center",fontSize:14,fontFamily:G.mono,fontWeight:600}}>{qty>0||stepOf(a)>=1?fmtQ(a,qty):`0 ${subAbbr(a.units)}`}</span>
-                                <button onClick={()=>setQty(a,1)} disabled={atMax}
-                                  style={{width:24,height:24,borderRadius:6,border:`1px solid ${G.border}`,background:G.sand,cursor:atMax?"not-allowed":"pointer",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",opacity:atMax?0.4:1}}>+</button>
-                                {remaining < (a.run_qty||0) && (
-                                  <span style={{fontSize:11,color:G.red,fontFamily:G.mono}}>{fmtQ(a,remaining)} left</span>
-                                )}
-                              </div>
-                            </td>
-                            <td style={{padding:"10px 12px",fontSize:13,color:G.muted}}>{a.units}</td>
-                            <td style={{padding:"10px 12px",fontFamily:G.mono,fontSize:13,fontWeight:qty>0?700:400,color:qty>0?G.caramel:G.muted}}>
-                              {qty>0 ? `${(a.price*qty).toLocaleString()} ${a.currency}` : '—'}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              {/* Pagination */}
-              {totalPages>1&&(
-                <div style={{display:"flex",justifyContent:"center",gap:6,marginTop:16}}>
-                  <button onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page===1}
-                    style={{padding:"5px 12px",borderRadius:7,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",opacity:page===1?0.4:1}}>←</button>
-                  {Array.from({length:totalPages},(_,i)=>i+1).map(p=>(
-                    <button key={p} onClick={()=>setPage(p)}
-                      style={{padding:"5px 12px",borderRadius:7,border:`1px solid ${G.border}`,
-                        background:page===p?G.caramel:G.white,color:page===p?G.white:G.dark,cursor:"pointer",fontWeight:page===p?700:400}}>
-                      {p}
-                    </button>
-                  ))}
-                  <button onClick={()=>setPage(p=>Math.min(totalPages,p+1))} disabled={page===totalPages}
-                    style={{padding:"5px 12px",borderRadius:7,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",opacity:page===totalPages?0.4:1}}>→</button>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-
-        {/* Cart sidebar */}
-        <div style={{width:300,flexShrink:0}}>
-          <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:12,padding:16,position:"sticky",top:24}}>
-            <h3 style={{fontFamily:G.font,fontSize:16,marginBottom:14,color:G.dark}}>{boaTl("Your selection")}</h3>
-
-            {cartEntries.length===0 ? (
-              <p style={{fontSize:13,color:G.muted,fontStyle:"italic"}}>{boaTl("Add items using the + buttons.")}</p>
-            ) : orderResult ? (
-              /* Order confirmation */
-              <div>
-                <p style={{fontSize:15,fontWeight:700,color:G.green,marginBottom:12}}>✓ Order placed!</p>
-                {orderResult.results.map((r,i)=>{
-                  const item = arrivals.find(a=>a.rid===r.rid&&a.prid===r.prid);
-                  return (
-                    <div key={i} style={{marginBottom:10,padding:10,background:G.sand,borderRadius:8}}>
-                      <p style={{fontSize:13,fontWeight:600,color:G.dark,marginBottom:4}}>{item?.item_name}</p>
-                      {r.qty_confirmed>0&&<p style={{fontSize:12,color:G.green}}>✓ {r.qty_confirmed} confirmed (#{r.oid})</p>}
-                      {r.qty_waiting>0&&<p style={{fontSize:12,color:G.red}}>⏳ {r.qty_waiting} on waitlist — next run</p>}
-                    </div>
-                  );
-                })}
-                <Btn style={{width:"100%",marginTop:12}} variant="secondary"
-                  onClick={()=>{ setCart({}); setOrderResult(null); setCheckout(false); }}>
-                  New order
-                </Btn>
-              </div>
-            ) : !checkout ? (
-              /* Cart summary */
-              <>
-                {cartEntries.map(entry=>{
-                  const a = entry.item;
-                  return (
-                    <div key={`${entry.prid}-${entry.rid}`} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${G.border}`}}>
-                      <div>
-                        <p style={{fontSize:13,fontWeight:600,color:G.dark,marginBottom:2}}>{a.item_name}</p>
-                        <p style={{fontSize:12,color:G.muted}}>{fmtQ(a,entry.qty)} × {a.price} {a.currency}/{a.units}</p>
-                        {entry.qty >= maxOf(a)-1e-9 && <p style={{fontSize:11,color:G.red}}>Max available</p>}
-                      </div>
-                      <div style={{display:"flex",alignItems:"center",gap:4}}>
-                        <button onClick={()=>setQty(a,-1)} style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.sand,cursor:"pointer",fontSize:12}}>−</button>
-                        <span style={{fontSize:13,fontFamily:G.mono,fontWeight:600,minWidth:20,textAlign:"center"}}>{fmtQ(a,entry.qty)}</span>
-                        <button onClick={()=>setQty(a,1)} disabled={entry.qty>=maxOf(a)-1e-9}
-                          style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.sand,cursor:entry.qty>=maxOf(a)-1e-9?"not-allowed":"pointer",fontSize:12,opacity:entry.qty>=maxOf(a)-1e-9?0.4:1}}>+</button>
-                      </div>
-                    </div>
-                  );
-                })}
-                <div style={{display:"flex",justifyContent:"space-between",fontWeight:700,fontSize:14,paddingTop:8,marginBottom:14}}>
-                  <span>{boaTl("Total")}</span>
-                  <span style={{color:G.caramel}}>{cartTotal.toLocaleString()} {cartCurrency}</span>
-                </div>
-                <Btn style={{width:"100%"}} onClick={()=>setCheckout(true)}>Checkout →</Btn>
-              </>
-            ) : (
-              /* Guest checkout form */
-              <>
-                <div style={{marginBottom:12}}>
-                  <label style={{fontSize:12,fontWeight:600,color:G.muted,display:"block",marginBottom:4}}>Email *</label>
-                  <input value={guest.email} onChange={e=>setGuest(g=>({...g,email:e.target.value}))}
-                    onBlur={e=>lookupGuest(e.target.value)}
-                    type="email" placeholder="your@email.com"
-                    style={{width:"100%",padding:"8px 10px",borderRadius:7,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",boxSizing:"border-box"}}/>
-                </div>
-                <div style={{marginBottom:12}}>
-                  <label style={{fontSize:12,fontWeight:600,color:G.muted,display:"block",marginBottom:4}}>Name *</label>
-                  <input value={guest.name} onChange={e=>setGuest(g=>({...g,name:e.target.value}))}
-                    placeholder="Your name"
-                    style={{width:"100%",padding:"8px 10px",borderRadius:7,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",boxSizing:"border-box"}}/>
-                </div>
-                <div style={{marginBottom:14}}>
-                  <label style={{fontSize:12,fontWeight:600,color:G.muted,display:"block",marginBottom:4}}>Phone</label>
-                  <input value={guest.phone} onChange={e=>setGuest(g=>({...g,phone:e.target.value}))}
-                    placeholder="+374 91 …"
-                    style={{width:"100%",padding:"8px 10px",borderRadius:7,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none",boxSizing:"border-box"}}/>
-                </div>
-                {/* Fulfillment */}
-                <div style={{marginBottom:14}}>
-                  <label style={{fontSize:12,fontWeight:600,color:G.muted,display:"block",marginBottom:6}}>Fulfillment</label>
-                  {['pickup','delivery'].map(f=>(
-                    <label key={f} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,cursor:"pointer",fontSize:13}}>
-                      <input type="radio" name="fulfillment" value={f} checked={fulfillment===f}
-                        onChange={()=>setFulfillment(f)} style={{accentColor:G.caramel}}/>
-                      {f.charAt(0).toUpperCase()+f.slice(1)}
-                    </label>
-                  ))}
-                  {fulfillment==='delivery'&&(
-                    <input value={deliveryAddr} onChange={e=>setDeliveryAddr(e.target.value)}
-                      placeholder="Delivery address…"
-                      style={{width:"100%",padding:"7px 10px",borderRadius:7,border:`1px solid ${G.border}`,fontSize:12,fontFamily:G.mono,outline:"none",marginTop:4,boxSizing:"border-box"}}/>
-                  )}
-                </div>
-
-                {/* FIFO warning — items where remaining < requested */}
-                {cartEntries.some(e=>e.qty > (e.item?.remaining_qty||999)) && (
-                  <div style={{background:"#fef3c7",border:"1px solid #fcd34d",borderRadius:8,padding:"10px 12px",marginBottom:12,fontSize:12,color:"#92400e"}}>
-                    <p style={{fontWeight:700,marginBottom:4}}>⚠️ Limited availability</p>
-                    <p>Some items have less stock than requested. Your order will be split: available qty confirmed now, the rest placed on a waitlist for the next run.</p>
-                  </div>
-                )}
-
-                <div style={{display:"flex",gap:8,marginBottom:8}}>
-                  <Btn style={{flex:1}} loading={placing} onClick={async()=>{
-                    if (!guest.name.trim()||!guest.email.trim()) { toast("Name and email required","error"); return; }
-                    setPlacing(true);
-                    try {
-                      const items = cartEntries.map(e=>({
-                        prid:e.prid, rid:e.rid, qty:e.qty, owner_uid:e.item.owner_uid,
-                        ...(stepOf(e.item)<1 ? {steps:Math.round(e.qty/stepOf(e.item))} : {})
-                      }));
-                      const result = await api.placeArrivalOrder({
-                        items, guest_name:guest.name, guest_email:guest.email,
-                        guest_phone:guest.phone, fulfillment,
-                        delivery_address:fulfillment==='delivery'?deliveryAddr:null
-                      });
-                      setOrderResult(result);
-                      toast("Order placed!");
-                    } catch(e){ toast(e.message,"error"); }
-                    finally{ setPlacing(false); }
-                  }}>Place order</Btn>
-                  <Btn variant="ghost" onClick={()=>setCheckout(false)}>←</Btn>
-                </div>
-                <p style={{fontSize:11,color:G.muted,textAlign:"center"}}>
-                  Total: <strong>{cartTotal.toLocaleString()} {cartCurrency}</strong>
-                </p>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 
 // ─── INVITE PAGE ─────────────────────────────────────────────────────────────
 function InvitePage({ token, setPage, toast, onLogin }) {
@@ -10539,7 +10052,9 @@ export default function App() {
     <LangContext.Provider value={lang}>
       <style>{makeCss()}</style>
       <Toast toasts={toasts} remove={remove}/>
-      <BoardOfArrivals toast={toast}/>
+      <React.Suspense fallback={<div style={{minHeight:"100vh",background:G.cream}}/>}>
+        <BoardOfArrivals toast={toast}/>
+      </React.Suspense>
     </LangContext.Provider>
   );
   if (hashPage?.type === "invite") return (

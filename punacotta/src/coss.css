@@ -1,0 +1,135 @@
+/* coss ui (https://coss.com/ui, MIT) on Tailwind v4 — scoped to screens wrapped in `.coss`.
+   Tailwind's global preflight is intentionally NOT loaded, so the legacy inline-styled screens
+   look exactly as before; a minimal reset is applied only inside `.coss` (see @layer base). */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+@source "./";
+
+/* App theme toggle sets `.dark` on <html> */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── Tanelu palette: plum (primary) + caramel (accent) ─────────────────────── */
+/* Tokens live on :root so popups portalled to <body> get them too; the legacy screens use none of them. */
+:root {
+  --plum: #3d0b45;
+  --caramel: #c8873a;
+
+  --background: #faf6f0;           /* cream */
+  --foreground: #241428;           /* plum-black */
+  --card: #ffffff;
+  --card-foreground: var(--foreground);
+  --popover: #ffffff;
+  --popover-foreground: var(--foreground);
+  --primary: var(--plum);
+  --primary-foreground: #fbf6fc;
+  --secondary: color-mix(in srgb, var(--plum) 6%, transparent);
+  --secondary-foreground: var(--plum);
+  --muted: color-mix(in srgb, var(--plum) 4%, transparent);
+  --muted-foreground: #6e5a6f;
+  --accent: color-mix(in srgb, var(--caramel) 12%, transparent);
+  --accent-foreground: #7a4c16;
+  --brand: var(--caramel);
+  --brand-foreground: #ffffff;
+  --destructive: var(--color-red-500);
+  --destructive-foreground: var(--color-red-700);
+  --info: var(--color-blue-500);
+  --info-foreground: var(--color-blue-700);
+  --success: var(--color-emerald-500);
+  --success-foreground: var(--color-emerald-700);
+  --warning: var(--color-amber-500);
+  --warning-foreground: var(--color-amber-700);
+  --border: #eadfd0;
+  --input: #e2d4c2;
+  --ring: color-mix(in srgb, var(--plum) 45%, transparent);
+  --radius: 0.625rem;
+
+  --font-sans: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-heading: 'Playfair Display', Georgia, serif;
+}
+.coss { background-color: var(--background); color: var(--foreground); font-family: var(--font-sans); }
+:root.dark {
+  --background: #17120e;
+  --foreground: #f1e8da;
+  --card: #1f1812;
+  --popover: #241c15;
+  /* plum is too dark on a dark surface: primary actions switch to caramel */
+  --primary: #dd9a4c;
+  --primary-foreground: #1d130b;
+  --secondary: color-mix(in srgb, #ffffff 6%, transparent);
+  --secondary-foreground: #f1e8da;
+  --muted: color-mix(in srgb, #ffffff 4%, transparent);
+  --muted-foreground: #a99a82;
+  --accent: color-mix(in srgb, #dd9a4c 16%, transparent);
+  --accent-foreground: #f0c48e;
+  --brand: #dd9a4c;
+  --brand-foreground: #1d130b;
+  --destructive: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
+  --destructive-foreground: var(--color-red-400);
+  --info-foreground: var(--color-blue-400);
+  --success-foreground: var(--color-emerald-400);
+  --warning-foreground: var(--color-amber-400);
+  --border: #3b2f23;
+  --input: #46382a;
+  --ring: color-mix(in srgb, #dd9a4c 50%, transparent);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --font-sans: var(--font-sans);
+  --font-heading: var(--font-heading);
+}
+
+/* ── Minimal reset, only inside coss screens (and their portalled popups) ─── */
+@layer base {
+  .coss :where(*, ::before, ::after), body > div:not(#root) :where(*, ::before, ::after) {
+    box-sizing: border-box; margin: 0; padding: 0; border: 0 solid var(--color-border, currentColor);
+  }
+  .coss :where(*), body > div:not(#root) :where(*) { outline-color: var(--color-ring); }
+  .coss :where(h1, h2, h3, h4, h5, h6) { font-size: inherit; font-weight: inherit; }
+  .coss :where(a) { color: inherit; text-decoration: inherit; }
+  .coss :where(ol, ul, menu) { list-style: none; }
+  .coss :where(img, svg, video), body > div:not(#root) :where(img, svg, video) { display: block; vertical-align: middle; }
+  .coss :where(img, video) { max-width: 100%; height: auto; }
+  .coss :where(table) { text-indent: 0; border-color: inherit; border-collapse: collapse; }
+  .coss :where(button, input, select, textarea, optgroup),
+  body > div:not(#root) :where(button, input, select, textarea, optgroup) {
+    font: inherit; letter-spacing: inherit; color: inherit; background-color: transparent; border-radius: 0;
+  }
+  .coss :where(button), body > div:not(#root) :where(button) { cursor: pointer; }
+  .coss :where(:disabled), body > div:not(#root) :where(:disabled) { cursor: default; }
+  .coss ::placeholder, body > div:not(#root) ::placeholder { color: var(--color-muted-foreground); opacity: 1; }
+  /* Base UI popups are portalled to <body> (the legacy app has no portals) */
+  body > div:not(#root) { font-family: var(--font-sans); color: var(--foreground); }
+}
