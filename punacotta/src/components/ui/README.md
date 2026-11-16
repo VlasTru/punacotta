@@ -11,3 +11,10 @@ pulled from its registry (`https://coss.com/ui/r/<name>.json`). coss ui is MIT-l
 
 To add another component: fetch `https://coss.com/ui/r/<name>.json`, write each `files[].content`
 to `src/components/ui/`, fix the import paths as above, and pull its `registryDependencies` the same way.
+
+## React 18 note
+
+coss ui is written for React 19, where function components receive `ref` as a normal prop.
+Tanelu runs React 18, so **don't pass a coss component through a `render` prop** (e.g.
+`<MenuTrigger render={<Button/>}>`): the ref is dropped and popups can't anchor to their trigger.
+Style the primitive directly instead: `<MenuTrigger className={buttonVariants({ variant: "outline" })}>`.

@@ -132,4 +132,20 @@
   .coss ::placeholder, body > div:not(#root) ::placeholder { color: var(--color-muted-foreground); opacity: 1; }
   /* Base UI popups are portalled to <body> (the legacy app has no portals) */
   body > div:not(#root) { font-family: var(--font-sans); color: var(--foreground); }
+
+  /* coss controls used directly inside the older, inline-styled screens (no .coss wrapper):
+     reset only the coss elements themselves (they carry data-slot), never the legacy markup around them */
+  :where([data-slot]), :where([data-slot])::before, :where([data-slot])::after { box-sizing: border-box; border: 0 solid var(--color-border, currentColor); }
+  :where(button[data-slot], input[data-slot], textarea[data-slot]) {
+    font: inherit; letter-spacing: inherit; color: inherit; background-color: transparent; border-radius: 0; margin: 0; padding: 0;
+  }
+  :where(button[data-slot]) { cursor: pointer; }
+  :where([data-slot] svg) { display: block; flex-shrink: 0; }
+  :where(input[data-slot])::placeholder { color: var(--color-muted-foreground); opacity: 1; }
 }
+
+/* Stacking: the older screens use z-index up to 2000 (nav 300, modals 1000, lightbox 2000).
+   coss popups must open above them, e.g. a select inside an order modal. Unlayered, so it beats `z-50`. */
+[data-slot="alert-dialog-backdrop"], [data-slot="alert-dialog-viewport"] { z-index: 2400; }
+[data-slot="select-positioner"], [data-slot="combobox-positioner"], [data-slot="menu-positioner"],
+[data-slot="popover-positioner"], [data-slot="autocomplete-positioner"] { z-index: 2500; }

@@ -5,11 +5,17 @@ import "react-image-crop/dist/ReactCrop.css";
 import { api } from "./api.js";
 import "./tanelu-logo.css";
 import { parseVoiceSale } from "./voiceSale.js";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input as CInput } from "@/components/ui/input";
-import { Field, FieldLabel } from "@/components/ui/field";
+import { Field, FieldLabel, FieldDescription } from "@/components/ui/field";
 import { Card, CardHeader, CardTitle, CardDescription, CardPanel, CardFooter } from "@/components/ui/card";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { Badge as CBadge } from "@/components/ui/badge";
+import { Select as CSelect, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "@/components/ui/select";
+import { Kbd } from "@/components/ui/kbd";
+import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator, MenuRadioGroup, MenuRadioItem } from "@/components/ui/menu";
+import { AlertDialog, AlertDialogPopup, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from "@/components/ui/alert-dialog";
+import { BellIcon, ChevronDownIcon, CircleAlertIcon, CircleCheckIcon, CircleUserIcon, ClockIcon, GlobeIcon, InfoIcon, Link2Icon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SettingsIcon, SunIcon, XIcon } from "lucide-react";
 
 const BoardOfArrivals = React.lazy(() => import('./screens/BoardOfArrivals.jsx'));
 
@@ -364,13 +370,20 @@ function useToast() {
 
 function Toast({ toasts, remove }) {
   return (
-    <div style={{ position:"fixed", bottom:24, right:24, zIndex:9999, display:"flex", flexDirection:"column", gap:10 }}>
-      {toasts.map(t=>(
-        <div key={t.id} style={{ background:G.dark, color:G.white, padding:"12px 18px", borderRadius:10, fontSize:14, maxWidth:320, display:"flex", alignItems:"center", gap:12, animation:"toastIn 0.3s ease", boxShadow:"0 8px 24px rgba(44,24,16,0.25)", borderLeft:`3px solid ${t.type==="error"?G.red:G.caramel}` }}>
-          <span style={{flex:1}}>{t.msg}</span>
-          <button onClick={()=>remove(t.id)} style={{ background:"none", border:"none", color:G.muted, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>
-        </div>
-      ))}
+    <div className="fixed right-4 bottom-4 z-[9999] flex flex-col gap-2 sm:right-6 sm:bottom-6" aria-live="polite">
+      {toasts.map(t=>{
+        const Icon = t.type==="error" ? CircleAlertIcon : t.type==="success" ? CircleCheckIcon : InfoIcon;
+        return (
+          <div key={t.id} role={t.type==="error"?"alert":"status"} data-slot="toast"
+            className="flex w-[min(360px,calc(100vw-2rem))] items-start gap-3 rounded-xl border bg-popover p-3.5 text-popover-foreground text-sm shadow-lg/10"
+            style={{ animation:"toastIn 0.3s ease" }}>
+            <Icon className={`mt-px size-4.5 ${t.type==="error"?"text-destructive-foreground":"text-brand"}`} aria-hidden="true"/>
+            <span className="flex-1 leading-snug">{t.msg}</span>
+            <button type="button" data-slot="toast-close" onClick={()=>remove(t.id)} aria-label="Dismiss"
+              className="-m-1 rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"><XIcon className="size-4"/></button>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -379,18 +392,19 @@ function Toast({ toasts, remove }) {
 function Dialog({ open, title, children, onConfirm, onCancel, confirmLabel="Yes", danger=true }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
-  if (!open) return null;
   return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center" }}>
-      <div style={{ background:G.white, borderRadius:16, padding:32, maxWidth:440, width:"90%", animation:"fadeIn 0.2s ease", boxShadow:"0 20px 60px rgba(44,24,16,0.2)", maxHeight:"90vh", display:"flex", flexDirection:"column" }}>
-        <h3 style={{ fontFamily:G.font, fontSize:20, marginBottom:16, flexShrink:0 }}>{title}</h3>
-        <div style={{ color:G.muted, lineHeight:1.6, marginBottom:24, fontSize:15, overflowY:"auto", flex:1 }}>{children}</div>
-        <div style={{ display:"flex", gap:10, justifyContent:"flex-end", flexShrink:0 }}>
-          <Btn variant="ghost" onClick={onCancel}>{tl("Cancel")}</Btn>
-          <Btn variant={danger?"danger":"primary"} onClick={onConfirm}>{confirmLabel}</Btn>
-        </div>
-      </div>
-    </div>
+    <AlertDialog open={!!open} onOpenChange={o=>{ if(!o) onCancel?.(); }}>
+      <AlertDialogPopup className="max-h-[90vh]">
+        <AlertDialogHeader>
+          <AlertDialogTitle className="font-heading text-xl">{title}</AlertDialogTitle>
+          <AlertDialogDescription render={<div/>} className="max-h-[60vh] overflow-y-auto">{children}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <Button variant="ghost" onClick={onCancel}>{tl("Cancel")}</Button>
+          <Button variant={danger?"destructive":"default"} onClick={onConfirm}>{confirmLabel}</Button>
+        </AlertDialogFooter>
+      </AlertDialogPopup>
+    </AlertDialog>
   );
 }
 
@@ -412,44 +426,50 @@ function Lightbox({ src, description, onClose }) {
 // Step durations are whole numbers (the API returns NUMERIC as e.g. "30.00")
 const intDur = v => (v === null || v === undefined || v === "") ? v : Math.round(Number(v)) || 0;
 
+// Shared controls, rendered with coss ui (https://coss.com/ui). Same props as before, so every screen keeps working.
+const BTN_VARIANT = { primary:"default", secondary:"outline", ghost:"ghost", danger:"destructive", success:"default" };
 function Btn({ children, onClick, variant="primary", disabled, size="md", style:s, loading, title }) {
-  const base = { border:"none", borderRadius:8, cursor:disabled||loading?"not-allowed":"pointer", fontFamily:G.mono, fontWeight:600, transition:"all 0.15s", opacity:disabled||loading?0.6:1, fontSize:size==="sm"?13:size==="lg"?16:14, padding:size==="sm"?"6px 14px":size==="lg"?"14px 28px":"9px 20px" };
-  const variants = { primary:{background:G.caramel,color:G.white}, secondary:{background:G.sand,color:G.dark,border:`1px solid ${G.border}`}, ghost:{background:"transparent",color:G.muted,border:`1px solid ${G.border}`}, danger:{background:G.red,color:G.white}, success:{background:G.green,color:G.white} };
-  return <button title={title} onClick={disabled||loading?undefined:onClick} style={{...base,...variants[variant],...s}}>{loading?"…":children}</button>;
+  return (
+    <Button title={title} onClick={onClick} disabled={disabled} loading={loading} style={s}
+      variant={BTN_VARIANT[variant]||"default"} size={size==="sm"?"sm":size==="lg"?"lg":"default"}
+      className={variant==="success" ? "border-success bg-success text-white shadow-success/24 hover:bg-success/90" : undefined}>
+      {children}
+    </Button>
+  );
 }
 
 function Input({ label, type="text", value, onChange, placeholder, required, hint, error, style:s, disabled, onBlur }) {
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
-      {label&&<label style={{ fontSize:13, fontWeight:600, color:G.dark }}>{label}{required&&<span style={{color:G.caramel}}> *</span>}</label>}
-      <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} disabled={disabled}
-        style={{ padding:"10px 14px", borderRadius:8, border:`1px solid ${error?G.red:G.border}`, background:disabled?G.sand:G.white, fontSize:14, color:G.dark, outline:"none", width:"100%", ...s }}
-        onFocus={e=>e.target.style.borderColor=G.caramel}
-        onBlur={e=>{ e.target.style.borderColor=error?G.red:G.border; onBlur&&onBlur(e); }}
-      />
-      {hint&&<span style={{ fontSize:12, color:G.muted }}>{hint}</span>}
-      {error&&<span style={{ fontSize:12, color:G.red }}>{error}</span>}
-    </div>
+    <Field invalid={!!error} className="w-full gap-1.5">
+      {label&&<FieldLabel>{label}{required&&<span className="text-brand">*</span>}</FieldLabel>}
+      <CInput type={type} value={value??""} onChange={e=>onChange(e.target.value)} placeholder={placeholder} disabled={disabled}
+        aria-invalid={error?true:undefined} onBlur={onBlur} style={s} size="lg"/>
+      {hint&&<FieldDescription>{hint}</FieldDescription>}
+      {error&&<p className="text-destructive-foreground text-xs">{error}</p>}
+    </Field>
   );
 }
 
 function Select({ label, value, onChange, options, placeholder, required, style:s }) {
+  const cap = o => o.charAt(0).toUpperCase()+o.slice(1);
+  const items = [
+    ...(placeholder ? [{ label:placeholder, value:"" }] : []),
+    ...options.map(o => typeof o==="string" ? { label:cap(o), value:o } : { label:o.label, value:String(o.value) }),
+  ];
+  const cur = value===null||value===undefined ? "" : String(value);
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
-      {label&&<label style={{ fontSize:13, fontWeight:600, color:G.dark }}>{label}{required&&<span style={{color:G.caramel}}> *</span>}</label>}
-      <select value={value} onChange={e=>onChange(e.target.value)}
-        style={{ padding:"10px 14px", borderRadius:8, border:`1px solid ${G.border}`, background:G.white, fontSize:14, color:value?G.dark:G.muted, outline:"none", cursor:"pointer", width:"100%", ...s }}
-        onFocus={e=>e.target.style.borderColor=G.caramel} onBlur={e=>e.target.style.borderColor=G.border}
-      >
-        {placeholder&&<option value="">{placeholder}</option>}
-        {options.map(o=>typeof o==="string"?<option key={o} value={o}>{o.charAt(0).toUpperCase()+o.slice(1)}</option>:<option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
-    </div>
+    <Field className="w-full gap-1.5">
+      {label&&<FieldLabel>{label}{required&&<span className="text-brand">*</span>}</FieldLabel>}
+      <CSelect items={items} value={cur} onValueChange={v=>onChange(v??"")}>
+        <SelectTrigger size="lg" style={s} className={cur===""?"text-muted-foreground":undefined}><SelectValue/></SelectTrigger>
+        <SelectPopup>{items.map(it=><SelectItem key={it.value} value={it.value}>{it.label}</SelectItem>)}</SelectPopup>
+      </CSelect>
+    </Field>
   );
 }
 
 function Badge({ children, color, bg }) {
-  return <span style={{ background:bg||G.sand, color:color||G.caramel, padding:"3px 10px", borderRadius:20, fontSize:12, fontWeight:600 }}>{children}</span>;
+  return <CBadge variant="outline" className="border-transparent bg-accent text-accent-foreground" style={(color||bg)?{ color, background:bg }:undefined}>{children}</CBadge>;
 }
 
 function Spinner() {
@@ -1027,17 +1047,11 @@ function CommandPalette({ user, setPage, onClose }) {
 // Search bar trigger in Nav (collapsed version)
 function NavSearchBar({ onClick }) {
   return (
-    <button onClick={onClick}
-      style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 12px',
-        background:G.sand, border:`1px solid ${G.border}`, borderRadius:8,
-        cursor:'pointer', fontFamily:G.mono, fontSize:12, color:G.muted,
-        whiteSpace:'nowrap', flexShrink:0, marginRight:8,
-        transition:'all 0.15s' }}
-      onMouseEnter={e=>{ e.currentTarget.style.borderColor=G.caramel; e.currentTarget.style.color=G.caramel; }}
-      onMouseLeave={e=>{ e.currentTarget.style.borderColor=G.border;  e.currentTarget.style.color=G.muted; }}>
-      🔍
-      <span>Click or <kbd style={{fontFamily:G.mono,background:G.white,border:`1px solid ${G.border}`,borderRadius:3,padding:'0 4px',fontSize:10}}>⇧Space</kbd> to search</span>
-    </button>
+    <Button variant="outline" size="sm" onClick={onClick} aria-label="Search (Shift+Space)" title="Search (⇧Space)" className="text-muted-foreground max-2xl:w-8 max-2xl:px-0">
+      <SearchIcon/>
+      <span className="font-normal max-2xl:hidden">Search</span>
+      <Kbd className="ms-1 max-2xl:hidden">⇧Space</Kbd>
+    </Button>
   );
 }
 
@@ -1269,18 +1283,16 @@ function NotificationBell({ notifs, unseenCount, markSeen, dismiss, refresh, per
 
   return (
     <div ref={ref} style={{ position:'relative', flexShrink:0, marginRight:8 }}>
-      <button onClick={toggle} style={{ position:'relative', background:'none', border:`1px solid ${G.border}`, borderRadius:8, cursor:'pointer', padding:'6px 10px', display:'flex', alignItems:'center', fontSize:18, color:G.muted, lineHeight:1 }}
-        onMouseEnter={e=>e.currentTarget.style.borderColor=G.caramel}
-        onMouseLeave={e=>e.currentTarget.style.borderColor=G.border}>
-        🔔
+      <Button variant="outline" size="icon-sm" onClick={toggle} aria-label={badge?`Notifications (${badge} new)`:"Notifications"} className="relative">
+        <BellIcon/>
         {badge&&(
-          <span style={{ position:'absolute', top:-5, right:-5, background:G.red, color:'#fff', borderRadius:99, fontSize:10, fontFamily:G.mono, fontWeight:700, minWidth:16, height:16, display:'flex', alignItems:'center', justifyContent:'center', padding:'0 3px', lineHeight:1, border:`2px solid ${G.white}` }}>
+          <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full border-2 border-card bg-destructive px-0.5 font-bold text-[10px] text-white leading-none">
             {badge}
           </span>
         )}
-      </button>
+      </Button>
       {open&&(
-        <div style={{ position:'fixed', top:66, right:16, width:340, maxHeight:480, overflowY:'auto', background:G.white, border:`1px solid ${G.border}`, borderRadius:12, boxShadow:'0 8px 32px rgba(44,24,16,0.18)', zIndex:500, animation:'fadeIn 0.15s ease' }}>
+        <div style={{ position:'fixed', top:62, right:16, width:340, maxHeight:480, overflowY:'auto', background:G.white, border:`1px solid ${G.border}`, borderRadius:12, boxShadow:'0 8px 32px rgba(44,24,16,0.18)', zIndex:500, animation:'fadeIn 0.15s ease' }}>
           <div style={{ padding:'12px 16px', borderBottom:`1px solid ${G.border}`, fontFamily:G.mono, fontSize:13, fontWeight:600, color:G.dark, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
             <span>Notifications</span>
             {items.length>0&&<button onClick={()=>{ items.forEach(n=>dismiss(n.psrid)); }} style={{ background:'none', border:'none', cursor:'pointer', fontFamily:G.mono, fontSize:11, color:G.muted }}>Clear all</button>}
@@ -1328,9 +1340,7 @@ function NotificationBell({ notifs, unseenCount, markSeen, dismiss, refresh, per
 
 function Nav({ user, page, setPage, logout, lang, setLang, notifProps, themePref, setThemePref }) {
   const isM = user?.is_manufacturer;
-  const [dropOpen,   setDropOpen]   = useState(false);
   const [cpOpen,     setCpOpen]     = useState(false);
-  const [themeOpen,  setThemeOpen]  = useState(false);
 
   useEffect(()=>{
     const handler = e => {
@@ -1344,89 +1354,68 @@ function Nav({ user, page, setPage, logout, lang, setLang, notifProps, themePref
     ? [{key:"orders-manuf",label:tl("Orders")},{key:"inventory",label:tl("Inventory")},{key:"menus",label:tl("Menus")},{key:"procurement",label:tl("Procurement")},{key:"suppliers",label:tl("Suppliers")},{key:"reports",label:tl("Reports")},{key:"staff",label:tl("Staff")},{key:"processes",label:tl("Processes")},{key:"equipment",label:tl("Equipment")}]
     : user?.employer_uid ? [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")},{key:"roster-emp",label:tl("My Roster")},{key:"processes-emp",label:tl("Processes")}]
     : [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")}];
-  const navigate = key => { setPage(key); setDropOpen(false); };
+  const navigate = key => { setPage(key); };
   const navActive = k => page===k || (k==="inventory" && (page==="products"||page==="items")) || (k==="orders-manuf" && page==="quick-sale");
   return (
     <>
-    <nav style={{ background:G.white, borderBottom:`1px solid ${G.border}`, padding:"0 20px", display:"flex", alignItems:"center", height:60, position:"sticky", top:0, zIndex:300, boxShadow:"0 1px 12px rgba(44,24,16,0.06)" }}>
+    <nav className="sticky top-0 z-[300] flex h-14 items-center gap-1 border-b border-border bg-card/90 px-3 backdrop-blur supports-[backdrop-filter]:bg-card/75 sm:px-5">
       {/* Brand logo / name */}
       {user?.logo_url
         ? <img src={user.logo_url} alt={user.business_name||'logo'}
             onClick={()=>navigate(isM?"orders-manuf":"restaurants")}
-            style={{height:36,maxWidth:140,objectFit:"contain",cursor:"pointer",marginRight:20,flexShrink:0}}/>
-        : <button onClick={()=>navigate(isM?"orders-manuf":"restaurants")}
-            style={{fontFamily:G.font,fontSize:isM&&user?.business_name?15:20,fontWeight:700,
-              color:G.caramel,background:"none",border:"none",cursor:"pointer",marginRight:20,
-              fontStyle:"italic",flexShrink:0,maxWidth:160,overflow:"hidden",
-              textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+            className="me-4 h-9 max-w-[140px] shrink-0 cursor-pointer object-contain"/>
+        : <button type="button" data-slot="nav-brand" onClick={()=>navigate(isM?"orders-manuf":"restaurants")}
+            className="me-3 max-w-[160px] shrink-0 truncate font-bold font-heading text-brand italic"
+            style={{ fontSize:isM&&user?.business_name?15:20 }}>
             {isM && user?.business_name ? user.business_name : 'Pun&Cotta'}
           </button>}
-      <div style={{ display:"flex", gap:2, flex:1, minWidth:0, overflow:"hidden" }}>
+      <div className="flex min-w-0 flex-1 gap-0.5 overflow-x-auto [scrollbar-width:none]">
         {links.map(l=>(
-          <button key={l.key} onClick={()=>navigate(l.key)} style={{ background:navActive(l.key)?G.sand:"none", border:"none", padding:"6px 10px", borderRadius:8, fontFamily:G.mono, fontSize:13, fontWeight:navActive(l.key)?600:400, color:navActive(l.key)?G.caramel:G.muted, cursor:"pointer", transition:"all 0.15s", whiteSpace:"nowrap" }}>{l.label}</button>
+          <Button key={l.key} variant="ghost" size="sm" onClick={()=>navigate(l.key)} aria-current={navActive(l.key)?"page":undefined}
+            className={`px-2 ${navActive(l.key) ? "bg-accent font-semibold text-accent-foreground" : "font-normal text-muted-foreground"}`}>
+            {l.label}
+          </Button>
         ))}
       </div>
-      {/* Notification bell */}
-      {notifProps&&<NotificationBell {...notifProps}/>}
-      {/* Search bar */}
-      <NavSearchBar onClick={()=>setCpOpen(true)}/>
-      {/* Language toggle */}
-      <button onClick={()=>{ const nl=lang==='en'?'ru':'en'; _currentLang=nl; setLang(nl); }}
-        style={{ display:"flex", alignItems:"center", gap:3, background:"none", border:`1px solid ${G.border}`, borderRadius:8, cursor:"pointer", fontFamily:G.mono, fontSize:12, color:G.muted, padding:"5px 9px", whiteSpace:"nowrap", marginRight:8, flexShrink:0 }}>
-        🌐{lang==='en'?'RU':'EN'}
-      </button>
-      {/* Theme switch */}
-      <div style={{ position:"relative", flexShrink:0, marginRight:8 }}>
-        <button onClick={()=>setThemeOpen(p=>!p)} title="Theme" aria-label="Theme" aria-haspopup="menu" aria-expanded={themeOpen}
-          style={{ display:"flex", alignItems:"center", justifyContent:"center", background:"none", border:`1px solid ${G.border}`, borderRadius:8, cursor:"pointer", color:G.muted, padding:"6px 9px", height:32 }}>
-          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.5"/><path d="M8 1.5a6.5 6.5 0 0 1 0 13z" fill="currentColor"/></svg>
-        </button>
-        {themeOpen&&(
-          <>
-            <div onClick={()=>setThemeOpen(false)} style={{ position:"fixed", inset:0, zIndex:298 }} />
-            <div role="menu" style={{ position:"absolute", right:0, top:"calc(100% + 6px)", background:G.white, border:`1px solid ${G.border}`, borderRadius:10, boxShadow:"0 8px 28px rgba(44,24,16,0.15)", minWidth:170, zIndex:299, overflow:"hidden" }}>
-              {[["light","Light"],["dark","Dark"],["system","System Default"]].map(([v,l])=>(
-                <button key={v} role="menuitemradio" aria-checked={themePref===v} onClick={()=>{ setThemePref(v); setThemeOpen(false); }}
-                  style={{ width:"100%", textAlign:"left", padding:"10px 16px", background:themePref===v?G.sand:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.dark, display:"flex", alignItems:"center", gap:8 }}
-                  onMouseEnter={e=>e.currentTarget.style.background=G.sand} onMouseLeave={e=>e.currentTarget.style.background=themePref===v?G.sand:"none"}>
-                  <span style={{ width:14, color:G.caramel }}>{themePref===v?"✓":""}</span>{l}
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
-      <div style={{ position:"relative", flexShrink:0 }}>
-        <button onClick={()=>setDropOpen(p=>!p)} style={{ display:"flex", alignItems:"center", gap:7, background:G.sand, border:`1px solid ${G.border}`, borderRadius:8, cursor:"pointer", fontFamily:G.mono, fontSize:13, color:G.dark, padding:"7px 12px", whiteSpace:"nowrap", fontWeight:500 }}>
-          👤 {user?.first_name||user?.email}{user?.restaurant?.name?` (${user.restaurant.name})`:""}
-          <span style={{ fontSize:9, color:G.muted }}>▾</span>
-        </button>
-        {dropOpen&&(
-          <>
-            <div onClick={()=>setDropOpen(false)} style={{ position:"fixed", inset:0, zIndex:298 }} />
-            <div style={{ position:"absolute", right:0, top:"calc(100% + 6px)", background:G.white, border:`1px solid ${G.border}`, borderRadius:10, boxShadow:"0 8px 28px rgba(44,24,16,0.15)", minWidth:176, zIndex:299, overflow:"hidden", animation:"fadeIn 0.15s ease" }}>
-              {isM&&(<>
-                <button onClick={()=>navigate("general")} style={{ width:"100%", textAlign:"left", padding:"11px 16px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.dark, display:"block" }}
-                  onMouseEnter={e=>e.currentTarget.style.background=G.sand} onMouseLeave={e=>e.currentTarget.style.background="none"}>
-                  ⚙️ General
-                </button>
-                <button onClick={()=>navigate("schedule")} style={{ width:"100%", textAlign:"left", padding:"11px 16px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.dark, display:"block" }}
-                  onMouseEnter={e=>e.currentTarget.style.background=G.sand} onMouseLeave={e=>e.currentTarget.style.background="none"}>
-                  {tl("🕐 Schedule")}
-                </button>
-                <button onClick={()=>navigate("embed")} style={{ width:"100%", textAlign:"left", padding:"11px 16px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.dark, display:"block" }}
-                  onMouseEnter={e=>e.currentTarget.style.background=G.sand} onMouseLeave={e=>e.currentTarget.style.background="none"}>
-                  🔗 Embedded Menu
-                </button>
-                <div style={{ height:1, background:G.border }} />
-              </>)}
-              <button onClick={()=>{logout();setDropOpen(false);}} style={{ width:"100%", textAlign:"left", padding:"11px 16px", background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.red, display:"block" }}
-                onMouseEnter={e=>e.currentTarget.style.background=G.sand} onMouseLeave={e=>e.currentTarget.style.background="none"}>
-                {tl("↩ Log out")}
-              </button>
-            </div>
-          </>
-        )}
+      <div className="flex shrink-0 items-center gap-1.5">
+        {/* Notification bell */}
+        {notifProps&&<NotificationBell {...notifProps}/>}
+        {/* Search */}
+        <NavSearchBar onClick={()=>setCpOpen(true)}/>
+        {/* Language toggle */}
+        <Button variant="ghost" size="sm" className="max-sm:px-1.5" onClick={()=>{ const nl=lang==='en'?'ru':'en'; _currentLang=nl; setLang(nl); }} aria-label="Language">
+          <GlobeIcon className="max-sm:hidden"/>{lang==='en'?'RU':'EN'}
+        </Button>
+        {/* Theme switch */}
+        <Menu>
+          <MenuTrigger className={buttonVariants({ variant:"ghost", size:"icon-sm" })} aria-label="Theme" title="Theme">
+            {themePref==='dark'?<MoonIcon/>:themePref==='light'?<SunIcon/>:<MonitorIcon/>}
+          </MenuTrigger>
+          <MenuPopup align="end" className="min-w-44">
+            <MenuRadioGroup value={themePref} onValueChange={v=>setThemePref(v)}>
+              <MenuRadioItem value="light"><span className="flex items-center gap-2"><SunIcon className="size-4 opacity-80"/>Light</span></MenuRadioItem>
+              <MenuRadioItem value="dark"><span className="flex items-center gap-2"><MoonIcon className="size-4 opacity-80"/>Dark</span></MenuRadioItem>
+              <MenuRadioItem value="system"><span className="flex items-center gap-2"><MonitorIcon className="size-4 opacity-80"/>System Default</span></MenuRadioItem>
+            </MenuRadioGroup>
+          </MenuPopup>
+        </Menu>
+        {/* User menu */}
+        <Menu>
+          <MenuTrigger className={buttonVariants({ variant:"outline", size:"sm", className:"max-w-[230px] max-sm:w-8 max-sm:px-0" })}>
+            <CircleUserIcon/>
+            <span className="truncate max-sm:sr-only">{user?.first_name||user?.email}{user?.restaurant?.name?` (${user.restaurant.name})`:""}</span>
+            <ChevronDownIcon className="opacity-60 max-sm:hidden"/>
+          </MenuTrigger>
+          <MenuPopup align="end" className="min-w-48">
+            {isM&&(<>
+              <MenuItem onClick={()=>navigate("general")}><SettingsIcon/>General</MenuItem>
+              <MenuItem onClick={()=>navigate("schedule")}><ClockIcon/>{tl("🕐 Schedule").replace(/^🕐\s*/,"")}</MenuItem>
+              <MenuItem onClick={()=>navigate("embed")}><Link2Icon/>Embedded Menu</MenuItem>
+              <MenuSeparator/>
+            </>)}
+            <MenuItem variant="destructive" onClick={()=>logout()}><LogOutIcon/>{tl("↩ Log out").replace(/^↩\s*/,"")}</MenuItem>
+          </MenuPopup>
+        </Menu>
       </div>
     </nav>
     {cpOpen&&<CommandPalette user={user} setPage={key=>{ setPage(key); setCpOpen(false); }} onClose={()=>setCpOpen(false)}/>}
@@ -1436,11 +1425,11 @@ function Nav({ user, page, setPage, logout, lang, setLang, notifProps, themePref
 
 function Page({ children, title, actions }) {
   return (
-    <div style={{ maxWidth:1100, margin:"0 auto", padding:"36px 24px", animation:"fadeIn 0.3s ease" }}>
+    <div className="mx-auto max-w-[1100px] px-4 py-8 sm:px-6 sm:py-9" style={{ animation:"fadeIn 0.3s ease" }}>
       {(title||actions)&&(
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:28 }}>
-          {title&&<h1 style={{ fontFamily:G.font, fontSize:28, fontWeight:700 }}>{title}</h1>}
-          {actions&&<div style={{ display:"flex", gap:10 }}>{actions}</div>}
+        <div className="mb-7 flex flex-wrap items-center justify-between gap-3">
+          {title&&<h1 className="font-heading font-bold text-3xl text-foreground tracking-tight">{title}</h1>}
+          {actions&&<div className="flex flex-wrap items-center gap-2">{actions}</div>}
         </div>
       )}
       {children}
