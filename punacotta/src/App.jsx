@@ -110,7 +110,7 @@ export const RU = {
   "Latest order no later than":"Последний заказ может быть принят не позже",
   "before closing":"до закрытия","Add period":"+ Период","Closed":"Закрыто",
   "Log in":"Зайти","Forgot password?":"Пароль подзабылся?",
-  "Create account":"Зарегистрироваться","Welcome back":"И снова здравствуйте","Restore":"Восстановить","Log in to your Tanelu account.":"Войдите в свой аккаунт Tanelu.","New to Tanelu?":"Впервые в Tanelu?","Create account →":"Создать аккаунт →","Security area":"Зона безопасности","Delete restaurant":"Удалить ресторан",
+  "Create account":"Зарегистрироваться","Welcome back":"И снова здравствуйте","Restore":"Восстановить","No active processes. Processes will appear here when started by your restaurant.":"Нет активных процессов. Процессы появятся здесь, когда ваш ресторан их запустит.","Log in to your Tanelu account.":"Войдите в свой аккаунт Tanelu.","New to Tanelu?":"Впервые в Tanelu?","Create account →":"Создать аккаунт →","Security area":"Зона безопасности","Delete restaurant":"Удалить ресторан",
   "password":"пароль","Reset password":"Сбросить пароль",
   "Send recovery link":"Отправить ссылку","Back to login":"Обратно к авторизации",
   "Password":"Пароль",
@@ -9515,7 +9515,7 @@ function EmployeeProcessesPage({ user, toast, setPage }) {
       {stopRunD&&<StopRunDialog run={stopRunD} toast={toast} onClose={()=>setStopRunD(null)}
         onStopped={u=>{ setRuns(p=>p.map(r=>r.prid===u.prid?u:r)); setStopRunD(null); toast("Process stopped"); }}/>}
       {loading ? <Spinner/> : sorted.length===0 ? (
-        <p style={{color:G.muted,textAlign:"center",padding:60,fontStyle:"italic"}}>No active processes. Processes will appear here when started by your restaurant.</p>
+        <p style={{color:G.muted,textAlign:"center",padding:60,fontStyle:"italic"}}>{tl("No active processes. Processes will appear here when started by your restaurant.")}</p>
       ) : sorted.map(run=>{
         const involved = iInvolved(run);
         const col = STATUS_COL[run.status]||G.muted;
