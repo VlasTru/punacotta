@@ -8,14 +8,16 @@ import { parseVoiceSale } from "./voiceSale.js";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input as CInput } from "@/components/ui/input";
 import { Field, FieldLabel, FieldDescription } from "@/components/ui/field";
-import { Card, CardHeader, CardTitle, CardDescription, CardPanel, CardFooter } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle, CardDescription, CardAction, CardPanel, CardFooter } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Radio, RadioGroup } from "@/components/ui/radio-group";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Badge as CBadge } from "@/components/ui/badge";
 import { Select as CSelect, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "@/components/ui/select";
 import { Kbd } from "@/components/ui/kbd";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator, MenuRadioGroup, MenuRadioItem } from "@/components/ui/menu";
 import { AlertDialog, AlertDialogPopup, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from "@/components/ui/alert-dialog";
-import { BellIcon, ChevronDownIcon, CircleAlertIcon, CircleCheckIcon, CircleUserIcon, ClockIcon, GlobeIcon, InfoIcon, Link2Icon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SettingsIcon, SunIcon, XIcon } from "lucide-react";
+import { ArrowLeftIcon, ChefHatIcon, MailCheckIcon, PartyPopperIcon, StoreIcon, TriangleAlertIcon, BellIcon, ChevronDownIcon, CircleAlertIcon, CircleCheckIcon, CircleUserIcon, ClockIcon, GlobeIcon, InfoIcon, Link2Icon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SettingsIcon, SunIcon, XIcon } from "lucide-react";
 
 const BoardOfArrivals = React.lazy(() => import('./screens/BoardOfArrivals.jsx'));
 
@@ -116,7 +118,7 @@ export const RU = {
   "Latest order no later than":"Последний заказ может быть принят не позже",
   "before closing":"до закрытия","Add period":"+ Период","Closed":"Закрыто",
   "Log in":"Зайти","Forgot password?":"Пароль подзабылся?",
-  "Create account":"Зарегистрироваться","Welcome back":"И снова здравствуйте","Restore":"Восстановить","No active processes. Processes will appear here when started by your restaurant.":"Нет активных процессов. Процессы появятся здесь, когда ваш ресторан их запустит.","Log in to your Tanelu account.":"Войдите в свой аккаунт Tanelu.","New to Tanelu?":"Впервые в Tanelu?","Create account →":"Создать аккаунт →","Security area":"Зона безопасности","Delete restaurant":"Удалить ресторан",
+  "Create account":"Зарегистрироваться","Welcome back":"И снова здравствуйте","Restore":"Восстановить","Enter your email and we'll send a recovery link valid for 1 hour.":"Введите email, и мы отправим ссылку для восстановления, действующую 1 час.","Please, check your email to find a welcome message. If you haven't received any, please check your spam folder. If nonetheless the message didn't make it to your email, repeat registration making sure you entered a correct email.":"Проверьте почту — мы отправили приветственное письмо. Если его нет, загляните в папку «Спам». Если письмо так и не пришло, зарегистрируйтесь ещё раз, проверив правильность email.","No active processes. Processes will appear here when started by your restaurant.":"Нет активных процессов. Процессы появятся здесь, когда ваш ресторан их запустит.","Log in to your Tanelu account.":"Войдите в свой аккаунт Tanelu.","New to Tanelu?":"Впервые в Tanelu?","Create account →":"Создать аккаунт →","Security area":"Зона безопасности","Delete restaurant":"Удалить ресторан",
   "password":"пароль","Reset password":"Сбросить пароль",
   "Send recovery link":"Отправить ссылку","Back to login":"Обратно к авторизации",
   "Password":"Пароль",
@@ -444,7 +446,7 @@ function Input({ label, type="text", value, onChange, placeholder, required, hin
       {label&&<FieldLabel>{label}{required&&<span className="text-brand">*</span>}</FieldLabel>}
       <CInput type={type} value={value??""} onChange={e=>onChange(e.target.value)} placeholder={placeholder} disabled={disabled}
         aria-invalid={error?true:undefined} onBlur={onBlur} style={s} size="lg"/>
-      {hint&&<FieldDescription>{hint}</FieldDescription>}
+      {hint&&!error&&<FieldDescription>{hint}</FieldDescription>}
       {error&&<p className="text-destructive-foreground text-xs">{error}</p>}
     </Field>
   );
@@ -1473,26 +1475,6 @@ function ShelfLifeInput({ value, onChange, compact }) {
 }
 
 // ─── AUTH PAGES ───────────────────────────────────────────────────────────────
-function AuthLayout({ children }) {
-  return (
-    <div style={{ minHeight:"100vh", background:G.cream, display:"flex", alignItems:"center", justifyContent:"center", padding:24, backgroundImage:`radial-gradient(circle at 20% 20%, rgba(200,135,58,0.08) 0%, transparent 60%)` }}>
-      <div style={{ width:"100%", maxWidth:480 }}>
-        <div style={{ textAlign:"center", marginBottom:32 }}>
-          <div style={{ width:120, height:120, margin:"0 auto" }}>
-            <svg className="tn-logo" viewBox="190 200 700 700" role="img" aria-label="Tanelu">
-              <g className="tn-board"><circle cx="540" cy="673" r="208"/><rect className="tn-bar" x="288.75" y="224.75" width="502.5" height="232.5"/></g>
-              <g className="tn-wink" style={{ opacity:0 }}><ellipse className="tn-eye" cx="541.25" cy="671.25" rx="206.25" ry="210"/><rect className="tn-brow" x="292.5" y="225" width="502.5" height="232.5"/></g>
-            </svg>
-          </div>
-        </div>
-        <div style={{ background:G.white, borderRadius:20, padding:36, boxShadow:"0 4px 40px rgba(44,24,16,0.1)", border:`1px solid ${G.border}`, animation:"fadeIn 0.4s ease" }}>
-          {children}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function LoginPage({ onLogin, setPage, setLang }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
@@ -1554,7 +1536,7 @@ function LoginPage({ onLogin, setPage, setLang }) {
               )}
               <Button type="submit" size="lg" loading={loading} className="w-full" tabIndex={gone?-1:undefined}>Log in</Button>
             </CardPanel>
-            <CardFooter className="justify-center gap-1 pt-0 text-muted-foreground text-sm">
+            <CardFooter className="justify-center gap-1 border-t pt-4 text-muted-foreground text-sm">
               {tl("New to Tanelu?")}
               <button type="button" onClick={()=>setPage("signup")} tabIndex={gone?-1:undefined}
                 className="font-medium text-foreground hover:underline underline-offset-4">{tl("Create account →")}</button>
@@ -1588,11 +1570,11 @@ function LoginPage({ onLogin, setPage, setLang }) {
 }
 
 // Auth screen frame for the coss ui screens (login): cream background, animated logo, centred card
-function CossAuthShell({ children }) {
+function CossAuthShell({ children, wide }) {
   return (
-    <div className="coss flex min-h-screen items-center justify-center p-6"
+    <div className="coss flex min-h-screen items-center justify-center p-4 sm:p-6"
       style={{ backgroundImage:"radial-gradient(circle at 20% 20%, rgba(200,135,58,0.10) 0%, transparent 60%), radial-gradient(circle at 85% 90%, rgba(61,11,69,0.06) 0%, transparent 55%)" }}>
-      <div className="w-full max-w-[420px]" style={{ animation:"fadeIn 0.4s ease" }}>
+      <div className={`w-full ${wide?"max-w-[480px]":"max-w-[420px]"}`} style={{ animation:"fadeIn 0.4s ease" }}>
         <div className="mx-auto mb-6 size-24">
           <svg className="tn-logo" viewBox="190 200 700 700" role="img" aria-label="Tanelu">
             <g className="tn-board"><circle cx="540" cy="673" r="208"/><rect className="tn-bar" x="288.75" y="224.75" width="502.5" height="232.5"/></g>
@@ -1604,6 +1586,48 @@ function CossAuthShell({ children }) {
     </div>
   );
 }
+
+// Auth form card: title, optional description / header action, body, optional footer.
+// With onSubmit the body is a <form>, so Enter submits.
+function AuthCard({ title, description, action, children, footer, onSubmit, wide }) {
+  const Body = onSubmit ? "form" : "div";
+  return (
+    <CossAuthShell wide={wide}>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-2xl">{title}</CardTitle>
+          {description&&<CardDescription>{description}</CardDescription>}
+          {action&&<CardAction>{action}</CardAction>}
+        </CardHeader>
+        <Body className="flex flex-col gap-4 px-6 pb-6" {...(onSubmit?{ noValidate:true, onSubmit:e=>{ e.preventDefault(); onSubmit(); } }:{})}>
+          {children}
+        </Body>
+        {footer&&<CardFooter className="justify-center gap-1 border-t pt-4 text-muted-foreground text-sm">{footer}</CardFooter>}
+      </Card>
+    </CossAuthShell>
+  );
+}
+
+// Result / status card (sent, done, expired…): icon, title, message, action
+const AUTH_TONES = { brand:"bg-accent text-brand", success:"bg-success/12 text-success-foreground", error:"bg-destructive/10 text-destructive-foreground" };
+function AuthStatus({ icon:Icon, tone="brand", title, children, action, loading }) {
+  return (
+    <CossAuthShell>
+      <Card>
+        <CardPanel className="flex flex-col items-center gap-3 py-10 text-center">
+          {loading ? <Spinner/> : Icon && (
+            <span className={`mb-1 flex size-12 items-center justify-center rounded-full ${AUTH_TONES[tone]}`}><Icon className="size-6"/></span>
+          )}
+          {title&&<h2 className="font-heading font-semibold text-2xl">{title}</h2>}
+          {children&&<div className="max-w-sm text-muted-foreground text-sm leading-relaxed">{children}</div>}
+          {action&&<div className="mt-3">{action}</div>}
+        </CardPanel>
+      </Card>
+    </CossAuthShell>
+  );
+}
+
+const linkBtn = "font-medium text-foreground underline-offset-4 hover:underline";
 
 function SignupPage({ setPage, toast, setLang }) {
   const lang = useLangContext();
@@ -1617,57 +1641,48 @@ function SignupPage({ setPage, toast, setLang }) {
     if (!form.first_name) e.first_name="Required"; if (!form.last_name) e.last_name="Required"; if (!form.email) e.email="Required";
     if (!form.password||form.password.trim().length<6) e.password="Min 6 characters";
     if (form.is_manufacturer&&!form.business_name) e.business_name="Required for manufacturers";
-    if (Object.keys(e).length) { setErrors(e); return; }
+    setErrors(e);
+    if (Object.keys(e).length) return;
     setLoading(true);
     try { await api.register(form); setRegistered(true); }
     catch(err){ if(err.message.includes("already exists")) setErrors({email:err.message}); else toast(err.message,"error"); }
     finally { setLoading(false); }
   };
   if (registered) return (
-    <AuthLayout>
-      <div style={{ textAlign:"center", padding:"24px 0" }}>
-        <div style={{ fontSize:40, marginBottom:16 }}>📬</div>
-        <h2 style={{ fontFamily:G.font, fontSize:22, marginBottom:16 }}>Check your inbox</h2>
-        <p style={{ color:G.muted, lineHeight:1.7, fontSize:14, marginBottom:24 }}>
-          Please, check your email to find a welcome message. If you haven't received any, please check your spam folder.
-          If nonetheless the message didn't make it to your email, repeat registration making sure you entered a correct email.
-        </p>
-        <Btn variant="ghost" onClick={()=>setPage("login")}>Back to login</Btn>
-      </div>
-    </AuthLayout>
+    <AuthStatus icon={MailCheckIcon} title={tl("Check your inbox")}
+      action={<Button variant="outline" onClick={()=>setPage("login")}><ArrowLeftIcon/>{tl("Back to login")}</Button>}>
+      {tl("Please, check your email to find a welcome message. If you haven't received any, please check your spam folder. If nonetheless the message didn't make it to your email, repeat registration making sure you entered a correct email.")}
+    </AuthStatus>
   );
   return (
-    <AuthLayout>
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:24 }}>
-        <h2 style={{ fontFamily:G.font, fontSize:22 }}>{lang==='ru'?(RU["Create your account"]||"Create your account"):"Create your account"}</h2>
-        <button onClick={()=>{ const nl=lang==='en'?'ru':'en'; _currentLang=nl; setLang(nl); }} style={{ background:"none", border:`1px solid ${G.border}`, borderRadius:8, cursor:"pointer", fontFamily:G.mono, fontSize:12, color:G.muted, padding:"4px 8px" }}>🌐{lang==='en'?'RU':'EN'}</button>
+    <AuthCard wide title={tl("Create your account")} onSubmit={submit}
+      action={<Button variant="ghost" size="sm" onClick={()=>{ const nl=lang==='en'?'ru':'en'; _currentLang=nl; setLang(nl); }} aria-label="Language"><GlobeIcon/>{lang==='en'?'RU':'EN'}</Button>}
+      footer={<>{tl("Already have an account?")}<button type="button" className={linkBtn} onClick={()=>setPage("login")}>{tl("Log in →")}</button></>}>
+      <div className="flex flex-col gap-2">
+        <span className="font-medium text-sm">{tl("I am a…")}</span>
+        <RadioGroup value={form.is_manufacturer?"m":"c"} onValueChange={v=>set("is_manufacturer",v==="m")} className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {[["c",tl("Customer"),StoreIcon],["m",tl("Manufacturer"),ChefHatIcon]].map(([v,l,Ic])=>(
+            <Label key={v} className="flex min-w-0 cursor-pointer items-center gap-2 rounded-lg border p-2.5 has-data-checked:border-primary/48 has-data-checked:bg-accent/50 sm:gap-2.5 sm:p-3">
+              <Radio value={v}/><Ic className="size-4 shrink-0 text-muted-foreground"/><span className="truncate">{l}</span>
+            </Label>
+          ))}
+        </RadioGroup>
       </div>
-      <div style={{ display:"flex", flexDirection:"column", gap:13 }}>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:13 }}>
-          <Input label={tl("First name")} value={form.first_name} onChange={v=>set("first_name",v)} required error={errors.first_name} />
-          <Input label={tl("Last name")}  value={form.last_name}  onChange={v=>set("last_name",v)}  required error={errors.last_name} />
-        </div>
-        <Input label={tl("Email")} type="email" value={form.email} onChange={v=>set("email",v)} required error={errors.email} />
-        <Input label={tl("Phone")} value={form.phone} onChange={v=>set("phone",v)} placeholder="+374 91 …" />
-        <Input label={tl("Street address")} value={form.street_address} onChange={v=>set("street_address",v)} />
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:13 }}>
-          <Input label={tl("City")} value={form.city} onChange={v=>set("city",v)} />
-          <Input label={tl("ZIP")}  value={form.zip}  onChange={v=>set("zip",v)} />
-        </div>
-        <Input label={tl("Password")} type="password" value={form.password} onChange={v=>set("password",v)} required error={errors.password} hint={tl("Min 6 characters")} />
-        <div style={{ padding:"14px 16px", background:G.sand, borderRadius:10, border:`1px solid ${G.border}` }}>
-          <p style={{ fontSize:13, fontWeight:600, marginBottom:10 }}>{tl("I am a…")}</p>
-          <div style={{ display:"flex", gap:10 }}>
-            {[{label:tl("Customer"),val:false},{label:tl("Manufacturer"),val:true}].map(opt=>(
-              <button key={opt.label} onClick={()=>set("is_manufacturer",opt.val)} style={{ flex:1, padding:"10px 0", borderRadius:8, border:"none", cursor:"pointer", fontFamily:G.mono, fontWeight:600, fontSize:14, transition:"all 0.2s", background:form.is_manufacturer===opt.val?G.caramel:G.white, color:form.is_manufacturer===opt.val?G.white:G.muted }}>{opt.label}</button>
-            ))}
-          </div>
-        </div>
-        {form.is_manufacturer&&<Input label={tl("Business name")} value={form.business_name} onChange={v=>set("business_name",v)} required error={errors.business_name} />}
-        <Btn size="lg" onClick={submit} loading={loading} style={{marginTop:4}}>{tl("Create account")}</Btn>
-        <button onClick={()=>setPage("login")} style={{ background:"none", border:"none", color:G.muted, cursor:"pointer", fontSize:13, textAlign:"center" }}>{tl("Already have an account?")} {tl("Log in →")}</button>
+      {form.is_manufacturer&&<Input label={tl("Business name")} value={form.business_name} onChange={v=>set("business_name",v)} required error={errors.business_name} />}
+      <div className="grid grid-cols-2 gap-3">
+        <Input label={tl("First name")} value={form.first_name} onChange={v=>set("first_name",v)} required error={errors.first_name} />
+        <Input label={tl("Last name")}  value={form.last_name}  onChange={v=>set("last_name",v)}  required error={errors.last_name} />
       </div>
-    </AuthLayout>
+      <Input label={tl("Email")} type="email" value={form.email} onChange={v=>set("email",v)} required error={errors.email} />
+      <Input label={tl("Password")} type="password" value={form.password} onChange={v=>set("password",v)} required error={errors.password} hint={tl("Min 6 characters")} />
+      <Input label={tl("Phone")} value={form.phone} onChange={v=>set("phone",v)} placeholder="+374 91 …" />
+      <Input label={tl("Street address")} value={form.street_address} onChange={v=>set("street_address",v)} />
+      <div className="grid grid-cols-2 gap-3">
+        <Input label={tl("City")} value={form.city} onChange={v=>set("city",v)} />
+        <Input label={tl("ZIP")}  value={form.zip}  onChange={v=>set("zip",v)} />
+      </div>
+      <Button type="submit" size="lg" loading={loading} className="mt-1 w-full">{tl("Create account")}</Button>
+    </AuthCard>
   );
 }
 
@@ -1684,28 +1699,18 @@ function ForgotPage({
     finally{ setLoading(false); }
   };
   if (sent) return (
-    <AuthLayout>
-      <div style={{ textAlign:"center", padding:"24px 0" }}>
-        <div style={{ fontSize:40, marginBottom:16 }}>📬</div>
-        <h2 style={{ fontFamily:G.font, fontSize:22, marginBottom:12 }}>Check your inbox</h2>
-        <p style={{ color:G.muted, fontSize:14, lineHeight:1.7, marginBottom:24 }}>
-          If <b>{email}</b> is registered, a password reset link has been sent. It's valid for 1 hour.<br/>
-          Check your spam folder if you don't see it.
-        </p>
-        <Btn variant="ghost" onClick={()=>setPage("login")}>← Back to login</Btn>
-      </div>
-    </AuthLayout>
+    <AuthStatus icon={MailCheckIcon} title={tl("Check your inbox")}
+      action={<Button variant="outline" onClick={()=>setPage("login")}><ArrowLeftIcon/>{tl("Back to login")}</Button>}>
+      If <b className="text-foreground">{email}</b> is registered, a password reset link has been sent. It's valid for 1 hour.
+      Check your spam folder if you don't see it.
+    </AuthStatus>
   );
   return (
-    <AuthLayout>
-      <h2 style={{ fontFamily:G.font, fontSize:22, marginBottom:8 }}>Reset password</h2>
-      <p style={{ color:G.muted, fontSize:14, marginBottom:24, lineHeight:1.6 }}>Enter your email and we'll send a recovery link valid for 1 hour.</p>
-      <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-        <Input label="Email" type="email" value={email} onChange={setEmail} placeholder="you@example.com" />
-        <Btn size="lg" onClick={submit} loading={loading}>Send recovery link</Btn>
-        <button onClick={()=>setPage("login")} style={{ background:"none", border:"none", color:G.muted, cursor:"pointer", fontSize:13, textAlign:"center" }}>← Back to login</button>
-      </div>
-    </AuthLayout>
+    <AuthCard title={tl("Reset password")} description={tl("Enter your email and we'll send a recovery link valid for 1 hour.")} onSubmit={submit}
+      footer={<button type="button" className={`${linkBtn} inline-flex items-center gap-1`} onClick={()=>setPage("login")}><ArrowLeftIcon className="size-3.5"/>{tl("Back to login")}</button>}>
+      <Input label={tl("Email")} type="email" value={email} onChange={setEmail} placeholder="you@example.com" />
+      <Button type="submit" size="lg" loading={loading} className="w-full">{tl("Send recovery link")}</Button>
+    </AuthCard>
   );
 }
 
@@ -6870,75 +6875,41 @@ function InvitePage({ token, setPage, toast, onLogin }) {
     finally{ setSaving(false); }
   };
 
-  if (status==="loading") return (
-    <AuthLayout><div style={{textAlign:"center",padding:32}}><Spinner/></div></AuthLayout>
-  );
+  if (status==="loading") return <AuthStatus loading/>;
 
   if (status==="error") return (
-    <AuthLayout>
-      <div style={{textAlign:"center",padding:"24px 0"}}>
-        <div style={{fontSize:40,marginBottom:16}}>⚠️</div>
-        <h2 style={{fontFamily:G.font,fontSize:22,marginBottom:12}}>Invalid or expired invite</h2>
-        <p style={{color:G.muted,marginBottom:24,lineHeight:1.6}}>{errMsg}</p>
-        <p style={{color:G.muted,fontSize:13}}>Please ask your restaurant manager to resend the invite.</p>
-        <Btn variant="ghost" onClick={()=>{ window.location.hash=""; setPage("login"); }} style={{marginTop:16}}>Go to login</Btn>
-      </div>
-    </AuthLayout>
+    <AuthStatus icon={TriangleAlertIcon} tone="error" title="Invalid or expired invite"
+      action={<Button variant="outline" onClick={()=>{ window.location.hash=""; setPage("login"); }}>Go to login</Button>}>
+      <p>{errMsg}</p>
+      <p className="mt-2">Please ask your restaurant manager to resend the invite.</p>
+    </AuthStatus>
   );
 
   if (status==="done") return (
-    <AuthLayout>
-      <div style={{textAlign:"center",padding:"24px 0"}}>
-        <div style={{fontSize:40,marginBottom:16}}>🎉</div>
-        <h2 style={{fontFamily:G.font,fontSize:22,marginBottom:8}}>You're all set!</h2>
-        <p style={{color:G.muted}}>Logging you in…</p>
-      </div>
-    </AuthLayout>
+    <AuthStatus icon={PartyPopperIcon} tone="success" title="You're all set!">Logging you in…</AuthStatus>
   );
 
   return (
-    <AuthLayout>
-      <div style={{marginBottom:24}}>
-        <h2 style={{fontFamily:G.font,fontSize:22,marginBottom:8}}>
-          {info.already_registered ? "Accept invitation" : "Set up your account"}
-        </h2>
-        <p style={{color:G.muted,fontSize:14,lineHeight:1.6}}>
-          You've been invited to join <strong>{info.employer_name}</strong> on Tanelu.
-        </p>
-      </div>
-
-      {/* Email — always locked */}
-      <div style={{marginBottom:16}}>
-        <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Email</label>
-        <input value={info.email} disabled
-          style={{width:"100%",padding:"10px 14px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,background:G.sand,color:G.muted}}/>
-      </div>
-
+    <AuthCard title={info.already_registered ? "Accept invitation" : "Set up your account"} onSubmit={submit}
+      description={<>You've been invited to join <strong className="text-foreground">{info.employer_name}</strong> on Tanelu.</>}
+      footer={<>Already have a different account?<button type="button" className={linkBtn} onClick={()=>{ window.location.hash=""; setPage("login"); }}>Log in</button></>}>
+      <Input label="Email" value={info.email} onChange={()=>{}} disabled />
       {info.already_registered ? (
-        /* Already has an account — just one-click accept */
-        <div>
-          <div style={{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:8,padding:"12px 14px",marginBottom:20,fontSize:13,color:"#166534"}}>
-            ✓ You already have a Tanelu account with this email. Click below to link it to {info.employer_name}.
-          </div>
-          <Btn size="lg" onClick={submit} loading={saving} style={{width:"100%"}}>Accept invitation</Btn>
-        </div>
+        <>
+          <Alert variant="success"><CircleCheckIcon/><AlertDescription>You already have a Tanelu account with this email. Click below to link it to {info.employer_name}.</AlertDescription></Alert>
+          <Button type="submit" size="lg" loading={saving} className="w-full">Accept invitation</Button>
+        </>
       ) : (
-        /* New account — enter name + password */
-        <div style={{display:"flex",flexDirection:"column",gap:14}}>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <>
+          <div className="grid grid-cols-2 gap-3">
             <Input label="First name" value={form.first_name} onChange={v=>setForm(p=>({...p,first_name:v}))} required/>
             <Input label="Last name"  value={form.last_name}  onChange={v=>setForm(p=>({...p,last_name:v}))}  required/>
           </div>
           <Input label="Password" type="password" value={form.password} onChange={v=>setForm(p=>({...p,password:v}))} placeholder="At least 6 characters" required/>
-          <Btn size="lg" onClick={submit} loading={saving}>Create account & join</Btn>
-        </div>
+          <Button type="submit" size="lg" loading={saving} className="w-full">Create account & join</Button>
+        </>
       )}
-
-      <button onClick={()=>{ window.location.hash=""; setPage("login"); }}
-        style={{background:"none",border:"none",color:G.muted,cursor:"pointer",fontSize:13,marginTop:16,display:"block",textAlign:"center",width:"100%"}}>
-        Already have a different account? Log in
-      </button>
-    </AuthLayout>
+    </AuthCard>
   );
 }
 
@@ -6961,30 +6932,19 @@ function ResetPage({ token, setPage, toast, onLogin }) {
   };
 
   if (done) return (
-    <AuthLayout>
-      <div style={{ textAlign:"center", padding:"24px 0" }}>
-        <div style={{ fontSize:40, marginBottom:16 }}>✅</div>
-        <h2 style={{ fontFamily:G.font, fontSize:22, marginBottom:12 }}>Password updated</h2>
-        <p style={{ color:G.muted, marginBottom:24, lineHeight:1.6 }}>Your password has been changed. You can now log in with your new password.</p>
-        <Btn onClick={()=>{ window.location.hash=""; setPage("login"); }}>Go to login</Btn>
-      </div>
-    </AuthLayout>
+    <AuthStatus icon={CircleCheckIcon} tone="success" title="Password updated"
+      action={<Button onClick={()=>{ window.location.hash=""; setPage("login"); }}>Go to login</Button>}>
+      Your password has been changed. You can now log in with your new password.
+    </AuthStatus>
   );
 
   return (
-    <AuthLayout>
-      <h2 style={{ fontFamily:G.font, fontSize:22, marginBottom:8 }}>Set new password</h2>
-      <p style={{ color:G.muted, fontSize:14, marginBottom:24, lineHeight:1.6 }}>Enter a new password for your account.</p>
-      <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-        <Input label="New password" type="password" value={pw}  onChange={setPw}  placeholder="••••••••" />
-        <Input label="Confirm password" type="password" value={pw2} onChange={setPw2} placeholder="••••••••" />
-        <Btn size="lg" onClick={submit} loading={loading}>Set password</Btn>
-        <button onClick={()=>{ window.location.hash=""; setPage("login"); }}
-          style={{ background:"none", border:"none", color:G.muted, cursor:"pointer", fontSize:13, textAlign:"center" }}>
-          ← Back to login
-        </button>
-      </div>
-    </AuthLayout>
+    <AuthCard title="Set new password" description="Enter a new password for your account." onSubmit={submit}
+      footer={<button type="button" className={`${linkBtn} inline-flex items-center gap-1`} onClick={()=>{ window.location.hash=""; setPage("login"); }}><ArrowLeftIcon className="size-3.5"/>Back to login</button>}>
+      <Input label="New password" type="password" value={pw}  onChange={setPw}  placeholder="••••••••" hint="At least 6 characters" />
+      <Input label="Confirm password" type="password" value={pw2} onChange={setPw2} placeholder="••••••••" />
+      <Button type="submit" size="lg" loading={loading} className="w-full">Set password</Button>
+    </AuthCard>
   );
 }
 
@@ -7003,23 +6963,13 @@ function VerifyPage({ token, setPage, toast, onLogin }) {
       .catch(e => { setStatus("error"); setMsg(e.message); });
   }, [token]);
 
+  if (status==="loading") return <AuthStatus loading>Verifying your email…</AuthStatus>;
+  if (status==="success") return <AuthStatus icon={PartyPopperIcon} tone="success" title="Email confirmed!">Logging you in…</AuthStatus>;
   return (
-    <AuthLayout>
-      <div style={{ textAlign:"center", padding:"32px 0" }}>
-        {status==="loading" && <><Spinner/><p style={{color:G.muted,marginTop:16}}>Verifying your email…</p></>}
-        {status==="success" && <>
-          <div style={{ fontSize:44, marginBottom:12 }}>🎉</div>
-          <h2 style={{ fontFamily:G.font, fontSize:22, marginBottom:8 }}>Email confirmed!</h2>
-          <p style={{ color:G.muted }}>Logging you in…</p>
-        </>}
-        {status==="error" && <>
-          <div style={{ fontSize:44, marginBottom:12 }}>⚠️</div>
-          <h2 style={{ fontFamily:G.font, fontSize:22, marginBottom:12 }}>Link expired or invalid</h2>
-          <p style={{ color:G.muted, marginBottom:24 }}>{msg || "This verification link has expired. Please register again."}</p>
-          <Btn onClick={()=>{ window.location.hash=""; setPage("signup"); }}>Register again</Btn>
-        </>}
-      </div>
-    </AuthLayout>
+    <AuthStatus icon={TriangleAlertIcon} tone="error" title="Link expired or invalid"
+      action={<Button onClick={()=>{ window.location.hash=""; setPage("signup"); }}>Register again</Button>}>
+      {msg || "This verification link has expired. Please register again."}
+    </AuthStatus>
   );
 }
 
