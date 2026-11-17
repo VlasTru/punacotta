@@ -28,7 +28,7 @@ import { CopyIcon, ImageIcon, ImageUpIcon, Trash2Icon, CheckIcon, MicIcon, Squar
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator, MenuRadioGroup, MenuRadioItem, MenuCheckboxItem } from "@/components/ui/menu";
 import { AlertDialog, AlertDialogPopup, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from "@/components/ui/alert-dialog";
-import { RefreshCwIcon, PlugIcon, Loader2Icon, MapPinIcon, ShieldAlertIcon, HandIcon, TableIcon, FileDownIcon, SparklesIcon, SendIcon, BanIcon, MenuIcon, ReceiptTextIcon, PackageIcon, BookOpenIcon, TruckIcon, ChartColumnIcon, ArrowLeftIcon, ChefHatIcon, MailCheckIcon, PartyPopperIcon, StoreIcon, TriangleAlertIcon, BellIcon, ChevronDownIcon, CircleAlertIcon, CircleCheckIcon, CircleUserIcon, ClockIcon, GlobeIcon, InfoIcon, Link2Icon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SettingsIcon, SunIcon, XIcon } from "lucide-react";
+import { ZoomInIcon, CakeSliceIcon, ShoppingBasketIcon, PackageCheckIcon, RefreshCwIcon, PlugIcon, Loader2Icon, MapPinIcon, ShieldAlertIcon, HandIcon, TableIcon, FileDownIcon, SparklesIcon, SendIcon, BanIcon, MenuIcon, ReceiptTextIcon, PackageIcon, BookOpenIcon, TruckIcon, ChartColumnIcon, ArrowLeftIcon, ChefHatIcon, MailCheckIcon, PartyPopperIcon, StoreIcon, TriangleAlertIcon, BellIcon, ChevronDownIcon, CircleAlertIcon, CircleCheckIcon, CircleUserIcon, ClockIcon, GlobeIcon, InfoIcon, Link2Icon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SettingsIcon, SunIcon, XIcon } from "lucide-react";
 
 const BoardOfArrivals = React.lazy(() => import('./screens/BoardOfArrivals.jsx'));
 
@@ -4292,23 +4292,30 @@ function RestaurantsPage({
   return (
     <Page title={tl("Restaurants")}>
       {loading?<Spinner/>:menus.length===0?(
-        <div style={{ textAlign:"center", padding:80, color:G.muted }}><p style={{ fontFamily:G.font, fontSize:24, marginBottom:8 }}>{tl("No restaurants open right now")}</p><p>{tl("Check back soon!")}</p></div>
+        <Empty className="rounded-2xl border border-border border-dashed bg-card">
+          <EmptyHeader>
+            <EmptyMedia variant="icon"><StoreIcon/></EmptyMedia>
+            <EmptyTitle>{tl("No restaurants open right now")}</EmptyTitle>
+            <EmptyDescription>{tl("Check back soon!")}</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       ):(
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(320px, 1fr))", gap:20 }}>
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,300px),1fr))] gap-5">
           {menus.map(m=>(
-            <div key={m.mid} onClick={()=>{setActiveMenu(m);setPage("order");}} style={{ background:G.white, borderRadius:16, border:`1px solid ${G.border}`, overflow:"hidden", cursor:"pointer", transition:"all 0.2s" }}
-              onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-3px)";e.currentTarget.style.boxShadow="0 8px 32px rgba(200,135,58,0.15)";}}
-              onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="none";}}>
-              <div style={{ height:120, background:`linear-gradient(135deg, ${G.caramel}22 0%, ${G.caramel}44 100%)`, display:"flex", alignItems:"center", justifyContent:"center" }}><span style={{fontSize:52}}>🍮</span></div>
-              <div style={{ padding:20 }}>
-                <h3 style={{ fontFamily:G.font, fontSize:20, marginBottom:4 }}>Pun&Cotta Bakery</h3>
-                <p style={{ fontSize:13, color:G.muted, marginBottom:12 }}>{m.name} · {(m.recipes||[]).length} items</p>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                  <span style={{ fontSize:12, color:G.muted }}>Delivery: {m.delivery_fee} AMD</span>
-                  <Badge>Open</Badge>
+            <button type="button" key={m.mid} data-slot="restaurant-card" onClick={()=>{setActiveMenu(m);setPage("order");}}
+              className="group overflow-hidden rounded-2xl border border-border bg-card text-start shadow-xs/5 transition-all hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-lg/5 focus-visible:outline-2 focus-visible:outline-ring">
+              <div className="flex h-28 items-center justify-center bg-linear-to-br from-brand/12 to-brand/28">
+                <ChefHatIcon className="size-12 text-accent-foreground opacity-80 transition-transform group-hover:scale-105"/>
+              </div>
+              <div className="flex flex-col gap-1 p-5">
+                <h3 className="font-heading font-semibold text-xl">Pun&Cotta Bakery</h3>
+                <p className="text-muted-foreground text-sm">{m.name} · {(m.recipes||[]).length} items</p>
+                <div className="mt-2 flex items-center justify-between">
+                  <span className="inline-flex items-center gap-1.5 text-muted-foreground text-xs"><TruckIcon className="size-3.5"/>Delivery: {m.delivery_fee} AMD</span>
+                  <CBadge variant="success">Open</CBadge>
                 </div>
               </div>
-            </div>
+            </button>
           ))}
         </div>
       )}
@@ -4418,166 +4425,169 @@ function OrderPage({
   };
 
   const THUMB=42;
+  const moqStr = r => `min. ${Number(r.moq) % 1 === 0 ? Number(r.moq) : Number(r.moq).toFixed(1)} ${subAbbr(r.units||"")}`;
+  const recOf = rid => (menu.recipes||[]).find(x=>x.rid===rid);
+  const stepper = (r, size="sm") => (
+    <div className="flex items-center gap-1.5">
+      <Button variant="outline" size={size==="lg"?"icon":"icon-sm"} aria-label={`Fewer ${r.name}`} disabled={!(qty[r.rid]||0)} onClick={()=>changeQty(r,-1)}><MinusIcon/></Button>
+      <span className={`text-center font-semibold tabular-nums ${size==="lg"?"text-base":"text-sm"}`} style={{ minWidth:r.allow_submultiples?(size==="lg"?64:52):(size==="lg"?28:20) }}>{displayQty(r,qty[r.rid]||0)}</span>
+      <Button size={size==="lg"?"icon":"icon-sm"} aria-label={`More ${r.name}`} onClick={()=>changeQty(r,1)}><PlusIcon/></Button>
+    </div>
+  );
 
   return (
-    <Page title={menu.name} actions={<Btn variant="ghost" size="sm" onClick={()=>setPage("restaurants")}>← Restaurants</Btn>}>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 320px", gap:24, alignItems:"start" }}>
-        <div>
+    <Page title={menu.name} actions={<Btn variant="ghost" size="sm" onClick={()=>setPage("restaurants")}><ArrowLeftIcon/>Restaurants</Btn>}>
+      <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[1fr_340px]">
+        <div className="flex flex-col gap-6">
           {Object.entries(grouped).map(([cat,recs])=>(
-            <div key={cat} style={{ marginBottom:24 }}>
-              <h3 style={{ fontSize:11, fontWeight:700, color:G.muted, textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>{cat}</h3>
-              <div style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, overflow:"hidden" }}>
-                {recs.map((r,i)=>(
-                  <div key={r.rid} style={{ padding:"14px 18px", display:"flex", alignItems:"center", gap:12, borderBottom:i<recs.length-1?`1px solid ${G.border}`:"none" }}>
+            <section key={cat} className="flex flex-col gap-2.5">
+              <h3 className="font-semibold text-[11px] text-muted-foreground uppercase tracking-wider">{cat}</h3>
+              <div className="flex flex-col divide-y divide-border overflow-hidden rounded-2xl border border-border bg-card shadow-xs/5">
+                {recs.map(r=>(
+                  <div key={r.rid} data-slot="menu-item" className="flex items-center gap-3 px-4 py-3.5">
                     {/* Thumbnail */}
                     {(r.image_thumb_url||r.image_url)?(
-                      <div className="recipe-thumb" style={{ position:"relative", width:THUMB, height:THUMB, flexShrink:0, borderRadius:8, overflow:"hidden", cursor:"pointer" }}
+                      <button type="button" data-slot="item-thumb" aria-label={`View photo of ${r.name}`}
+                        className="group relative shrink-0 overflow-hidden rounded-lg" style={{ width:THUMB, height:THUMB }}
                         onClick={()=>setLightbox({src:r.image_url||r.image_thumb_url,description:r.description})}>
-                        <img src={r.image_thumb_url||r.image_url} alt={r.name} style={{ width:"100%", height:"100%", objectFit:"cover" }} />
-                        <div className="zoom-icon" style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.3)", display:"flex", alignItems:"center", justifyContent:"center", opacity:0, transition:"opacity 0.2s" }}><span style={{fontSize:14}}>🔍</span></div>
-                      </div>
+                        <img src={r.image_thumb_url||r.image_url} alt="" className="size-full object-cover"/>
+                        <span className="absolute inset-0 flex items-center justify-center bg-black/30 text-white opacity-0 transition-opacity group-hover:opacity-100"><ZoomInIcon className="size-4"/></span>
+                      </button>
                     ):(
-                      <div style={{ width:THUMB, height:THUMB, flexShrink:0, borderRadius:8, background:G.sand, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18 }}>🍮</div>
+                      <div className="flex shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground" style={{ width:THUMB, height:THUMB }}><CakeSliceIcon className="size-5"/></div>
                     )}
                     {/* Info */}
-                    <div style={{ flex:1, minWidth:0 }}>
-                      <p style={{ fontWeight:600, fontSize:14, display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
-                        <button onClick={()=>setViewItem(r)} style={{background:"none",border:"none",cursor:"pointer",fontWeight:600,fontSize:14,color:G.dark,padding:0,textAlign:"left"}}>{r.name}</button>
-                      </p>
-                      <p style={{ fontSize:13, color:G.caramel, fontWeight:600 }}>{displayPrice(r)}</p>
-                      {r.allow_submultiples && r.moq && (
-                        <p style={{ fontSize:11, color:G.muted }}>min. {Number(r.moq) % 1 === 0 ? Number(r.moq) : Number(r.moq).toFixed(1)} {subAbbr(r.units||"")}</p>
-                      )}
+                    <div className="min-w-0 flex-1">
+                      <button type="button" data-slot="row-link" onClick={()=>setViewItem(r)} className="text-start font-semibold text-sm hover:underline">{r.name}</button>
+                      <p className="font-semibold text-accent-foreground text-sm tabular-nums">{displayPrice(r)}</p>
+                      {r.allow_submultiples && r.moq && <p className="text-muted-foreground text-xs">{moqStr(r)}</p>}
                     </div>
-                    {(qty[r.rid]||0)>0&&<span style={{ fontSize:13, color:G.muted, fontWeight:600, minWidth:70, textAlign:"right" }}>{lineTotal(r,qty[r.rid]||0)} AMD</span>}
-                    <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                      <button onClick={()=>changeQty(r,-1)} style={{ width:28, height:28, borderRadius:6, border:`1px solid ${G.border}`, background:G.white, cursor:"pointer", fontSize:16, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>−</button>
-                      <span style={{ minWidth:r.allow_submultiples?52:20, textAlign:"center", fontWeight:700, fontSize:13 }}>{displayQty(r,qty[r.rid]||0)}</span>
-                      <button onClick={()=>changeQty(r,1)} style={{ width:28, height:28, borderRadius:6, border:"none", background:G.caramel, cursor:"pointer", fontSize:16, fontWeight:700, color:G.white, display:"flex", alignItems:"center", justifyContent:"center" }}>+</button>
-                    </div>
+                    {(qty[r.rid]||0)>0&&<span className="min-w-16 text-end font-semibold text-muted-foreground text-sm tabular-nums max-sm:hidden">{lineTotal(r,qty[r.rid]||0)} AMD</span>}
+                    {stepper(r)}
                   </div>
                 ))}
               </div>
-            </div>
+            </section>
           ))}
         </div>
 
         {/* CART */}
-        <div style={{ background:G.white, borderRadius:16, border:`1px solid ${G.border}`, padding:22, position:"sticky", top:80 }}>
-          <h3 style={{ fontFamily:G.font, fontSize:18, marginBottom:16 }}>{tl("Your order")}</h3>
-          {cartItems.length===0?(
-            <p style={{ color:G.muted, fontSize:13, marginBottom:16 }}>{tl("Add items from the menu.")}</p>
-          ):(
-            <div style={{ marginBottom:16 }}>
-              {cartItems.map((it,i)=>(
-                <div key={i} style={{ display:"flex", alignItems:"center", gap:6, fontSize:13, marginBottom:8 }}>
-                  <span style={{ flex:1 }}>{it.name}</span>
-                  <div style={{ display:"flex", alignItems:"center", gap:3 }}>
-                    <button onClick={()=>changeQty(it.rid,-1)} style={{ width:20, height:20, borderRadius:4, border:`1px solid ${G.border}`, background:G.white, cursor:"pointer", fontSize:12, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>−</button>
-                    <span style={{ minWidth:16, textAlign:"center", fontWeight:700 }}>{it.qty}</span>
-                    <button onClick={()=>changeQty(it.rid,1)} style={{ width:20, height:20, borderRadius:4, border:"none", background:G.caramel, cursor:"pointer", fontSize:12, fontWeight:700, color:G.white, display:"flex", alignItems:"center", justifyContent:"center" }}>+</button>
+        <Card className="lg:sticky lg:top-20">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 font-heading text-lg"><ShoppingBasketIcon className="size-5 text-muted-foreground"/>{tl("Your order")}</CardTitle>
+          </CardHeader>
+          <CardPanel className="flex flex-col gap-4">
+            {cartItems.length===0?(
+              <p className="text-muted-foreground text-sm">{tl("Add items from the menu.")}</p>
+            ):(
+              <div className="flex flex-col gap-2">
+                {cartItems.map((it,i)=>{ const r=recOf(it.rid); return (
+                  <div key={i} data-slot="cart-line" className="flex items-center gap-2 text-sm">
+                    <span className="min-w-0 flex-1 truncate">{it.name}</span>
+                    <div className="flex items-center gap-1">
+                      <Button variant="outline" size="icon-xs" aria-label={`Fewer ${it.name}`} onClick={()=>changeQty(r,-1)}><MinusIcon/></Button>
+                      <span className="min-w-5 text-center font-semibold tabular-nums">{it.qty}</span>
+                      <Button variant="outline" size="icon-xs" aria-label={`More ${it.name}`} onClick={()=>changeQty(r,1)}><PlusIcon/></Button>
+                    </div>
+                    <span className="min-w-14 text-end font-semibold tabular-nums">{it.qty*it.price}</span>
                   </div>
-                  <span style={{ fontWeight:600, minWidth:54, textAlign:"right" }}>{it.qty*it.price}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div style={{ borderTop:`1px solid ${G.border}`, paddingTop:14, marginBottom:14 }}>
-            <p style={{ fontSize:13, fontWeight:600, marginBottom:10 }}>Fulfillment</p>
-            {hasUndeliverable?(
-              <div style={{ padding:"10px 12px", background:"#fff7ed", border:"1px solid #fed7aa", borderRadius:8, fontSize:12, color:"#92400e" }}>
-                <strong>Pickup only</strong><br/>Your order includes items available for pickup only. Delivery for this order may not be fulfilled.
+                ); })}
               </div>
-            ):[{val:"pickup",label:"Pickup (free)"},{val:"delivery",label:`${tl("Delivery")} (+${menu.delivery_fee} AMD)`}].map(opt=>(
-              <label key={opt.val} style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8, cursor:"pointer", fontSize:13 }}>
-                <input type="radio" name="delivery" value={opt.val} checked={delivery===opt.val} onChange={()=>setDelivery(opt.val)} style={{accentColor:G.caramel}} />
-                {opt.label}
-              </label>
-            ))}
-          </div>
+            )}
 
-          {delivery==="delivery"&&!hasUndeliverable&&(
-            <div style={{ marginBottom:14, display:"flex", flexDirection:"column", gap:8 }}>
-              {savedAddresses.map((addr,i)=>(
-                <label key={i} style={{ display:"flex", alignItems:"flex-start", gap:8, cursor:"pointer", padding:"10px 12px", borderRadius:8, border:`1px solid ${selectedAddr===i?G.caramel:G.border}`, background:selectedAddr===i?G.sand:G.white }}>
-                  <input type="radio" name="addr" checked={selectedAddr===i} onChange={()=>setSelectedAddr(i)} style={{accentColor:G.caramel,marginTop:2,flexShrink:0}} />
-                  <div>
-                    {addr.label&&<p style={{fontSize:12,fontWeight:700,color:G.muted,marginBottom:2}}>{addr.label}</p>}
-                    <p style={{fontSize:13,color:G.dark,lineHeight:1.5}}>{addr.display}</p>
-                  </div>
-                </label>
-              ))}
-              {/* Other address option */}
-              <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}>
-                <input type="radio" name="addr" checked={selectedAddr===-1} onChange={()=>setSelectedAddr(-1)} style={{accentColor:G.caramel,flexShrink:0}} />
-                <span style={{fontSize:13,fontWeight:500}}>Other address</span>
-              </label>
-              {selectedAddr===-1&&(
-                <div style={{ paddingLeft:20, display:"flex", flexDirection:"column", gap:8 }}>
-                  <Input label="Street" value={otherStreet} onChange={onOtherFieldChange(setOtherStreet)} />
-                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-                    <Input label="City" value={otherCity} onChange={onOtherFieldChange(setOtherCity)} />
-                    <Input label="ZIP"  value={otherZip}  onChange={onOtherFieldChange(setOtherZip)} />
-                  </div>
-                </div>
+            <div className="flex flex-col gap-2.5 border-border border-t pt-4">
+              <span className="font-medium text-sm">Fulfillment</span>
+              {hasUndeliverable?(
+                <Alert variant="warning">
+                  <TriangleAlertIcon/>
+                  <AlertTitle>Pickup only</AlertTitle>
+                  <AlertDescription>Your order includes items available for pickup only. Delivery for this order may not be fulfilled.</AlertDescription>
+                </Alert>
+              ):(
+                <RadioGroup value={delivery||""} onValueChange={v=>setDelivery(v)} className="gap-2">
+                  {[{val:"pickup",label:"Pickup (free)",Icon:StoreIcon},{val:"delivery",label:`${tl("Delivery")} (+${menu.delivery_fee} AMD)`,Icon:TruckIcon}].map(({val,label,Icon})=>(
+                    <Label key={val} className="cursor-pointer gap-2.5 rounded-lg border border-border px-3 py-2.5 font-normal has-data-checked:border-brand/60 has-data-checked:bg-accent/50">
+                      <Radio value={val}/><Icon className="size-4 text-muted-foreground"/>{label}
+                    </Label>
+                  ))}
+                </RadioGroup>
               )}
             </div>
-          )}
 
-          <div style={{ borderTop:`1px solid ${G.border}`, paddingTop:12, marginBottom:14 }}>
-            {deliveryFee>0&&<div style={{ display:"flex", justifyContent:"space-between", fontSize:13, color:G.muted, marginBottom:6 }}><span>{tl("Delivery fee")}</span><span>{deliveryFee} AMD</span></div>}
-            <div style={{ display:"flex", justifyContent:"space-between", fontWeight:700, fontSize:16 }}><span>{tl("Total")}</span><span style={{color:G.caramel}}>{total} AMD</span></div>
-          </div>
+            {delivery==="delivery"&&!hasUndeliverable&&(
+              <RadioGroup value={String(selectedAddr)} onValueChange={v=>setSelectedAddr(Number(v))} className="gap-2">
+                {savedAddresses.map((addr,i)=>(
+                  <Label key={i} className="cursor-pointer items-start gap-2.5 rounded-lg border border-border px-3 py-2.5 font-normal has-data-checked:border-brand/60 has-data-checked:bg-accent/50">
+                    <Radio value={String(i)} className="mt-0.5"/>
+                    <span className="flex flex-col gap-0.5">
+                      {addr.label&&<span className="font-semibold text-muted-foreground text-xs">{addr.label}</span>}
+                      <span className="text-sm leading-snug">{addr.display}</span>
+                    </span>
+                  </Label>
+                ))}
+                <Label className="cursor-pointer gap-2.5 px-3 py-1 font-normal">
+                  <Radio value="-1"/>Other address
+                </Label>
+                {selectedAddr===-1&&(
+                  <div className="flex flex-col gap-2.5 ps-3">
+                    <Input label="Street" value={otherStreet} onChange={onOtherFieldChange(setOtherStreet)} />
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <Input label="City" value={otherCity} onChange={onOtherFieldChange(setOtherCity)} />
+                      <Input label="ZIP"  value={otherZip}  onChange={onOtherFieldChange(setOtherZip)} />
+                    </div>
+                  </div>
+                )}
+              </RadioGroup>
+            )}
 
-          <Btn onClick={submit} loading={submitting} disabled={itemTotal===0} title={itemTotal===0?"Please add items to your order":undefined} style={{width:"100%"}}>Place order</Btn>
-        </div>
+            <div className="flex flex-col gap-1.5 border-border border-t pt-3">
+              {deliveryFee>0&&<div className="flex justify-between text-muted-foreground text-sm"><span>{tl("Delivery fee")}</span><span className="tabular-nums">{deliveryFee} AMD</span></div>}
+              <div className="flex justify-between font-bold text-base"><span>{tl("Total")}</span><span className="text-accent-foreground tabular-nums">{total} AMD</span></div>
+            </div>
+
+            <Btn onClick={submit} loading={submitting} disabled={itemTotal===0} title={itemTotal===0?"Please add items to your order":undefined} style={{width:"100%"}}>Place order</Btn>
+          </CardPanel>
+        </Card>
       </div>
       <Lightbox src={lightbox?.src} description={lightbox?.description} onClose={()=>setLightbox(null)} />
 
-      {/* Item detail dialog */}
-      {viewItem&&(
-        <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.5)", zIndex:1000, display:"flex", alignItems:"flex-end", justifyContent:"center" }}
-          onClick={e=>{ if(e.target===e.currentTarget) setViewItem(null); }}>
-          <div style={{ background:G.white, borderRadius:"20px 20px 0 0", width:"100%", maxWidth:540, maxHeight:"85vh", overflow:"auto", boxShadow:"0 -8px 40px rgba(44,24,16,0.18)" }}>
+      {/* Item detail sheet */}
+      <Sheet open={!!viewItem} onOpenChange={o=>{ if(!o) setViewItem(null); }}>
+        <SheetPopup side="bottom" showCloseButton={false} className="mx-auto max-w-xl rounded-t-3xl">
+          {viewItem&&(<>
             {(viewItem.image_url||viewItem.image_thumb_url)&&(
-              <div style={{ width:"100%", height:200, overflow:"hidden", borderRadius:"20px 20px 0 0" }}>
-                <img src={viewItem.image_url||viewItem.image_thumb_url} alt={viewItem.name}
-                  style={{ width:"100%", height:"100%", objectFit:"cover", cursor:"pointer" }}
-                  onClick={()=>setLightbox({src:viewItem.image_url||viewItem.image_thumb_url})} />
-              </div>
+              <button type="button" data-slot="item-hero" aria-label="View full photo" className="block h-52 w-full overflow-hidden rounded-t-3xl"
+                onClick={()=>setLightbox({src:viewItem.image_url||viewItem.image_thumb_url})}>
+                <img src={viewItem.image_url||viewItem.image_thumb_url} alt={viewItem.name} className="size-full object-cover"/>
+              </button>
             )}
-            <div style={{ padding:24 }}>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
-                <h2 style={{ fontFamily:G.font, fontSize:22 }}>{viewItem.name}</h2>
-                <button onClick={()=>setViewItem(null)} style={{ background:"none", border:"none", fontSize:24, cursor:"pointer", color:G.muted, lineHeight:1, marginLeft:12 }}>×</button>
+            <SheetHeader className="flex-row items-start justify-between gap-3">
+              <div className="flex flex-col gap-1">
+                <SheetTitle className="font-heading text-2xl">{viewItem.name}</SheetTitle>
+                <p className="font-bold text-accent-foreground text-lg tabular-nums">{displayPrice(viewItem)}</p>
               </div>
-              <p style={{ fontSize:18, fontWeight:700, color:G.caramel, marginBottom:12 }}>{displayPrice(viewItem)}</p>
-              {viewItem.description&&<p style={{ fontSize:14, color:G.muted, lineHeight:1.6, marginBottom:16 }}>{viewItem.description}</p>}
-              {viewItem.allow_submultiples && viewItem.moq && (
-                <p style={{ fontSize:13, color:G.muted, marginBottom:16 }}>min. {Number(viewItem.moq) % 1 === 0 ? Number(viewItem.moq) : Number(viewItem.moq).toFixed(1)} {subAbbr(viewItem.units||"")}</p>
-              )}
-              <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-                <div style={{ display:"flex", alignItems:"center", gap:8, border:`1px solid ${G.border}`, borderRadius:10, padding:"6px 10px" }}>
-                  <button onClick={()=>changeQty(viewItem,-1)} style={{ width:32, height:32, borderRadius:7, border:`1px solid ${G.border}`, background:G.white, cursor:"pointer", fontSize:18, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>−</button>
-                  <span style={{ minWidth:viewItem.allow_submultiples?64:28, textAlign:"center", fontWeight:700, fontSize:15 }}>{displayQty(viewItem,qty[viewItem.rid]||0)}</span>
-                  <button onClick={()=>changeQty(viewItem,1)} style={{ width:32, height:32, borderRadius:7, border:"none", background:G.caramel, cursor:"pointer", fontSize:18, fontWeight:700, color:G.white, display:"flex", alignItems:"center", justifyContent:"center" }}>+</button>
-                </div>
+              <Button variant="ghost" size="icon" aria-label="Close" onClick={()=>setViewItem(null)}><XIcon/></Button>
+            </SheetHeader>
+            <SheetPanel className="flex flex-col gap-4 pt-0">
+              {viewItem.description&&<p className="text-muted-foreground text-sm leading-relaxed">{viewItem.description}</p>}
+              {viewItem.allow_submultiples && viewItem.moq && <p className="text-muted-foreground text-sm">{moqStr(viewItem)}</p>}
+              <div className="flex items-center gap-3">
+                <div className="rounded-xl border border-border p-1.5">{stepper(viewItem,"lg")}</div>
                 <Btn onClick={()=>{ if((qty[viewItem.rid]||0)===0) changeQty(viewItem,1); setViewItem(null); }} style={{ flex:1 }}>
                   {(qty[viewItem.rid]||0)>0 ? `In basket · ${lineTotal(viewItem,qty[viewItem.rid]||0)} AMD` : "Add to basket"}
                 </Btn>
               </div>
-            </div>
-          </div>
-        </div>
-      )}
+            </SheetPanel>
+          </>)}
+        </SheetPopup>
+      </Sheet>
     </Page>
   );
 }
 
 // ─── ORDERS (CUSTOMER) ────────────────────────────────────────────────────────
 function OrdersCustPage({
- toast }) {
+ toast, setPage }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
   const [orders, setOrders] = useState([]); const [loading, setLoading] = useState(true); const [dialog, setDialog] = useState(null); const [pending, setPending] = useState(null);
@@ -4587,33 +4597,47 @@ function OrdersCustPage({
   return (
     <Page title={tl("My Orders")}>
       {loading?<Spinner/>:orders.length===0?(
-        <div style={{ textAlign:"center", padding:80, color:G.muted }}><p style={{ fontFamily:G.font, fontSize:22 }}>{tl("No orders yet")}</p></div>
+        <Empty className="rounded-2xl border border-border border-dashed bg-card">
+          <EmptyHeader>
+            <EmptyMedia variant="icon"><ReceiptTextIcon/></EmptyMedia>
+            <EmptyTitle>{tl("No orders yet")}</EmptyTitle>
+          </EmptyHeader>
+          <EmptyContent><Btn size="sm" onClick={()=>setPage?.("restaurants")}><StoreIcon/>{tl("Restaurants")}</Btn></EmptyContent>
+        </Empty>
       ):(
-        <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+        <div className="mx-auto flex max-w-3xl flex-col gap-3.5">
           {orders.map(o=>{
             const cfg=STATUS_CONFIG[o.status]||STATUS_CONFIG.New;
             const total=(o.items||[]).reduce((s,it)=>s+it.qty*it.price,0);
             return (
-              <div key={o.oid} style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, padding:20 }}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:12 }}>
-                  <div><span style={{ fontWeight:700, fontSize:15 }}>Order #{o.oid}</span><span style={{ marginLeft:10, fontSize:12, color:G.muted }}>{new Date(o.created_at).toLocaleString()}</span>{o.is_boa&&<span style={{ marginLeft:10, fontSize:11, padding:"2px 8px", borderRadius:10, background:G.sand, color:G.muted }}>{o.seller_name?`Board of Arrivals · ${o.seller_name}`:"Board of Arrivals"}</span>}</div>
-                  <span style={{ padding:"4px 12px", borderRadius:20, fontSize:12, fontWeight:700, background:cfg.bg, color:cfg.color }}>{tl(o.status)}</span>
-                </div>
-                <div style={{ marginBottom:12 }}>
-                  {(o.items||[]).map((it,i)=>(
-                    <div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:13, color:G.muted, marginBottom:2 }}>
-                      <span>{it.name} x {it.qty}</span><span>{it.qty*it.price} AMD</span>
+              <Card key={o.oid} data-slot="cust-order">
+                <CardPanel className="flex flex-col gap-3 pt-5">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                      <span className="font-semibold">Order #{o.oid}</span>
+                      <span className="text-muted-foreground text-xs">{new Date(o.created_at).toLocaleString()}</span>
+                      {o.is_boa&&<CBadge variant="secondary">{o.seller_name?`Board of Arrivals · ${o.seller_name}`:"Board of Arrivals"}</CBadge>}
                     </div>
-                  ))}
-                </div>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                  <span style={{ fontWeight:700, color:G.caramel }}>{total} AMD · {o.pickup?tl("Pickup (free)"):tl("Delivery")}</span>
-                  <div style={{ display:"flex", gap:8 }}>
-                    {!["Declined","Delivered"].includes(o.status)&&<Btn variant="ghost" size="sm" onClick={()=>{setPending(o.oid);setDialog("cancel");}}>{tl("Cancel")}</Btn>}
-                    {["Done","Dispatched"].includes(o.status)&&<Btn variant="success" size="sm" onClick={()=>confirmDel(o.oid)}>{tl("I got my order ✓")}</Btn>}
+                    <CBadge variant="outline" className="border-transparent font-semibold" style={{ color:cfg.color, background:`${cfg.color}1f` }}>{tl(o.status)}</CBadge>
                   </div>
-                </div>
-              </div>
+                  <div className="flex flex-col gap-0.5">
+                    {(o.items||[]).map((it,i)=>(
+                      <div key={i} className="flex justify-between text-muted-foreground text-sm">
+                        <span>{it.name} × {it.qty}</span><span className="tabular-nums">{it.qty*it.price} AMD</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-border border-t pt-3">
+                    <span className="inline-flex items-center gap-1.5 font-semibold text-accent-foreground tabular-nums">
+                      {o.pickup?<StoreIcon className="size-4"/>:<TruckIcon className="size-4"/>}{total} AMD · {o.pickup?tl("Pickup (free)"):tl("Delivery")}
+                    </span>
+                    <div className="flex gap-2">
+                      {!["Declined","Delivered"].includes(o.status)&&<Btn variant="ghost" size="sm" onClick={()=>{setPending(o.oid);setDialog("cancel");}}>{tl("Cancel")}</Btn>}
+                      {["Done","Dispatched"].includes(o.status)&&<Btn variant="success" size="sm" onClick={()=>confirmDel(o.oid)}><PackageCheckIcon/>{tl("I got my order ✓").replace(/\s*✓$/,"")}</Btn>}
+                    </div>
+                  </div>
+                </CardPanel>
+              </Card>
             );
           })}
         </div>
@@ -9840,7 +9864,7 @@ export default function App() {
           {(page==="orders-manuf"||page==="quick-sale") &&<OrdersHub toast={toast}/>}
           {page==="restaurants"  &&<RestaurantsPage setPage={setPage} setActiveMenu={setActiveMenu}/>}
           {page==="order"        &&<OrderPage menu={activeMenu} user={user} setPage={setPage} toast={toast}/>}
-          {page==="orders-cust"  &&<OrdersCustPage toast={toast}/>}
+          {page==="orders-cust"  &&<OrdersCustPage toast={toast} setPage={setPage}/>}
           {page==="general"      &&<GeneralPage    user={user} setUser={setUser} toast={toast}/>}
           {page==="schedule"     &&<SchedulePage toast={toast} storeSchedule={storeSchedule} setStoreSchedule={setStoreSchedule}/>}
         </>
