@@ -1833,6 +1833,41 @@ function QtyStepper({ value, onDec, onInc, decDisabled, incDisabled, label="item
   );
 }
 // Pop-up form: coss Dialog with title, scrollable body and footer
+// ── Unsaved-changes guard ─────────────────────────────────────────────────────
+// A page with unsaved work registers { dirty(), save() }; App asks before navigating away,
+// and the browser asks before the tab is closed or reloaded.
+let _leaveGuard = null;
+function useLeaveGuard(dirty, save) {
+  const ref = useRef({ dirty, save });
+  ref.current = { dirty, save };
+  useEffect(()=>{
+    const g = { dirty: ()=>!!ref.current.dirty, save: ()=>ref.current.save() };
+    _leaveGuard = g;
+    return ()=>{ if (_leaveGuard === g) _leaveGuard = null; };
+  },[]);
+  useEffect(()=>{
+    if (!dirty) return;
+    const h = e => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", h);
+    return ()=>window.removeEventListener("beforeunload", h);
+  },[dirty]);
+}
+// "Save it or lose it?" — used when leaving an unsaved draft
+function UnsavedDialog({ open, title="Save your changes?", description, saveLabel="Save draft", saving, onSave, onDiscard, onCancel }) {
+  if (!open) return null;
+  return (
+    <Modal onClose={onCancel} title={title} className="max-w-md"
+      description={description||"You have unsaved changes. Save them before leaving, or they will be lost."}
+      footer={<>
+        <Btn variant="ghost" onClick={onCancel}>Keep editing</Btn>
+        <div className="flex gap-2">
+          <Btn variant="secondary" onClick={onDiscard} style={{ color:"var(--destructive-foreground)" }}><Trash2Icon/>Discard</Btn>
+          <Btn onClick={onSave} loading={saving}><CheckIcon/>{saveLabel}</Btn>
+        </div>
+      </>}/>
+  );
+}
+
 function Modal({ open=true, onClose, title, description, children, footer, className="max-w-lg", headerAction }) {
   return (
     <CDialog open={open} onOpenChange={o=>{ if(!o) onClose?.(); }}>
@@ -1845,7 +1880,7 @@ function Modal({ open=true, onClose, title, description, children, footer, class
           {headerAction}
           <Button variant="ghost" size="icon" aria-label="Close" onClick={onClose}><XIcon/></Button>
         </div>
-        <DialogPanel>{children}</DialogPanel>
+        {children&&<DialogPanel>{children}</DialogPanel>}
         {footer&&<DialogFooter className="items-center sm:justify-between">{footer}</DialogFooter>}
       </DialogPopup>
     </CDialog>
@@ -5103,14 +5138,16 @@ function ProcurementPage({
     return { subtotal, delivery, vat, total: subtotal+delivery+vat };
   };
 
+  // Returns true when the order was stored (as a draft at least)
   const saveOrder = async (submit=false) => {
-    if (!newSid) { toast("Select a supplier","error"); return; }
-    if (!newRows.length) { toast("Add at least one product","error"); return; }
-    if (newRows.some(r=>!r.pid)) { toast("Select a product in every row","error"); return; }
+    if (!newSid) { toast("Select a supplier","error"); return false; }
+    if (!newRows.length) { toast("Add at least one product","error"); return false; }
+    if (newRows.some(r=>!r.pid)) { toast("Select a product in every row","error"); return false; }
     setSaving(true);
+    let order = null;
     try {
       const items = newRows.map(r=>({ pid:Number(r.pid), qty_ordered:parseFloat(r.qty)||1, unit_price:parseFloat(r.unit_price)||0, currency:r.currency||newCurrency }));
-      const order = await api.createSupplierOrder({ sid:Number(newSid), items, delivery_term:newTerm||null, delivery_fee:parseFloat(newFee)||0, currency:newCurrency });
+      order = await api.createSupplierOrder({ sid:Number(newSid), items, delivery_term:newTerm||null, delivery_fee:parseFloat(newFee)||0, currency:newCurrency });
       if (submit) {
         const submitted = await api.submitSupplierOrder(order.soid);
         toast(`Order #${submitted.order_id} submitted`);
@@ -5122,8 +5159,18 @@ function ProcurementPage({
         setOrders(o=>[order,...o]);
       }
       setShowNew(false); resetNewForm();
-    } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
+      return true;
+    } catch(e){
+      if (order) {
+        // Saved, but submitting failed: keep it as a draft the user can submit later
+        toast(`Order #${order.order_id} was saved as a draft, but could not be submitted: ${e.message}`,"error");
+        setOrders(o=>[order,...o]); setShowNew(false); resetNewForm();
+        return true;
+      }
+      toast(e.message,"error"); return false;
+    } finally{ setSaving(false); }
   };
+  const newDirty = showNew && !!(newSid || newRows.length || newTerm || (newFee && newFee!=="0"));
 
   const resetNewForm = () => { setNewSid(""); setNewTerm(""); setNewFee(""); setNewRows([]); };
 
@@ -5139,13 +5186,29 @@ function ProcurementPage({
     URL.revokeObjectURL(url);
   };
 
+  const [acceptOrig, setAcceptOrig] = useState("");
   const openOrder = async (soid) => {
     try {
       const o = await api.getSupplierOrder(soid);
+      const its = o.items.map(it=>({...it, qty_actual: it.qty_actual !== null ? it.qty_actual : it.qty_ordered}));
       setViewOrder(o); setCancelView(false);
-      setAcceptItems(o.items.map(it=>({...it, qty_actual: it.qty_actual !== null ? it.qty_actual : it.qty_ordered})));
+      setAcceptItems(its); setAcceptOrig(JSON.stringify(its));
     } catch(e){ toast(e.message,"error"); }
   };
+  const draftDirty = viewOrder?.status==="New" && JSON.stringify(acceptItems)!==acceptOrig;
+  const saveDraftEdits = async () => {
+    if (acceptItems.some(it=>!it.soiid && !it.pid)) { toast("Select a product in every row","error"); return false; }
+    setSaving(true);
+    try {
+      const items = acceptItems.filter(it=>it.soiid||it.pid).map(it=>({soiid:it.soiid,pid:it.pid,qty_ordered:parseFloat(it.qty_actual)||0,unit_price:parseFloat(it.unit_price)||0,currency:it.currency}));
+      await api.updateSupplierOrder(viewOrder.soid, { items });
+      toast("Order saved"); await load(); setViewOrder(null);
+      return true;
+    } catch(e){ toast(e.message,"error"); return false; } finally{ setSaving(false); }
+  };
+  const [leaveDraft, setLeaveDraft] = useState(false);
+  // Navigating away (or closing the tab) with an unsaved order asks to save it or lose it
+  useLeaveGuard(newDirty || draftDirty, async()=> newDirty ? saveOrder(false) : saveDraftEdits());
 
   const doAccept = async () => {
     if (!viewOrder) return;
@@ -5183,6 +5246,7 @@ function ProcurementPage({
   const PO_BADGE = { New:"bg-secondary text-muted-foreground", Submitted:"bg-warning/16 text-warning-foreground", Cancelled:"bg-destructive/12 text-destructive-foreground",
     Delivered:"bg-info/14 text-info-foreground", Accepted:"bg-success/16 text-success-foreground" };
   const closeView = () => { setViewOrder(null); setCancelView(false); };
+  const requestCloseView = () => { if (draftDirty) setLeaveDraft(true); else closeView(); };
   const productItems = list => list.map(p=>({ label:`${p.name}${p.sku?` (${p.sku})`:""}`, value:String(p.pid) }));
   const setAcc = (i, patch) => setAcceptItems(a=>a.map((x,j)=>j===i?{...x,...patch}:x));
   const H = "h-10 px-3 font-semibold text-[11px] text-muted-foreground uppercase tracking-wider whitespace-nowrap";
@@ -5201,7 +5265,7 @@ function ProcurementPage({
         catch(e){ toast(e.message,"error"); }
         finally{ setSaving(false); }
       }}><SparklesIcon/>From forecast</Btn>
-      <Btn size="sm" onClick={()=>setShowNew(s=>!s)}><PlusIcon/>{tl("+ Order").replace(/^\+\s*/,"")}</Btn>
+      <Btn size="sm" onClick={()=>{ if (showNew && newDirty) setConfirmCancel(true); else setShowNew(s=>!s); }}><PlusIcon/>{tl("+ Order").replace(/^\+\s*/,"")}</Btn>
     </>}>
 
       {/* ── NEW ORDER FORM ─────────────────────────────────────────────── */}
@@ -5209,7 +5273,7 @@ function ProcurementPage({
         <Card className="mb-6" style={{ animation:"fadeIn 0.2s ease" }}>
           <CardHeader>
             <CardTitle className="font-heading text-lg">New supplier order</CardTitle>
-            <CardAction><Button variant="ghost" size="icon-sm" aria-label="Close" onClick={()=>setConfirmCancel(true)}><XIcon/></Button></CardAction>
+            <CardAction><Button variant="ghost" size="icon-sm" aria-label="Close" onClick={()=>newDirty?setConfirmCancel(true):setShowNew(false)}><XIcon/></Button></CardAction>
           </CardHeader>
           <CardPanel className="flex flex-col gap-5">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -5288,7 +5352,7 @@ function ProcurementPage({
             </dl>
           </CardPanel>
           <CardFooter className="justify-end gap-2 border-border border-t pt-4">
-            <Btn variant="ghost" onClick={()=>setConfirmCancel(true)}>Cancel</Btn>
+            <Btn variant="ghost" onClick={()=>newDirty?setConfirmCancel(true):setShowNew(false)}>Cancel</Btn>
             <Btn variant="secondary" onClick={()=>saveOrder(false)} loading={saving}>Save draft</Btn>
             <Btn onClick={()=>saveOrder(true)} loading={saving}><SendIcon/>Submit</Btn>
           </CardFooter>
@@ -5352,7 +5416,7 @@ function ProcurementPage({
 
       {/* ── VIEW / ACCEPT ORDER DIALOG ──────────────────────────────────── */}
       {viewOrder&&(
-        <Modal onClose={closeView} className="max-w-3xl"
+        <Modal onClose={requestCloseView} className="max-w-3xl"
           title={`${isNewOrder?"Edit order":"Accept order"} #${viewOrder.order_id}`}
           description={viewOrder.supplier_name}
           footer={<>
@@ -5361,17 +5425,11 @@ function ProcurementPage({
               {isNewOrder && <Btn variant="ghost" style={{ color:"var(--destructive-foreground)" }} onClick={()=>setConfirmDelete(true)}><Trash2Icon/>Delete</Btn>}
             </div>
             <div className="flex gap-2">
-              <Btn variant="ghost" onClick={closeView}>Close</Btn>
+              <Btn variant="ghost" onClick={requestCloseView}>Close</Btn>
               {isNewOrder ? (<>
-                <Btn variant="secondary" loading={saving} onClick={async()=>{
-                  setSaving(true);
-                  try {
-                    const items = acceptItems.filter(it=>it.soiid).map(it=>({soiid:it.soiid,pid:it.pid,qty_ordered:parseFloat(it.qty_actual)||0,unit_price:parseFloat(it.unit_price)||0,currency:it.currency}));
-                    await api.updateSupplierOrder(viewOrder.soid, { items });
-                    toast("Order saved"); await load(); setViewOrder(null);
-                  } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
-                }}>Save</Btn>
+                <Btn variant="secondary" loading={saving} onClick={saveDraftEdits}>Save</Btn>
                 <Btn loading={saving} onClick={async()=>{
+                  if (draftDirty && !(await saveDraftEdits())) return;
                   setSaving(true);
                   try {
                     const submitted = await api.submitSupplierOrder(viewOrder.soid);
@@ -5499,12 +5557,17 @@ function ProcurementPage({
         </Modal>
       )}
 
-      {/* Discard new order */}
-      <Dialog open={confirmCancel} title="Discard order?" confirmLabel="Discard"
+      {/* Leaving the new-order form: save it as a draft or lose it */}
+      <UnsavedDialog open={confirmCancel} title="Save this order?" saving={saving}
+        description="The order hasn't been saved yet. Save it as a draft to finish later, or discard it."
         onCancel={()=>setConfirmCancel(false)}
-        onConfirm={()=>{ setShowNew(false); resetNewForm(); setConfirmCancel(false); }}>
-        The changes to the order will not be saved.
-      </Dialog>
+        onDiscard={()=>{ setShowNew(false); resetNewForm(); setConfirmCancel(false); }}
+        onSave={async()=>{ if (await saveOrder(false)) setConfirmCancel(false); }}/>
+      {/* Closing a draft with unsaved edits */}
+      <UnsavedDialog open={leaveDraft} title="Save changes to this order?" saveLabel="Save" saving={saving}
+        onCancel={()=>setLeaveDraft(false)}
+        onDiscard={()=>{ setLeaveDraft(false); closeView(); }}
+        onSave={async()=>{ if (await saveDraftEdits()) setLeaveDraft(false); }}/>
     </Page>
   );
 }
@@ -9741,10 +9804,18 @@ export default function App() {
     return null;
   });
 
-  const [page, setPage] = useState(()=>{
+  const [page, setPageRaw] = useState(()=>{
     if (window.location.hash === "#signup") return "signup";
     return user ? (user.is_manufacturer ? "orders-manuf" : "restaurants") : "login";
   });
+  // Navigation asks first when the current page has unsaved work (see useLeaveGuard)
+  const [leaveTo, setLeaveTo] = useState(null);
+  const [leaveSaving, setLeaveSaving] = useState(false);
+  const setPage = p => {
+    if (_leaveGuard?.dirty()) { setLeaveTo({ page:p }); return; }
+    setPageRaw(p);
+  };
+  const leaveNow = target => { _leaveGuard = null; setLeaveTo(null); if (target.logout) doLogout(); else setPageRaw(target.page); };
   const [activeMenu, setActiveMenu] = useState(null);
   const [storeSchedule, setStoreSchedule] = useState(DEFAULT_STORE);
   const [lang, setLang] = useLang();
@@ -9763,7 +9834,8 @@ export default function App() {
   }, [themePref]);
   _currentLang = lang;
   const {toasts,toast,remove} = useToast();
-  const logout=()=>{localStorage.removeItem("token");setUser(null);setPage("login");};
+  const doLogout=()=>{localStorage.removeItem("token");setUser(null);setPageRaw("login");};
+  const logout=()=>{ if (_leaveGuard?.dirty()) { setLeaveTo({ logout:true }); return; } doLogout(); };
   const { notifs, dismiss, markSeen, unseenCount, refresh: refreshNotifs, period: notifPeriod, setPeriod: setNotifPeriod, showPeriod } = useNotifications(user);
   const onLogin = u => {
     setUser(u);
@@ -9859,6 +9931,14 @@ export default function App() {
           {page==="orders-cust"  &&<OrdersCustPage toast={toast} setPage={setPage}/>}
           {page==="general"      &&<GeneralPage    user={user} setUser={setUser} toast={toast}/>}
           {page==="schedule"     &&<SchedulePage toast={toast} storeSchedule={storeSchedule} setStoreSchedule={setStoreSchedule}/>}
+          <UnsavedDialog open={!!leaveTo} saving={leaveSaving}
+            onCancel={()=>setLeaveTo(null)}
+            onDiscard={()=>leaveNow(leaveTo)}
+            onSave={async()=>{
+              setLeaveSaving(true);
+              try { if (await _leaveGuard?.save()) leaveNow(leaveTo); else setLeaveTo(null); }
+              finally { setLeaveSaving(false); }
+            }}/>
         </>
       )}
     </LangContext.Provider>

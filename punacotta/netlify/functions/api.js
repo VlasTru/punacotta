@@ -21,6 +21,90 @@ function getPool() {
 }
 async function dbq(sql, params = []) { return (await getPool().query(sql, params)).rows }
 async function dbr(sql, params = []) { return getPool().query(sql, params) }
+// Run several statements as one unit: all are saved, or none are
+async function withTx(fn) {
+  const client = await getPool().connect()
+  try {
+    await client.query('BEGIN')
+    const out = await fn((sql, params = []) => client.query(sql, params))
+    await client.query('COMMIT')
+    return out
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {})
+    throw e
+  } finally { client.release() }
+}
+// Products belong to one restaurant. Returns the ids from `pids` that this owner may use.
+async function ownedPids(ownerUid, pids) {
+  const ids = [...new Set((pids || []).map(Number).filter(Boolean))]
+  if (!ids.length) return new Set()
+  const rows = await dbq('SELECT pid FROM product WHERE pid=ANY($1::int[]) AND owner_uid=$2', [ids, ownerUid])
+  return new Set(rows.map(r => r.pid))
+}
+async function assertOwnPids(ownerUid, pids) {
+  const ids = [...new Set((pids || []).map(Number).filter(Boolean))]
+  const own = await ownedPids(ownerUid, ids)
+  if (ids.some(id => !own.has(id))) { const e = new Error('Unknown product'); e.status = 400; throw e }
+}
+
+// One-off: give every product an owner. Products used to be a shared catalogue; each restaurant now
+// gets its own copy of every product it uses, and its recipes, supplier links, stock, forecasts,
+// purchase orders and notifications are re-pointed to that copy.
+async function backfillProductOwners() {
+  await withTx(async q => {
+    const flag = await q(`INSERT INTO migration_flag (key) VALUES ('product_owner_v1') ON CONFLICT DO NOTHING RETURNING key`)
+    if (!flag.rows.length) return
+    // Which restaurants use a recipe (item): through their menus, processes or item stock
+    const recipeOwners = `
+      SELECT mr.rid, m.owner_uid AS owner FROM menu_recipe mr JOIN menu m ON m.mid=mr.mid
+      UNION SELECT pi.rid, pr.owner_uid FROM process_item pi JOIN process pr ON pr.procid=pi.procid
+      UNION SELECT rid, owner_uid FROM recipe_stock`
+    const uses = (await q(`
+      SELECT p.pid, x.owner FROM product p JOIN (
+        SELECT rp.pid, ro.owner FROM recipe_product rp JOIN (${recipeOwners}) ro ON ro.rid=rp.rid
+        UNION SELECT ps.pid, s.owner_uid FROM product_supplier ps JOIN supplier s ON s.sid=ps.sid
+        UNION SELECT pid, owner_uid FROM product_stock
+        UNION SELECT pid, owner_uid FROM product_forecast
+        UNION SELECT soi.pid, so.owner_uid FROM supplier_order_item soi JOIN supplier_order so ON so.soid=soi.soid
+        UNION SELECT pid, owner_uid FROM stock_notification
+      ) x ON x.pid=p.pid
+      WHERE p.owner_uid IS NULL AND x.owner IS NOT NULL
+      ORDER BY p.pid, x.owner`)).rows
+    const byPid = new Map()
+    for (const u of uses) { if (!byPid.has(u.pid)) byPid.set(u.pid, []); byPid.get(u.pid).push(u.owner) }
+    let assigned = 0, copied = 0
+    for (const [pid, owners] of byPid) {
+      await q('UPDATE product SET owner_uid=$1 WHERE pid=$2', [owners[0], pid]); assigned++
+      for (const o of owners.slice(1)) {
+        const { rows: [np] } = await q(`INSERT INTO product (name, caid, unid, deleted, expiry_hours, sku, is_package, owner_uid)
+          SELECT name, caid, unid, deleted, expiry_hours, sku, is_package, $2 FROM product WHERE pid=$1 RETURNING pid`, [pid, o])
+        copied++
+        // Recipes used only by this restaurant switch to its copy (a recipe shared by several keeps the original)
+        await q(`UPDATE recipe_product SET pid=$1 WHERE pid=$2 AND rid IN (
+          SELECT rid FROM (${recipeOwners}) ro GROUP BY rid HAVING bool_and(owner=$3))`, [np.pid, pid, o])
+        await q(`UPDATE product_supplier SET pid=$1 WHERE pid=$2 AND sid IN (SELECT sid FROM supplier WHERE owner_uid=$3)`, [np.pid, pid, o])
+        await q(`UPDATE product_stock SET pid=$1 WHERE pid=$2 AND owner_uid=$3`, [np.pid, pid, o])
+        await q(`UPDATE product_forecast SET pid=$1 WHERE pid=$2 AND owner_uid=$3`, [np.pid, pid, o])
+        await q(`UPDATE supplier_order_item SET pid=$1 WHERE pid=$2 AND soid IN (SELECT soid FROM supplier_order WHERE owner_uid=$3)`, [np.pid, pid, o])
+        await q(`UPDATE stock_notification SET pid=$1 WHERE pid=$2 AND owner_uid=$3`, [np.pid, pid, o])
+      }
+    }
+    // Products nobody uses yet can't be traced to a restaurant, so every restaurant keeps its own copy
+    // (nothing disappears from anyone's list; a restaurant can delete the ones it doesn't need)
+    const { rows: rests } = await q(`SELECT uid FROM "user" WHERE is_manufacturer=true AND employer_uid IS NULL ORDER BY uid`)
+    const { rows: orphans } = await q('SELECT pid FROM product WHERE owner_uid IS NULL AND deleted=false')
+    if (rests.length) {
+      for (const { pid } of orphans) {
+        await q('UPDATE product SET owner_uid=$1 WHERE pid=$2', [rests[0].uid, pid]); assigned++
+        for (const r of rests.slice(1)) {
+          await q(`INSERT INTO product (name, caid, unid, deleted, expiry_hours, sku, is_package, owner_uid)
+            SELECT name, caid, unid, deleted, expiry_hours, sku, is_package, $2 FROM product WHERE pid=$1`, [pid, r.uid]); copied++
+        }
+      }
+    }
+    console.log(`product owners: ${assigned} assigned, ${copied} copies made (${orphans.length} unused products copied to ${rests.length} restaurants)`)
+  })
+}
 
 // Auto-migrate new columns so they exist before any query runs
 let _migrated = false
@@ -117,6 +201,7 @@ async function ensureMigrations() {
       day DATE NOT NULL, owner_uid INTEGER NOT NULL, views INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (day, owner_uid)
     )`)
+    await backfillProductOwners()
   } catch(e) { console.error('Migration error:', e.message) }
 }
 
@@ -1537,12 +1622,12 @@ async function route(method, segments, body, headers, event) {
         FROM product p
         LEFT JOIN units u ON u.unid=p.unid
         LEFT JOIN product_category c ON c.caid=p.caid
-        WHERE p.deleted=false AND p.is_package=false ORDER BY p.name`)]
+        WHERE p.deleted=false AND p.is_package=false AND p.owner_uid=$1 ORDER BY p.name`, [user.uid])]
       if (method === 'POST') {
         const { name, sku, unid, caid } = body
         if (!name?.trim()) return [400, { error: 'Name required' }]
-        const r = await dbr('INSERT INTO product (name,sku,unid,caid) VALUES ($1,$2,$3,$4) RETURNING pid',
-          [name.trim(), sku?.trim()||null, unid||null, caid||null])
+        const r = await dbr('INSERT INTO product (name,sku,unid,caid,owner_uid) VALUES ($1,$2,$3,$4,$5) RETURNING pid',
+          [name.trim(), sku?.trim()||null, unid||null, caid||null, user.uid])
         const [row] = await dbq(`
           SELECT p.pid, p.name, p.sku, p.expiry_hours, u.name AS units, u.unid, c.name AS category, c.caid
           FROM product p LEFT JOIN units u ON u.unid=p.unid
@@ -1552,6 +1637,7 @@ async function route(method, segments, body, headers, event) {
       if (method === 'DELETE') {
         const { ids, cascade_recipes } = body
         if (!Array.isArray(ids) || !ids.length) return [400, { error: 'ids required' }]
+        await assertOwnPids(user.uid, ids)
         if (cascade_recipes) {
           const affected = await dbq(
             `SELECT DISTINCT rp.rid FROM recipe_product rp WHERE rp.pid=ANY($1::int[])`, [ids])
@@ -1573,6 +1659,7 @@ async function route(method, segments, body, headers, event) {
     if (r1 && r1 !== 'lookups' && r1 !== 'usage' && method === 'PATCH') {
       const { name, sku, unid, caid } = body
       if (name !== undefined && !name?.trim()) return [400, { error: 'Name required' }]
+      await assertOwnPids(user.uid, [r1])
       if (name  !== undefined) await dbr('UPDATE product SET name=$1 WHERE pid=$2',  [name.trim(), r1])
       if (sku   !== undefined) await dbr('UPDATE product SET sku=$1 WHERE pid=$2',   [sku?.trim()||null, r1])
       if (unid  !== undefined) await dbr('UPDATE product SET unid=$1 WHERE pid=$2',  [unid||null, r1])
@@ -1585,7 +1672,8 @@ async function route(method, segments, body, headers, event) {
     }
     // GET /products/usage?ids=1,2,3  — returns recipes that use these products
     if (r1 === 'usage' && method === 'GET') {
-      const ids = (segments[2]||'').split(',').map(Number).filter(Boolean)
+      const own = await ownedPids(user.uid, (segments[2]||'').split(','))
+      const ids = [...own]
       if (!ids.length) return [200, {}]
       const rows = await dbq(`
         SELECT rp.pid, r.rid, r.name AS recipe_name
@@ -1607,6 +1695,7 @@ async function route(method, segments, body, headers, event) {
   // ── RECIPES ───────────────────────────────────────────────────────────────
   // Helper: replace all recipe_product rows for a recipe
   async function saveContents(rid, contents) {
+    await assertOwnPids(user.uid, (contents||[]).map(c => c.pid))
     await dbr('DELETE FROM recipe_product WHERE rid=$1', [rid])
     for (const c of (contents||[])) {
       if (!c.pid) continue
@@ -2187,6 +2276,10 @@ async function route(method, segments, body, headers, event) {
   // ── SUPPLIERS ─────────────────────────────────────────────────────────────
   if (r0 === 'suppliers') {
     if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+    if (r1 && r2 === 'products') {
+      const [own] = await dbq('SELECT sid FROM supplier WHERE sid=$1 AND owner_uid=$2', [r1, user.uid])
+      if (!own) return [404, { error:'Not found' }]
+    }
 
     // GET /suppliers/:sid/products — products linked to this supplier
     if (r1 && r2 === 'products' && method === 'GET') {
@@ -2203,6 +2296,7 @@ async function route(method, segments, body, headers, event) {
     // POST /suppliers/:sid/products — link product to supplier
     if (r1 && r2 === 'products' && method === 'POST') {
       const { pid, price, currency } = body
+      await assertOwnPids(user.uid, [pid])
       await dbr(`INSERT INTO product_supplier (pid,sid,price,currency) VALUES ($1,$2,$3,$4)
                  ON CONFLICT (pid,sid) DO UPDATE SET price=$3,currency=$4`,
         [pid, r1, price||null, currency||'AMD'])
@@ -2466,18 +2560,26 @@ async function route(method, segments, body, headers, event) {
     if (r1 === 'orders' && !r2 && method === 'POST') {
       const { sid, items, delivery_term, delivery_fee, currency } = body
       if (!sid) return [400, { error:'Supplier required' }]
+      const [sup] = await dbq('SELECT * FROM supplier WHERE sid=$1 AND owner_uid=$2', [sid, user.uid])
+      if (!sup) return [400, { error:'Unknown supplier' }]
+      if (!Array.isArray(items) || !items.length) return [400, { error:'Add at least one product' }]
+      if (items.some(it => !Number(it.pid))) return [400, { error:'Select a product in every row' }]
+      await assertOwnPids(user.uid, items.map(it => it.pid))
       const now = new Date()
       const order_id = await generateOrderId(sid, user.uid, now.getMinutes())
-      const [sup] = await dbq('SELECT * FROM supplier WHERE sid=$1', [sid])
-      const etd = sup?.schedule ? calcETD(sup.schedule, delivery_term, now) : null
-      const res = await dbr(`INSERT INTO supplier_order (owner_uid,sid,order_id,status,delivery_term,delivery_fee,currency,etd)
-        VALUES ($1,$2,$3,'New',$4,$5,$6,$7) RETURNING soid`,
-        [user.uid, sid, order_id, delivery_term||null, Number(delivery_fee)||0, currency||'AMD', etd])
-      const soid = res.rows[0].soid
-      for (const it of (items||[])) {
-        await dbr('INSERT INTO supplier_order_item (soid,pid,qty_ordered,unit_price,currency) VALUES ($1,$2,$3,$4,$5)',
-          [soid, it.pid, it.qty_ordered||1, it.unit_price||0, it.currency||currency||'AMD'])
-      }
+      const etd = sup.schedule ? calcETD(sup.schedule, delivery_term, now) : null
+      // The order and its lines are saved together: a failure leaves nothing behind
+      const soid = await withTx(async q => {
+        const res = await q(`INSERT INTO supplier_order (owner_uid,sid,order_id,status,delivery_term,delivery_fee,currency,etd)
+          VALUES ($1,$2,$3,'New',$4,$5,$6,$7) RETURNING soid`,
+          [user.uid, sid, order_id, delivery_term||null, Number(delivery_fee)||0, currency||'AMD', etd])
+        const id = res.rows[0].soid
+        for (const it of items) {
+          await q('INSERT INTO supplier_order_item (soid,pid,qty_ordered,unit_price,currency) VALUES ($1,$2,$3,$4,$5)',
+            [id, it.pid, it.qty_ordered||1, it.unit_price||0, it.currency||currency||'AMD'])
+        }
+        return id
+      })
       return [201, await fetchSO(soid)]
     }
 
@@ -2487,16 +2589,22 @@ async function route(method, segments, body, headers, event) {
       const [o] = await dbq('SELECT * FROM supplier_order WHERE soid=$1 AND owner_uid=$2', [r2, user.uid])
       if (!o) return [404, { error:'Not found' }]
       if (o.status !== 'New') return [400, { error:'Only New orders can be edited' }]
-      if (delivery_term !== undefined) await dbr('UPDATE supplier_order SET delivery_term=$1 WHERE soid=$2', [delivery_term, r2])
-      if (delivery_fee !== undefined) await dbr('UPDATE supplier_order SET delivery_fee=$1 WHERE soid=$2', [Number(delivery_fee)||0, r2])
-      if (currency !== undefined)     await dbr('UPDATE supplier_order SET currency=$1 WHERE soid=$2', [currency, r2])
       if (Array.isArray(items)) {
-        await dbr('DELETE FROM supplier_order_item WHERE soid=$1', [r2])
-        for (const it of items) {
-          await dbr('INSERT INTO supplier_order_item (soid,pid,qty_ordered,unit_price,currency) VALUES ($1,$2,$3,$4,$5)',
-            [r2, it.pid, it.qty_ordered||1, it.unit_price||0, it.currency||o.currency||'AMD'])
-        }
+        if (items.some(it => !Number(it.pid))) return [400, { error:'Select a product in every row' }]
+        await assertOwnPids(user.uid, items.map(it => it.pid))
       }
+      await withTx(async q => {
+        if (delivery_term !== undefined) await q('UPDATE supplier_order SET delivery_term=$1 WHERE soid=$2', [delivery_term, r2])
+        if (delivery_fee !== undefined) await q('UPDATE supplier_order SET delivery_fee=$1 WHERE soid=$2', [Number(delivery_fee)||0, r2])
+        if (currency !== undefined)     await q('UPDATE supplier_order SET currency=$1 WHERE soid=$2', [currency, r2])
+        if (Array.isArray(items)) {
+          await q('DELETE FROM supplier_order_item WHERE soid=$1', [r2])
+          for (const it of items) {
+            await q('INSERT INTO supplier_order_item (soid,pid,qty_ordered,unit_price,currency) VALUES ($1,$2,$3,$4,$5)',
+              [r2, it.pid, it.qty_ordered||1, it.unit_price||0, it.currency||o.currency||'AMD'])
+          }
+        }
+      })
       return [200, await fetchSO(r2)]
     }
 
@@ -2554,31 +2662,32 @@ async function route(method, segments, body, headers, event) {
       const [o] = await dbq('SELECT * FROM supplier_order WHERE soid=$1 AND owner_uid=$2', [r2, user.uid])
       if (!o) return [404, { error:'Not found' }]
       if (o.status !== 'Submitted') return [400, { error:'Only Submitted orders can be accepted' }]
-      // Update existing items' actual quantities
-      for (const it of (items_actual||[])) {
-        await dbr('UPDATE supplier_order_item SET qty_actual=$1 WHERE soiid=$2 AND soid=$3',
-          [it.qty_actual, it.soiid, r2])
-      }
-      // Insert newly added items (substitutions)
-      for (const it of (items_added||[])) {
-        if (!it.pid) continue
-        await dbr(`INSERT INTO supplier_order_item (soid,pid,qty_ordered,qty_actual,unit_price,currency)
-          VALUES ($1,$2,0,$3,$4,$5)`, [r2, it.pid, it.qty_actual||0, it.unit_price||0, it.currency||o.currency||'AMD'])
-      }
+      const added = (items_added||[]).filter(it => it.pid)
+      await assertOwnPids(user.uid, added.map(it => it.pid))
       const now = new Date()
-      await dbr(`UPDATE supplier_order SET status='Accepted', accepted_at=$1, comments=$2 WHERE soid=$3`,
-        [now.toISOString(), comments||null, r2])
-      const full = await fetchSO(r2)
-      // Update inventory: add qty_actual of each item to product_stock
-      for (const it of full.items) {
-        const qty = Number(it.qty_actual ?? it.qty_ordered)
-        if (qty > 0) {
-          await dbr(`INSERT INTO product_stock (pid, owner_uid, qty, source, source_id, created_at)
-            VALUES ($1,$2,$3,'supplier_order',$4,$5)
-            ON CONFLICT (pid, owner_uid, source, source_id) DO UPDATE SET qty=$3`,
-            [it.pid, user.uid, qty, r2, now.toISOString()])
+      // Quantities, substitutions, the status change and the stock receipt are saved together
+      await withTx(async q => {
+        for (const it of (items_actual||[])) {
+          await q('UPDATE supplier_order_item SET qty_actual=$1 WHERE soiid=$2 AND soid=$3', [it.qty_actual, it.soiid, r2])
         }
-      }
+        for (const it of added) {
+          await q(`INSERT INTO supplier_order_item (soid,pid,qty_ordered,qty_actual,unit_price,currency)
+            VALUES ($1,$2,0,$3,$4,$5)`, [r2, it.pid, it.qty_actual||0, it.unit_price||0, it.currency||o.currency||'AMD'])
+        }
+        await q(`UPDATE supplier_order SET status='Accepted', accepted_at=$1, comments=$2 WHERE soid=$3`,
+          [now.toISOString(), comments||null, r2])
+        const { rows: lines } = await q('SELECT pid, qty_ordered, qty_actual FROM supplier_order_item WHERE soid=$1', [r2])
+        for (const it of lines) {
+          const qty = Number(it.qty_actual ?? it.qty_ordered)
+          if (qty > 0) {
+            await q(`INSERT INTO product_stock (pid, owner_uid, qty, source, source_id, created_at)
+              VALUES ($1,$2,$3,'supplier_order',$4,$5)
+              ON CONFLICT (pid, owner_uid, source, source_id) DO UPDATE SET qty=$3`,
+              [it.pid, user.uid, qty, r2, now.toISOString()])
+          }
+        }
+      })
+      const full = await fetchSO(r2)
       // Check for discrepancies
       const hasDiscrepancy = full.items.some(it =>
         it.qty_actual !== null && Number(it.qty_actual) !== Number(it.qty_ordered)
@@ -2607,7 +2716,7 @@ async function route(method, segments, body, headers, event) {
         FROM product p
         LEFT JOIN units u ON u.unid=p.unid
         LEFT JOIN product_category c ON c.caid=p.caid
-        WHERE p.deleted=false AND p.is_package=false ORDER BY p.name`)
+        WHERE p.deleted=false AND p.is_package=false AND p.owner_uid=$1 ORDER BY p.name`, [user.uid])
       const links = await dbq(`
         SELECT ps.psid, ps.pid, ps.price, ps.currency,
                s.sid, s.name AS supplier_name
@@ -2621,6 +2730,7 @@ async function route(method, segments, body, headers, event) {
     // PATCH /procurement/:pid — update expiry_hours
     if (r1 && method === 'PATCH') {
       const { expiry_hours } = body
+      await assertOwnPids(user.uid, [r1])
       await dbr('UPDATE product SET expiry_hours=$1 WHERE pid=$2', [expiry_hours||null, r1])
       return [200, { ok:true }]
     }
@@ -5281,9 +5391,9 @@ export const handler = async (event) => {
       body: JSON.stringify(data),
     }
   } catch (err) {
-    console.error(err)
+    if (!err.status) console.error(err)
     return {
-      statusCode: 500,
+      statusCode: err.status || 500,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ error: err.message || 'Internal server error' }),
     }
