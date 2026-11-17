@@ -27,7 +27,7 @@ import { CopyIcon, ImageIcon, ImageUpIcon, Trash2Icon, CheckIcon, MicIcon, Squar
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator, MenuRadioGroup, MenuRadioItem, MenuCheckboxItem } from "@/components/ui/menu";
 import { AlertDialog, AlertDialogPopup, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from "@/components/ui/alert-dialog";
-import { MenuIcon, ReceiptTextIcon, PackageIcon, BookOpenIcon, TruckIcon, ChartColumnIcon, ArrowLeftIcon, ChefHatIcon, MailCheckIcon, PartyPopperIcon, StoreIcon, TriangleAlertIcon, BellIcon, ChevronDownIcon, CircleAlertIcon, CircleCheckIcon, CircleUserIcon, ClockIcon, GlobeIcon, InfoIcon, Link2Icon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SettingsIcon, SunIcon, XIcon } from "lucide-react";
+import { FileDownIcon, SparklesIcon, SendIcon, BanIcon, MenuIcon, ReceiptTextIcon, PackageIcon, BookOpenIcon, TruckIcon, ChartColumnIcon, ArrowLeftIcon, ChefHatIcon, MailCheckIcon, PartyPopperIcon, StoreIcon, TriangleAlertIcon, BellIcon, ChevronDownIcon, CircleAlertIcon, CircleCheckIcon, CircleUserIcon, ClockIcon, GlobeIcon, InfoIcon, Link2Icon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SettingsIcon, SunIcon, XIcon } from "lucide-react";
 
 const BoardOfArrivals = React.lazy(() => import('./screens/BoardOfArrivals.jsx'));
 
@@ -5066,6 +5066,18 @@ function SchedulePage({
 }
 
 // ─── PROCUREMENT PAGE ─────────────────────────────────────────────────────────
+// Number input with − / + buttons (free typing allowed)
+function NumStepper({ value, onChange, onStep, label="Quantity", className="" }) {
+  return (
+    <div data-slot="num-stepper" className={`inline-flex items-center gap-1 ${className}`}>
+      <Button variant="outline" size="icon-xs" aria-label={`Decrease ${label.toLowerCase()}`} onClick={()=>onStep(-1)}><MinusIcon/></Button>
+      <CInput type="number" size="sm" min={0} step="any" aria-label={label} value={value??""} onChange={e=>onChange(e.target.value)}
+        className="w-16 [&_input]:text-center"/>
+      <Button variant="outline" size="icon-xs" aria-label={`Increase ${label.toLowerCase()}`} onClick={()=>onStep(1)}><PlusIcon/></Button>
+    </div>
+  );
+}
+
 function ProcurementPage({
  toast }) {
   const lang = useLangContext();
@@ -5087,6 +5099,7 @@ function ProcurementPage({
   const [cancelView, setCancelView]       = useState(false);   // dialog slid to the cancel notice
   const [acceptComments, setAcceptComments] = useState("");
   const [acceptItems, setAcceptItems]     = useState([]);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   // New order form state
   const [newSid, setNewSid]         = useState("");
@@ -5122,7 +5135,7 @@ function ProcurementPage({
   };
   const removeRow = i => setNewRows(r=>r.filter((_,j)=>j!==i));
   const updateRow = (i,k,v) => setNewRows(r=>r.map((x,j)=>j===i?{...x,[k]:v}:x));
-  const rowQtyChange = (i,delta) => setNewRows(r=>r.map((x,j)=>j===i?{...x,qty:Math.max(0,Math.min(9999,Math.round((parseFloat(x.qty)||0+delta)*1000)/1000))}:x));
+  const rowQtyChange = (i,delta) => setNewRows(r=>r.map((x,j)=>j===i?{...x,qty:Math.max(0,Math.min(9999,Math.round(((parseFloat(x.qty)||0)+delta)*1000)/1000))}:x));
 
   const calcTotals = (rows) => {
     const subtotal = rows.reduce((s,r)=>s+(parseFloat(r.qty)||0)*(parseFloat(r.unit_price)||0),0);
@@ -5134,6 +5147,7 @@ function ProcurementPage({
   const saveOrder = async (submit=false) => {
     if (!newSid) { toast("Select a supplier","error"); return; }
     if (!newRows.length) { toast("Add at least one product","error"); return; }
+    if (newRows.some(r=>!r.pid)) { toast("Select a product in every row","error"); return; }
     setSaving(true);
     try {
       const items = newRows.map(r=>({ pid:Number(r.pid), qty_ordered:parseFloat(r.qty)||1, unit_price:parseFloat(r.unit_price)||0, currency:r.currency||newCurrency }));
@@ -5207,409 +5221,331 @@ function ProcurementPage({
   const toggleSort = k => { if(sortKey===k)setSortDir(d=>d==="asc"?"desc":"asc"); else{setSortKey(k);setSortDir("asc");} };
 
   const totals = calcTotals(newRows);
-  const STATUS_COLORS = { New:G.muted, Submitted:"#eab308", Cancelled:G.red, Delivered:"#3b82f6", Accepted:G.green };
+  const PO_BADGE = { New:"bg-secondary text-muted-foreground", Submitted:"bg-warning/16 text-warning-foreground", Cancelled:"bg-destructive/12 text-destructive-foreground",
+    Delivered:"bg-info/14 text-info-foreground", Accepted:"bg-success/16 text-success-foreground" };
+  const closeView = () => { setViewOrder(null); setCancelView(false); };
+  const productItems = list => list.map(p=>({ label:`${p.name}${p.sku?` (${p.sku})`:""}`, value:String(p.pid) }));
+  const setAcc = (i, patch) => setAcceptItems(a=>a.map((x,j)=>j===i?{...x,...patch}:x));
+  const H = "h-10 px-3 font-semibold text-[11px] text-muted-foreground uppercase tracking-wider whitespace-nowrap";
+  const fmtPlaced = iso => { const d = new Date(iso);
+    return `${String(d.getDate()).padStart(2,"0")}-${String(d.getMonth()+1).padStart(2,"0")}-${d.getFullYear()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; };
+  const pdfBtn = (onClick, label) => (
+    <Button variant="ghost" size="xs" className="text-accent-foreground" onClick={onClick} aria-label={label}><FileDownIcon/>PDF</Button>
+  );
+  const isNewOrder = viewOrder?.status==="New";
 
   return (
-    <Page title={tl("Procurement")} actions={
-      <div style={{display:"flex",alignItems:"center",gap:8}}>
-        <Btn variant="secondary" size="sm" loading={saving} onClick={async()=>{
-          setSaving(true);
-          try{ await api.createDraftOrders(); await load(); toast("Orders created from forecast"); }
-          catch(e){ toast(e.message,"error"); }
-          finally{ setSaving(false); }
-        }}>From forecast</Btn>
-        <Btn size="sm" onClick={()=>setShowNew(s=>!s)}>{tl("+ Order")}</Btn>
-      </div>
-    }>
+    <Page title={tl("Procurement")} actions={<>
+      <Btn variant="secondary" size="sm" loading={saving&&!showNew&&!viewOrder} onClick={async()=>{
+        setSaving(true);
+        try{ await api.createDraftOrders(); await load(); toast("Orders created from forecast"); }
+        catch(e){ toast(e.message,"error"); }
+        finally{ setSaving(false); }
+      }}><SparklesIcon/>From forecast</Btn>
+      <Btn size="sm" onClick={()=>setShowNew(s=>!s)}><PlusIcon/>{tl("+ Order").replace(/^\+\s*/,"")}</Btn>
+    </>}>
 
       {/* ── NEW ORDER FORM ─────────────────────────────────────────────── */}
       {showNew&&(
-        <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:24, animation:"fadeIn 0.2s ease" }}>
-          <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>New Supplier Order</h3>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:14, marginBottom:16 }}>
-            <div>
-              <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Supplier *</label>
-              <select value={newSid} onChange={e=>{setNewSid(e.target.value);setNewTerm("");setNewRows([]);}}
-                style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}>
-                <option value="">Select supplier…</option>
-                {suppliers.map(s=><option key={s.sid} value={s.sid}>{s.name}</option>)}
-              </select>
+        <Card className="mb-6" style={{ animation:"fadeIn 0.2s ease" }}>
+          <CardHeader>
+            <CardTitle className="font-heading text-lg">New supplier order</CardTitle>
+            <CardAction><Button variant="ghost" size="icon-sm" aria-label="Close" onClick={()=>setConfirmCancel(true)}><XIcon/></Button></CardAction>
+          </CardHeader>
+          <CardPanel className="flex flex-col gap-5">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <Select label="Supplier" required value={String(newSid)} onChange={v=>{ setNewSid(v); setNewTerm(""); setNewRows([]); }}
+                placeholder="Select supplier…" options={suppliers.map(s=>({ label:s.name, value:s.sid }))}/>
+              <Select label="Delivery term" value={newTerm} onChange={setNewTerm} placeholder={newSid?"Select term…":"Select a supplier first"}
+                options={availTerms.map(t=>({ label:`${t.name} (cut-off ${t.cutoff})`, value:t.name }))}/>
+              <Field className="gap-1.5">
+                <FieldLabel>Delivery fee</FieldLabel>
+                <CInput size="lg" type="number" min="0" value={newFee} placeholder="0"
+                  onKeyDown={e=>{ if(e.key==="-"||e.key==="−") e.preventDefault(); }}
+                  onChange={e=>{ const v=e.target.value; if(v===''||parseFloat(v)>=0) setNewFee(v); }}
+                  onBlur={e=>{ if(parseFloat(e.target.value)<0||e.target.value==='') setNewFee('0'); }}/>
+              </Field>
+              <Select label="Currency" value={newCurrency} onChange={setNewCurrency} options={["AMD","USD","EUR","RUR"].map(c=>({label:c,value:c}))}/>
             </div>
-            <div>
-              <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Delivery term</label>
-              <select value={newTerm} onChange={e=>setNewTerm(e.target.value)}
-                style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}>
-                <option value="">Select term…</option>
-                {availTerms.map(t=><option key={t.name} value={t.name}>{t.name} (cut-off {t.cutoff})</option>)}
-              </select>
-            </div>
-            <div>
-              <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Delivery fee</label>
-              <input
-                type="number" min="0" value={newFee} placeholder="0"
-                onKeyDown={e=>{ if(e.key==="-"||e.key==="−") e.preventDefault(); }}
-                onChange={e=>{ const v=e.target.value; if(v===''||parseFloat(v)>=0) setNewFee(v); }}
-                onBlur={e=>{ if(parseFloat(e.target.value)<0||e.target.value==='') setNewFee('0'); }}
-                style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}
-              />
-            </div>
-            <div>
-              <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:5}}>Currency</label>
-              <select value={newCurrency} onChange={e=>setNewCurrency(e.target.value)}
-                style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none"}}>
-                {["AMD","USD","EUR","RUR"].map(c=><option key={c}>{c}</option>)}
-              </select>
-            </div>
-          </div>
 
-          {/* Product rows */}
-          <div style={{ background:G.sand, borderRadius:10, padding:14, marginBottom:14 }}>
-            <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr auto", gap:8, marginBottom:8 }}>
-              {["Product",tl("Qty"),"Unit Price","Total",""].map(h=><span key={h} style={{fontSize:11,fontWeight:700,color:G.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>{h}</span>)}
+            {/* Product rows */}
+            <div className="overflow-x-auto rounded-xl border border-border [&_thead_tr]:bg-muted">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className={H}>Product</TableHead>
+                    <TableHead className={H}>{tl("Qty")}</TableHead>
+                    <TableHead className={H}>Unit price</TableHead>
+                    <TableHead className={`${H} text-end`}>Total</TableHead>
+                    <TableHead className="w-10"/>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {newRows.map((r,i)=>{
+                    const tot = (parseFloat(r.qty)||0)*(parseFloat(r.unit_price)||0);
+                    return (
+                      <TableRow key={i} data-slot="po-row">
+                        <TableCell className="min-w-52 px-3 py-2">
+                          <MiniSelect aria-label="Product" value={String(r.pid)} className="w-full"
+                            items={[{label:"Select product…",value:""}, ...productItems(availProducts)]}
+                            onChange={v=>{
+                              const link=procLinks.find(l=>String(l.pid)===v&&String(l.sid)===String(newSid));
+                              setNewRows(rs=>rs.map((x,j)=>j===i?{...x, pid:v, ...(link?{unit_price:link.price||0, currency:link.currency||newCurrency}:{})}:x));
+                            }}/>
+                        </TableCell>
+                        <TableCell className="px-3 py-2">
+                          <NumStepper label="Quantity" value={r.qty} onChange={v=>updateRow(i,"qty",v)} onStep={d=>rowQtyChange(i,d)}/>
+                        </TableCell>
+                        <TableCell className="px-3 py-2">
+                          <CInput type="number" size="sm" min={0} aria-label="Unit price" value={r.unit_price} className="w-24" onChange={e=>updateRow(i,"unit_price",e.target.value)}/>
+                        </TableCell>
+                        <TableCell className="px-3 py-2 text-end font-semibold text-accent-foreground tabular-nums">{tot.toFixed(2)}</TableCell>
+                        <TableCell className="px-2 py-2">
+                          <Button variant="ghost" size="icon-xs" aria-label="Remove product" className="text-muted-foreground hover:text-destructive-foreground" onClick={()=>removeRow(i)}><XIcon/></Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={5} className="px-3 py-2">
+                      <Button variant="outline" size="sm" className="border-dashed" onClick={addRow} disabled={!newSid||!availProducts.length}><PlusIcon/>Add product</Button>
+                      {!newSid
+                        ? <span className="ms-3 text-muted-foreground text-xs">Select a supplier to see their products.</span>
+                        : !availProducts.length && <span className="ms-3 text-muted-foreground text-xs">No products are linked to this supplier yet — link them on Inventory → Products.</span>}
+                    </TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
             </div>
-            {newRows.map((r,i)=>{
-              const tot = (parseFloat(r.qty)||0)*(parseFloat(r.unit_price)||0);
-              return (
-                <div key={i} style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr auto", gap:8, marginBottom:6, alignItems:"center" }}>
-                  <select value={r.pid} onChange={e=>{
-                    const link=procLinks.find(l=>String(l.pid)===e.target.value&&String(l.sid)===String(newSid));
-                    updateRow(i,"pid",e.target.value);
-                    if(link){updateRow(i,"unit_price",link.price||0);updateRow(i,"currency",link.currency||newCurrency);}
-                  }} style={{padding:"6px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}>
-                    <option value="">Select product…</option>
-                    {availProducts.map(p=><option key={p.pid} value={p.pid}>{p.name}{p.sku?` (${p.sku})`:""}</option>)}
-                  </select>
-                  <div style={{display:"flex",alignItems:"center",gap:3}}>
-                    <button onClick={()=>rowQtyChange(i,-1)} style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",fontWeight:700,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
-                    <input type="number" value={r.qty} step="any" min={0} onChange={e=>updateRow(i,"qty",e.target.value)}
-                      style={{width:60,padding:"4px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,textAlign:"center",fontFamily:G.mono,outline:"none"}} />
-                    <button onClick={()=>rowQtyChange(i,1)} style={{width:22,height:22,borderRadius:5,border:"none",background:G.caramel,cursor:"pointer",fontWeight:700,fontSize:13,color:G.white,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
-                  </div>
-                  <input type="number" value={r.unit_price} min={0} onChange={e=>updateRow(i,"unit_price",e.target.value)}
-                    style={{padding:"6px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}} />
-                  <span style={{fontSize:13,fontWeight:600,color:G.caramel}}>{tot.toFixed(2)}</span>
-                  <button onClick={()=>removeRow(i)} style={{background:"none",border:"none",color:G.red,cursor:"pointer",fontSize:16,lineHeight:1}}>×</button>
-                </div>
-              );
-            })}
-            <button onClick={addRow} style={{background:"none",border:`1px dashed ${G.border}`,color:G.caramel,cursor:"pointer",fontSize:13,fontFamily:G.mono,padding:"6px 14px",borderRadius:8,fontWeight:600,marginTop:4}}>
-              + Add product
-            </button>
-          </div>
 
-          {/* Totals */}
-          <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:16 }}>
-            <div style={{ minWidth:240, display:"flex", flexDirection:"column", gap:4 }}>
+            {/* Totals */}
+            <dl className="ms-auto grid w-full max-w-64 grid-cols-[1fr_auto] gap-x-6 gap-y-1 text-sm">
               {[["Subtotal",totals.subtotal],["Delivery",totals.delivery],["VAT (20%)",totals.vat],["Total",totals.total]].map(([l,v])=>(
-                <div key={l} style={{ display:"flex", justifyContent:"space-between", fontSize:13 }}>
-                  <span style={{color:G.muted}}>{l}</span>
-                  <span style={{fontWeight:l==="Total"?700:400,color:l==="Total"?G.caramel:G.dark}}>{v.toFixed(2)} {newCurrency}</span>
-                </div>
+                <React.Fragment key={l}>
+                  <dt className={l==="Total"?"border-border border-t pt-1.5 font-semibold":"text-muted-foreground"}>{l}</dt>
+                  <dd className={`text-end tabular-nums ${l==="Total"?"border-border border-t pt-1.5 font-bold text-accent-foreground":""}`}>{v.toFixed(2)} {newCurrency}</dd>
+                </React.Fragment>
               ))}
-            </div>
-          </div>
-
-          <div style={{ display:"flex", gap:10 }}>
-            <Btn onClick={()=>saveOrder(true)} loading={saving}>Submit</Btn>
-            <Btn variant="secondary" onClick={()=>saveOrder(false)} loading={saving}>Save</Btn>
-            <Btn variant="ghost" onClick={()=>{ setConfirmCancel(true); }}>Cancel</Btn>
-          </div>
-        </div>
+            </dl>
+          </CardPanel>
+          <CardFooter className="justify-end gap-2 border-border border-t pt-4">
+            <Btn variant="ghost" onClick={()=>setConfirmCancel(true)}>Cancel</Btn>
+            <Btn variant="secondary" onClick={()=>saveOrder(false)} loading={saving}>Save draft</Btn>
+            <Btn onClick={()=>saveOrder(true)} loading={saving}><SendIcon/>Submit</Btn>
+          </CardFooter>
+        </Card>
       )}
 
       {/* ── ORDERS TABLE ───────────────────────────────────────────────── */}
-      {loading?<Spinner/>:(
+      {loading?<Spinner/>: sorted.length===0 && !showNew ? (
+        <Empty className="rounded-2xl border border-border border-dashed bg-card">
+          <EmptyHeader>
+            <EmptyMedia variant="icon"><TruckIcon/></EmptyMedia>
+            <EmptyTitle>No supplier orders yet</EmptyTitle>
+            <EmptyDescription>Create one by hand, or let Tanelu draft orders from your forecast.</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      ) : sorted.length>0 && (
         <>
-          <div style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, overflow:"hidden", marginBottom:14 }}>
-            <table style={{ width:"100%", borderCollapse:"collapse" }}>
-              <thead>
-                <tr style={{ background:G.sand, borderBottom:`1px solid ${G.border}` }}>
-                  {[["order_id","ID"],["created_at","Placed on"],["status","Status"],["etd","ETD"],["supplier_name","Supplier"],["po","PO"],["recon","Reconciliation"]].map(([k,h])=>(
-                    <th key={k} onClick={k!=="po"&&k!=="recon"?()=>toggleSort(k):undefined}
-                      style={{ padding:"11px 14px", textAlign:"left", fontSize:11, fontWeight:700, letterSpacing:"0.05em", textTransform:"uppercase", color:G.muted, cursor:k!=="po"&&k!=="recon"?"pointer":"default", userSelect:"none", whiteSpace:"nowrap" }}>
-                      {h}{sortKey===k&&<span style={{marginLeft:3}}>{sortDir==="asc"?"↑":"↓"}</span>}
-                    </th>
+          <TableShell>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  {[["order_id","ID"],["created_at","Placed on"],["status","Status"],["etd","ETD"],["supplier_name","Supplier"]].map(([k,h])=>(
+                    <SortHead key={k} label={h} active={sortKey===k} dir={sortDir} onClick={()=>toggleSort(k)} className={k==="etd"?"max-md:hidden":k==="created_at"?"max-sm:hidden":""}/>
                   ))}
-                </tr>
-              </thead>
-              <tbody>
-                {paged.length===0?(
-                  <tr><td colSpan={7} style={{padding:40,textAlign:"center",color:G.muted}}>No supplier orders yet.</td></tr>
-                ):paged.map((o,i)=>{
-                  const d = new Date(o.created_at);
-                  const dateStr = `${String(d.getDate()).padStart(2,"0")}-${String(d.getMonth()+1).padStart(2,"0")}-${d.getFullYear()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
-                  const etdStr = o.etd ? new Date(o.etd).toLocaleDateString("en-GB") : "—";
-                  return (
-                    <tr key={o.soid} style={{ borderBottom:i<paged.length-1?`1px solid ${G.border}`:"none" }}>
-                      <td style={{padding:"10px 14px"}}>
-                        {["New","Submitted"].includes(o.status) ? (
-                          <button onClick={()=>openOrder(o.soid)} style={{background:"none",border:"none",cursor:"pointer",fontFamily:G.mono,fontSize:14,color:G.caramel,fontWeight:700,textDecoration:"underline",padding:0}}>{o.order_id}</button>
-                        ) : <span style={{fontWeight:700,fontSize:14}}>{o.order_id}</span>}
-                      </td>
-                      <td style={{padding:"10px 14px",fontSize:13,color:G.muted}}>{dateStr}</td>
-                      <td style={{padding:"10px 14px"}}><span style={{fontSize:12,fontWeight:700,color:STATUS_COLORS[o.status]||G.muted}}>{o.status}</span></td>
-                      <td style={{padding:"10px 14px",fontSize:13,color:G.muted}}>{etdStr}</td>
-                      <td style={{padding:"10px 14px",fontSize:14}}>{o.supplier_name}</td>
-                      <td style={{padding:"10px 14px"}}>
-                        {o.po_pdf_url&&o.status!=="New"?(
-                          <button onClick={async()=>{ const r=await api.getSupplierOrderPDF(o.soid); downloadPDF(r.pdf,o.order_id,"purchase_order"); }}
-                            style={{background:"none",border:"none",cursor:"pointer",color:G.caramel,fontFamily:G.mono,fontSize:12,fontWeight:600}}>PDF</button>
-                        ):<span style={{color:G.muted,fontSize:12}}>—</span>}
-                      </td>
-                      <td style={{padding:"10px 14px"}}>
-                        {o.recon_pdf_url&&o.status==="Accepted"?(
-                          <button onClick={async()=>{ const r=await api.getSupplierOrderPDF(o.soid,"recon"); downloadPDF(r.pdf,o.order_id,"reconciliation"); }}
-                            style={{background:"none",border:"none",cursor:"pointer",color:G.caramel,fontFamily:G.mono,fontSize:12,fontWeight:600}}>PDF</button>
-                        ):<span style={{color:G.muted,fontSize:12}}>—</span>}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Pagination */}
-          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:10 }}>
-            <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-              <span style={{fontSize:13,color:G.muted}}>Rows:</span>
-              {[10,25,50].map(n=>(
-                <button key={n} onClick={()=>{setPageSize(n);setPage(0);}} style={{padding:"3px 9px",borderRadius:6,border:`1px solid ${pageSize===n?G.caramel:G.border}`,background:pageSize===n?G.caramel:G.white,color:pageSize===n?G.white:G.muted,fontSize:12,cursor:"pointer",fontFamily:G.mono}}>{n}</button>
-              ))}
-            </div>
-            <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-              <span style={{fontSize:13,color:G.muted}}>{sorted.length} orders · page {totalPages?page+1:0}/{totalPages}</span>
-              {[["«",0],["‹",page-1],["›",page+1],["»",totalPages-1]].map(([lbl,target])=>(
-                <button key={lbl} onClick={()=>setPage(Math.max(0,Math.min(totalPages-1,target)))} disabled={target<0||target>=totalPages}
-                  style={{padding:"3px 8px",borderRadius:6,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",fontSize:13,opacity:(target<0||target>=totalPages)?0.4:1}}>{lbl}</button>
-              ))}
-            </div>
-          </div>
+                  <TableHead className={`${H} px-4`}>PO</TableHead>
+                  <TableHead className={`${H} px-4`}>Reconciliation</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {paged.map(o=>(
+                  <TableRow key={o.soid}>
+                    <TableCell className={`${CELL} font-mono font-semibold`}>
+                      {["New","Submitted"].includes(o.status)
+                        ? <button type="button" data-slot="row-link" onClick={()=>openOrder(o.soid)} className="text-accent-foreground underline decoration-dotted underline-offset-3 hover:decoration-solid">{o.order_id}</button>
+                        : o.order_id}
+                    </TableCell>
+                    <TableCell className={`${CELL} text-muted-foreground tabular-nums max-sm:hidden`}>{fmtPlaced(o.created_at)}</TableCell>
+                    <TableCell className={CELL}><CBadge variant="outline" className={`border-transparent font-semibold ${PO_BADGE[o.status]||PO_BADGE.New}`}>{o.status}</CBadge></TableCell>
+                    <TableCell className={`${CELL} text-muted-foreground tabular-nums max-md:hidden`}>{o.etd ? new Date(o.etd).toLocaleDateString("en-GB") : "—"}</TableCell>
+                    <TableCell className={CELL}>{o.supplier_name}</TableCell>
+                    <TableCell className="px-4 py-2">
+                      {o.po_pdf_url&&o.status!=="New"
+                        ? pdfBtn(async()=>{ const r=await api.getSupplierOrderPDF(o.soid); downloadPDF(r.pdf,o.order_id,"purchase_order"); }, `Purchase order ${o.order_id} PDF`)
+                        : <span className="text-muted-foreground text-xs">—</span>}
+                    </TableCell>
+                    <TableCell className="px-4 py-2">
+                      {o.recon_pdf_url&&o.status==="Accepted"
+                        ? pdfBtn(async()=>{ const r=await api.getSupplierOrderPDF(o.soid,"recon"); downloadPDF(r.pdf,o.order_id,"reconciliation"); }, `Reconciliation ${o.order_id} PDF`)
+                        : <span className="text-muted-foreground text-xs">—</span>}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableShell>
+          <TablePager total={sorted.length} page={page} pageCount={totalPages} pageSize={pageSize} sizes={[10,25,50]}
+            label={`${sorted.length} orders · page ${totalPages?page+1:0}/${totalPages}`}
+            onPage={setPage} onPageSize={n=>{ setPageSize(n); setPage(0); }}/>
         </>
       )}
 
       {/* ── VIEW / ACCEPT ORDER DIALOG ──────────────────────────────────── */}
       {viewOrder&&(
-        <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
-          <div style={{ background:G.white, borderRadius:16, width:"100%", maxWidth:760, overflow:"hidden", boxShadow:"0 20px 60px rgba(44,24,16,0.2)", animation:"fadeIn 0.2s ease" }}>
-           <div style={{ display:"flex", width:"200%", transform:cancelView?"translateX(-50%)":"translateX(0)", transition:"transform 0.3s ease" }}>
-            <div style={{ width:"50%", flexShrink:0, maxHeight:"90vh", display:"flex", flexDirection:"column", visibility:cancelView?"hidden":"visible", transition:"visibility 0.3s" }}>
-            <div style={{ padding:"20px 24px", borderBottom:`1px solid ${G.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-              <h3 style={{fontFamily:G.font,fontSize:18}}>
-                {viewOrder.status==="New"?"Edit order":"Accept order"} #{viewOrder.order_id} — {viewOrder.supplier_name}
-              </h3>
-              <button onClick={()=>{setViewOrder(null);setCancelView(false);}} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:G.muted,lineHeight:1}}>×</button>
+        <Modal onClose={closeView} className="max-w-3xl"
+          title={`${isNewOrder?"Edit order":"Accept order"} #${viewOrder.order_id}`}
+          description={viewOrder.supplier_name}
+          footer={<>
+            <div>
+              {viewOrder.status==="Submitted" && <Btn variant="ghost" style={{ color:"var(--destructive-foreground)" }} onClick={()=>setCancelView(true)}><BanIcon/>Cancel order</Btn>}
+              {isNewOrder && <Btn variant="ghost" style={{ color:"var(--destructive-foreground)" }} onClick={()=>setConfirmDelete(true)}><Trash2Icon/>Delete</Btn>}
             </div>
-            <div style={{ flex:1, overflowY:"auto", padding:24 }}>
-              <table style={{ width:"100%", borderCollapse:"collapse", marginBottom:16 }}>
-                <thead>
-                  <tr style={{ background:G.sand, borderBottom:`1px solid ${G.border}` }}>
-                    {(viewOrder.status==="New"
-                      ? ["Product","SKU",tl("Qty"),"Unit Price","Total",""]
-                      : ["Product","SKU","Qty (ordered)","Qty (actual)","Unit Price","Total (ord/act)",""]
-                    ).map(h=>(
-                      <th key={h} style={{padding:"9px 12px",textAlign:"left",fontSize:11,fontWeight:700,textTransform:"uppercase",color:G.muted,letterSpacing:"0.04em"}}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {acceptItems.map((it,i)=>{
-                    const qty = viewOrder.status==="New" ? parseFloat(it.qty_actual)??parseFloat(it.qty_ordered) : parseFloat(it.qty_actual);
-                    const totOrd = (parseFloat(it.qty_ordered)||0)*(parseFloat(it.unit_price)||0);
-                    const totAct = (qty||0)*(parseFloat(it.unit_price)||0);
-                    const hasDiscrepancy = viewOrder.status!=="New" && parseFloat(it.qty_actual) !== parseFloat(it.qty_ordered);
-                    const isAdded = !it.soiid;
-                    if (viewOrder.status==="New") return (
-                      <tr key={it.soiid||`new-${i}`} style={{ borderBottom:`1px solid ${G.border}` }}>
-                        <td style={{padding:"9px 12px",fontSize:14}}>
-                          {isAdded ? (
-                            <select value={it.pid} onChange={e=>{
-                              const p=products.find(x=>String(x.pid)===e.target.value);
-                              setAcceptItems(a=>a.map((x,j)=>j===i?{...x,pid:e.target.value,product_name:p?.name||"",sku:p?.sku||""}:x));
-                            }} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}>
-                              <option value="">Select product…</option>
-                              {products.map(p=><option key={p.pid} value={p.pid}>{p.name}{p.sku?` (${p.sku})`:""}</option>)}
-                            </select>
-                          ) : it.product_name}
-                        </td>
-                        <td style={{padding:"9px 12px",fontSize:13,color:G.muted}}>{it.sku||"—"}</td>
-                        <td style={{padding:"9px 12px"}}>
-                          <div style={{display:"flex",alignItems:"center",gap:4}}>
-                            <button onClick={()=>setAcceptItems(a=>a.map((x,j)=>j===i?{...x,qty_actual:Math.max(0,(parseFloat(x.qty_actual)||0)-1)}:x))} style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",fontWeight:700,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
-                            <input type="number" value={it.qty_actual??it.qty_ordered} step="any" min={0}
-                              onChange={e=>setAcceptItems(a=>a.map((x,j)=>j===i?{...x,qty_actual:e.target.value}:x))}
-                              style={{width:70,padding:"4px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,textAlign:"center",fontFamily:G.mono,outline:"none"}}/>
-                            <button onClick={()=>setAcceptItems(a=>a.map((x,j)=>j===i?{...x,qty_actual:(parseFloat(x.qty_actual)||0)+1}:x))} style={{width:22,height:22,borderRadius:5,border:"none",background:G.caramel,cursor:"pointer",fontWeight:700,fontSize:13,color:G.white,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
-                          </div>
-                        </td>
-                        <td style={{padding:"9px 12px"}}>
-                          <input type="number" value={it.unit_price} min={0} step="any"
-                            onChange={e=>setAcceptItems(a=>a.map((x,j)=>j===i?{...x,unit_price:e.target.value}:x))}
-                            style={{width:80,padding:"4px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}/>
-                        </td>
-                        <td style={{padding:"9px 12px",fontSize:13,color:G.caramel,fontWeight:600}}>{totAct.toFixed(2)}</td>
-                        <td style={{padding:"9px 12px"}}>
-                          {isAdded&&<button onClick={()=>setAcceptItems(a=>a.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:G.red,cursor:"pointer",fontSize:16,lineHeight:1}}>×</button>}
-                        </td>
-                      </tr>
-                    );
-                    return (
-                      <tr key={it.soiid||`new-${i}`} style={{ background:hasDiscrepancy?"#FFCAB9":"transparent", borderBottom:`1px solid ${G.border}` }}>
-                        <td style={{padding:"9px 12px",fontSize:14}}>
-                          {isAdded ? (
-                            <select value={it.pid} onChange={e=>{
-                              const p=products.find(x=>String(x.pid)===e.target.value);
-                              setAcceptItems(a=>a.map((x,j)=>j===i?{...x,pid:e.target.value,product_name:p?.name||"",sku:p?.sku||""}:x));
-                            }} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}}>
-                              <option value="">Select product…</option>
-                              {products.map(p=><option key={p.pid} value={p.pid}>{p.name}{p.sku?` (${p.sku})`:""}</option>)}
-                            </select>
-                          ) : it.product_name}
-                        </td>
-                        <td style={{padding:"9px 12px",fontSize:13,color:G.muted}}>{isAdded?"—":it.sku||"—"}</td>
-                        <td style={{padding:"9px 12px",fontSize:14,color:G.muted}}>{isAdded?"—":it.qty_ordered}</td>
-                        <td style={{padding:"9px 12px"}}>
-                          <div style={{display:"flex",alignItems:"center",gap:4}}>
-                            <button onClick={()=>setAcceptItems(a=>a.map((x,j)=>j===i?{...x,qty_actual:Math.max(0,(parseFloat(x.qty_actual)||0)-1)}:x))} style={{width:22,height:22,borderRadius:5,border:`1px solid ${G.border}`,background:G.white,cursor:"pointer",fontWeight:700,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
-                            <input type="number" value={it.qty_actual} step="any" min={0}
-                              onChange={e=>setAcceptItems(a=>a.map((x,j)=>j===i?{...x,qty_actual:e.target.value}:x))}
-                              style={{width:70,padding:"4px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,textAlign:"center",fontFamily:G.mono,outline:"none"}} />
-                            <button onClick={()=>setAcceptItems(a=>a.map((x,j)=>j===i?{...x,qty_actual:(parseFloat(x.qty_actual)||0)+1}:x))} style={{width:22,height:22,borderRadius:5,border:"none",background:G.caramel,cursor:"pointer",fontWeight:700,fontSize:13,color:G.white,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
-                          </div>
-                        </td>
-                        <td style={{padding:"9px 12px",fontSize:13}}>
-                          {isAdded ? (
-                            <input type="number" value={it.unit_price} min={0} step="any" onChange={e=>setAcceptItems(a=>a.map((x,j)=>j===i?{...x,unit_price:e.target.value}:x))}
-                              style={{width:80,padding:"4px 6px",borderRadius:6,border:`1px solid ${G.border}`,fontSize:13,fontFamily:G.mono,outline:"none"}} />
-                          ) : `${it.unit_price} ${it.currency}`}
-                        </td>
-                        <td style={{padding:"9px 12px",fontSize:13,color:G.caramel,fontWeight:600}}>
-                          {isAdded ? `— / ${((parseFloat(it.qty_actual)||0)*(parseFloat(it.unit_price)||0)).toFixed(2)}`
-                            : `${totOrd.toFixed(2)} / ${totAct.toFixed(2)}`}
-                        </td>
-                        <td style={{padding:"9px 12px"}}>
-                          {isAdded && <button onClick={()=>setAcceptItems(a=>a.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:G.red,cursor:"pointer",fontSize:16,lineHeight:1}}>×</button>}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  <tr>
-                    <td colSpan={7} style={{padding:"8px 12px"}}>
-                      <button onClick={()=>setAcceptItems(a=>[...a,{pid:"",product_name:"",sku:"",qty_ordered:0,qty_actual:1,unit_price:0,currency:viewOrder?.currency||"AMD",soiid:null}])}
-                        style={{background:"none",border:`1px dashed ${G.border}`,color:G.caramel,cursor:"pointer",fontSize:12,fontFamily:G.mono,padding:"5px 12px",borderRadius:7,fontWeight:600}}>
-                        + Add product
-                      </button>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+            <div className="flex gap-2">
+              <Btn variant="ghost" onClick={closeView}>Close</Btn>
+              {isNewOrder ? (<>
+                <Btn variant="secondary" loading={saving} onClick={async()=>{
+                  setSaving(true);
+                  try {
+                    const items = acceptItems.filter(it=>it.soiid).map(it=>({soiid:it.soiid,pid:it.pid,qty_ordered:parseFloat(it.qty_actual)||0,unit_price:parseFloat(it.unit_price)||0,currency:it.currency}));
+                    await api.updateSupplierOrder(viewOrder.soid, { items });
+                    toast("Order saved"); await load(); setViewOrder(null);
+                  } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
+                }}>Save</Btn>
+                <Btn loading={saving} onClick={async()=>{
+                  setSaving(true);
+                  try {
+                    const submitted = await api.submitSupplierOrder(viewOrder.soid);
+                    toast(`Order #${submitted.order_id} submitted`);
+                    downloadPDF(submitted.po_pdf_url, submitted.order_id, "purchase_order");
+                    await load(); setViewOrder(null);
+                  } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
+                }}><SendIcon/>Submit</Btn>
+              </>) : viewOrder.status==="Submitted" ? (
+                <Btn onClick={()=>setAcceptDialog(true)}><CheckIcon/>Accept order</Btn>
+              ) : null}
             </div>
-            <div style={{ padding:"16px 24px", borderTop:`1px solid ${G.border}`, display:"flex", gap:10, justifyContent:"space-between", alignItems:"center" }}>
-              <div>
-                {viewOrder?.status==="Submitted" && (
-                  <Btn variant="danger" onClick={()=>setCancelView(true)}>Cancel →</Btn>
-                )}
-                {viewOrder?.status==="New" && (
-                  <Btn variant="danger" loading={saving} onClick={async()=>{
-                    if(!window.confirm("Delete this order? This cannot be undone.")) return;
-                    setSaving(true);
-                    try {
-                      await api.deleteSupplierOrder(viewOrder.soid);
-                      setOrders(prev=>prev.filter(o=>o.soid!==viewOrder.soid));
-                      toast("Order deleted"); setViewOrder(null);
-                    } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
-                  }}>Delete</Btn>
-                )}
-              </div>
-              <div style={{display:"flex",gap:10}}>
-                <Btn variant="ghost" onClick={()=>{setViewOrder(null);setCancelView(false);}}>Close</Btn>
-                {viewOrder?.status==="New" ? (<>
-                  <Btn variant="secondary" loading={saving} onClick={async()=>{
-                    setSaving(true);
-                    try {
-                      const items = acceptItems.filter(it=>it.soiid).map(it=>({soiid:it.soiid,pid:it.pid,qty_ordered:parseFloat(it.qty_actual)||0,unit_price:parseFloat(it.unit_price)||0,currency:it.currency}));
-                      await api.updateSupplierOrder(viewOrder.soid, { items });
-                      toast("Order saved"); await load(); setViewOrder(null);
-                    } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
-                  }}>Save</Btn>
-                  <Btn loading={saving} onClick={async()=>{
-                    setSaving(true);
-                    try {
-                      const submitted = await api.submitSupplierOrder(viewOrder.soid);
-                      toast(`Order #${submitted.order_id} submitted`);
-                      downloadPDF(submitted.po_pdf_url, submitted.order_id, "purchase_order");
-                      await load(); setViewOrder(null);
-                    } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
-                  }}>Submit</Btn>
-                </>) : viewOrder?.status==="Submitted" ? (
-                  <Btn onClick={()=>setAcceptDialog(true)}>Accept order</Btn>
-                ) : null}
-              </div>
-            </div>
-            </div>
-            {/* Cancel notice (slides in from the right) */}
-            <div style={{ width:"50%", flexShrink:0, display:"flex", flexDirection:"column", visibility:cancelView?"visible":"hidden", transition:"visibility 0.3s" }}>
-              <div style={{ padding:"20px 24px", borderBottom:`1px solid ${G.border}` }}>
-                <h3 style={{fontFamily:G.font,fontSize:18}}>Cancel order #{viewOrder.order_id} — {viewOrder.supplier_name}</h3>
-              </div>
-              <div style={{ padding:24, flex:1 }}>
-                <p style={{fontSize:14,color:G.dark,lineHeight:1.7}}>
-                  Order #{viewOrder.order_id} will be terminated. Tanelu will not revoke the order with the supplier. Please, be sure to communicate your decision to {viewOrder.supplier_name}, if you already placed this order. If you wanted to close the dialog instead, just click "Close".
-                </p>
-              </div>
-              <div style={{ padding:"16px 24px", borderTop:`1px solid ${G.border}`, display:"flex", gap:10, justifyContent:"space-between", alignItems:"center" }}>
-                <Btn variant="secondary" onClick={()=>setCancelView(false)}>← Accept</Btn>
-                <div style={{display:"flex",gap:10}}>
-                  <Btn variant="ghost" onClick={()=>{setViewOrder(null);setCancelView(false);}}>Close</Btn>
-                  <Btn variant="danger" loading={saving} onClick={async()=>{
-                    setSaving(true);
-                    try {
-                      const u = await api.cancelSupplierOrder(viewOrder.soid);
-                      setOrders(prev=>prev.map(o=>o.soid===viewOrder.soid?{...o,...u}:o));
-                      toast(`Order #${viewOrder.order_id} cancelled`);
-                      setViewOrder(null); setCancelView(false);
-                      await load();
-                    } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
-                  }}>Cancel anyway</Btn>
-                </div>
-              </div>
-            </div>
-           </div>
+          </>}>
+          <div className="-mx-1 overflow-x-auto rounded-xl border border-border [&_thead_tr]:bg-muted">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  {(isNewOrder
+                    ? ["Product","SKU",tl("Qty"),"Unit price","Total",""]
+                    : ["Product","SKU","Ordered","Actual","Unit price","Total (ord / act)",""]
+                  ).map((h,k)=><TableHead key={k} className={H}>{h}</TableHead>)}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {acceptItems.map((it,i)=>{
+                  const qty = isNewOrder ? (parseFloat(it.qty_actual)??parseFloat(it.qty_ordered)) : parseFloat(it.qty_actual);
+                  const totOrd = (parseFloat(it.qty_ordered)||0)*(parseFloat(it.unit_price)||0);
+                  const totAct = (qty||0)*(parseFloat(it.unit_price)||0);
+                  const hasDiscrepancy = !isNewOrder && parseFloat(it.qty_actual) !== parseFloat(it.qty_ordered);
+                  const isAdded = !it.soiid;
+                  const productCell = isAdded
+                    ? <MiniSelect aria-label="Product" value={String(it.pid)} className="w-full min-w-44"
+                        items={[{label:"Select product…",value:""}, ...productItems(products)]}
+                        onChange={v=>{ const p=products.find(x=>String(x.pid)===v); setAcc(i,{pid:v,product_name:p?.name||"",sku:p?.sku||""}); }}/>
+                    : <span className="font-medium">{it.product_name}</span>;
+                  const qtyCell = <NumStepper label="Quantity" value={it.qty_actual??it.qty_ordered}
+                    onChange={v=>setAcc(i,{qty_actual:v})}
+                    onStep={d=>setAcc(i,{qty_actual:Math.max(0,(parseFloat(it.qty_actual)||0)+d)})}/>;
+                  const priceInput = <CInput type="number" size="sm" min={0} step="any" aria-label="Unit price" value={it.unit_price} className="w-24"
+                    onChange={e=>setAcc(i,{unit_price:e.target.value})}/>;
+                  const removeBtn = isAdded && <Button variant="ghost" size="icon-xs" aria-label="Remove product" className="text-muted-foreground hover:text-destructive-foreground" onClick={()=>setAcceptItems(a=>a.filter((_,j)=>j!==i))}><XIcon/></Button>;
+                  return isNewOrder ? (
+                    <TableRow key={it.soiid||`new-${i}`}>
+                      <TableCell className="px-3 py-2">{productCell}</TableCell>
+                      <TableCell className="px-3 py-2 text-muted-foreground text-xs">{it.sku||"—"}</TableCell>
+                      <TableCell className="px-3 py-2">{qtyCell}</TableCell>
+                      <TableCell className="px-3 py-2">{priceInput}</TableCell>
+                      <TableCell className="px-3 py-2 font-semibold text-accent-foreground tabular-nums">{totAct.toFixed(2)}</TableCell>
+                      <TableCell className="px-2 py-2">{removeBtn}</TableCell>
+                    </TableRow>
+                  ) : (
+                    <TableRow key={it.soiid||`new-${i}`} className={hasDiscrepancy?"bg-destructive/8 hover:bg-destructive/12":""}>
+                      <TableCell className="px-3 py-2">{productCell}{hasDiscrepancy&&<span className="sr-only"> (discrepancy)</span>}</TableCell>
+                      <TableCell className="px-3 py-2 text-muted-foreground text-xs">{isAdded?"—":it.sku||"—"}</TableCell>
+                      <TableCell className="px-3 py-2 text-muted-foreground tabular-nums">{isAdded?"—":it.qty_ordered}</TableCell>
+                      <TableCell className="px-3 py-2">{qtyCell}</TableCell>
+                      <TableCell className="px-3 py-2 text-sm tabular-nums">{isAdded ? priceInput : `${it.unit_price} ${it.currency}`}</TableCell>
+                      <TableCell className={`px-3 py-2 font-semibold tabular-nums ${hasDiscrepancy?"text-destructive-foreground":"text-accent-foreground"}`}>
+                        {isAdded ? `— / ${((parseFloat(it.qty_actual)||0)*(parseFloat(it.unit_price)||0)).toFixed(2)}` : `${totOrd.toFixed(2)} / ${totAct.toFixed(2)}`}
+                      </TableCell>
+                      <TableCell className="px-2 py-2">{removeBtn}</TableCell>
+                    </TableRow>
+                  );
+                })}
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={7} className="px-3 py-2">
+                    <Button variant="outline" size="sm" className="border-dashed"
+                      onClick={()=>setAcceptItems(a=>[...a,{pid:"",product_name:"",sku:"",qty_ordered:0,qty_actual:1,unit_price:0,currency:viewOrder?.currency||"AMD",soiid:null}])}>
+                      <PlusIcon/>Add product
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
           </div>
-        </div>
+          {!isNewOrder&&acceptItems.some(it=>it.soiid&&parseFloat(it.qty_actual)!==parseFloat(it.qty_ordered))&&(
+            <p className="mt-3 flex items-center gap-1.5 text-destructive-foreground text-xs"><TriangleAlertIcon className="size-3.5"/>Highlighted rows differ from what was ordered — a reconciliation report will be created.</p>
+          )}
+        </Modal>
       )}
+
+      {/* Cancel a submitted order */}
+      <Dialog open={!!viewOrder && cancelView} title={`Cancel order #${viewOrder?.order_id||""}?`} confirmLabel="Cancel anyway"
+        onCancel={()=>setCancelView(false)}
+        onConfirm={async()=>{
+          setSaving(true);
+          try {
+            const u = await api.cancelSupplierOrder(viewOrder.soid);
+            setOrders(prev=>prev.map(o=>o.soid===viewOrder.soid?{...o,...u}:o));
+            toast(`Order #${viewOrder.order_id} cancelled`);
+            closeView();
+            await load();
+          } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
+        }}>
+        Order #{viewOrder?.order_id} will be terminated. Tanelu will not revoke the order with the supplier. Please, be sure to communicate your decision to {viewOrder?.supplier_name}, if you already placed this order.
+      </Dialog>
+
+      {/* Delete a draft order */}
+      <Dialog open={!!viewOrder && confirmDelete} title={`Delete order #${viewOrder?.order_id||""}?`} confirmLabel="Delete"
+        onCancel={()=>setConfirmDelete(false)}
+        onConfirm={async()=>{
+          setConfirmDelete(false); setSaving(true);
+          try {
+            await api.deleteSupplierOrder(viewOrder.soid);
+            setOrders(prev=>prev.filter(o=>o.soid!==viewOrder.soid));
+            toast("Order deleted"); setViewOrder(null);
+          } catch(e){ toast(e.message,"error"); } finally{ setSaving(false); }
+        }}>
+        This cannot be undone.
+      </Dialog>
 
       {/* Accept confirm dialog */}
       {acceptDialog&&(
-        <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1100, display:"flex", alignItems:"center", justifyContent:"center" }}>
-          <div style={{ background:G.white, borderRadius:16, padding:32, maxWidth:480, width:"90%", boxShadow:"0 20px 60px rgba(44,24,16,0.2)" }}>
-            <h3 style={{fontFamily:G.font,fontSize:20,marginBottom:12}}>Accept order?</h3>
-            <p style={{color:G.muted,fontSize:14,lineHeight:1.6,marginBottom:16}}>The order will become accepted and no changes will be available from this point. Please, double-check the contents and add comments before you proceed. In case of discrepancies, a reconciliation report will be created.</p>
-            <textarea value={acceptComments} onChange={e=>setAcceptComments(e.target.value.slice(0,1000))}
-              placeholder="Comments (optional, up to 1000 characters)"
-              rows={4} style={{width:"100%",padding:"10px 12px",borderRadius:8,border:`1px solid ${G.border}`,fontSize:14,fontFamily:G.mono,outline:"none",resize:"vertical",marginBottom:6}} />
-            <span style={{fontSize:11,color:G.muted}}>{acceptComments.length}/1000</span>
-            <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:14}}>
+        <Modal onClose={()=>setAcceptDialog(false)} title="Accept order?" className="max-w-md"
+          description="The order will become accepted and no changes will be available from this point. Please, double-check the contents and add comments before you proceed. In case of discrepancies, a reconciliation report will be created."
+          footer={<>
+            <span className="text-muted-foreground text-xs tabular-nums">{acceptComments.length}/1000</span>
+            <div className="flex gap-2">
               <Btn variant="ghost" onClick={()=>setAcceptDialog(false)}>Cancel</Btn>
-              <Btn onClick={doAccept} loading={saving}>Yes</Btn>
+              <Btn onClick={doAccept} loading={saving}><CheckIcon/>Accept</Btn>
             </div>
-          </div>
-        </div>
+          </>}>
+          <Textarea value={acceptComments} onChange={e=>setAcceptComments(e.target.value.slice(0,1000))}
+            placeholder="Comments (optional, up to 1000 characters)" aria-label="Comments" rows={4}/>
+        </Modal>
       )}
 
-      {/* Cancel new order confirm dialog */}
-      {confirmCancel&&(
-        <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1100, display:"flex", alignItems:"center", justifyContent:"center" }}>
-          <div style={{ background:G.white, borderRadius:16, padding:32, maxWidth:420, width:"90%", boxShadow:"0 20px 60px rgba(44,24,16,0.2)" }}>
-            <h3 style={{fontFamily:G.font,fontSize:20,marginBottom:12}}>Discard order?</h3>
-            <p style={{color:G.muted,fontSize:14,marginBottom:20}}>The changes to the order will not be saved. Are you sure?</p>
-            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-              <Btn variant="ghost" onClick={()=>setConfirmCancel(false)}>Cancel</Btn>
-              <Btn variant="danger" onClick={()=>{ setShowNew(false); resetNewForm(); setConfirmCancel(false); }}>Yes</Btn>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Discard new order */}
+      <Dialog open={confirmCancel} title="Discard order?" confirmLabel="Discard"
+        onCancel={()=>setConfirmCancel(false)}
+        onConfirm={()=>{ setShowNew(false); resetNewForm(); setConfirmCancel(false); }}>
+        The changes to the order will not be saved.
+      </Dialog>
     </Page>
   );
 }
@@ -5642,99 +5578,81 @@ function SupplierForm({
     schedule: { timezone, delivery: terms }
   });
 
-  if (slide==="schedule") return (
-    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-        <h4 style={{ fontFamily:G.font, fontSize:15 }}>Schedule</h4>
-        <button onClick={()=>setSlide("general")} style={{ background:"none", border:"none", color:G.caramel, cursor:"pointer", fontFamily:G.mono, fontSize:13, fontWeight:600 }}>{tl("← General")}</button>
-      </div>
-      <Select label="Timezone" value={timezone} onChange={setTimezone} options={TIMEZONES} />
-
-      {/* Delivery terms table */}
-      <div>
-        <p style={{ fontSize:13, fontWeight:600, marginBottom:8, color:G.dark }}>Delivery terms</p>
-        <div style={{ background:G.white, borderRadius:10, border:`1px solid ${G.border}`, overflow:"hidden", marginBottom:10 }}>
-          <table style={{ width:"100%", borderCollapse:"collapse" }}>
-            <thead>
-              <tr style={{ background:G.sand }}>
-                <th style={{ padding:"9px 12px", textAlign:"left", fontSize:11, fontWeight:700, textTransform:"uppercase", color:G.muted, letterSpacing:"0.05em" }}>Term</th>
-                <th style={{ padding:"9px 12px", textAlign:"left", fontSize:11, fontWeight:700, textTransform:"uppercase", color:G.muted }}>Cut-off</th>
-                <th style={{ padding:"9px 12px", textAlign:"center", fontSize:11, fontWeight:700, textTransform:"uppercase", color:G.muted }}>Before (days)</th>
-                <th style={{ padding:"9px 12px", textAlign:"center", fontSize:11, fontWeight:700, textTransform:"uppercase", color:G.muted }}>After (days)</th>
-                <th style={{ width:32 }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedTerms.map((t,i)=>(
-                <tr key={i} style={{ borderTop:`1px solid ${G.border}` }}>
-                  <td style={{ padding:"9px 12px", fontSize:14 }}>{t.name}</td>
-                  <td style={{ padding:"9px 12px", fontSize:14, color:G.muted }}>{t.cutoff}</td>
-                  <td style={{ padding:"9px 12px", fontSize:14, textAlign:"center" }}>{t.days_before}</td>
-                  <td style={{ padding:"9px 12px", fontSize:14, textAlign:"center", color:G.muted }}>{t.days_after ?? t.days_before+1}</td>
-                  <td style={{ padding:"9px 12px" }}>
-                    <button onClick={()=>removeTerm(terms.indexOf(t))} style={{ background:"none", border:"none", color:G.red, cursor:"pointer", fontSize:14 }}>×</button>
-                  </td>
-                </tr>
-              ))}
-              {sortedTerms.length===0&&<tr><td colSpan={5} style={{ padding:20, textAlign:"center", color:G.muted, fontSize:13 }}>{tl("No terms yet.")}</td></tr>}
-            </tbody>
-          </table>
-        </div>
-
-        {showNewTerm ? (
-          <div style={{ display:"flex", gap:8, alignItems:"flex-end", flexWrap:"wrap", padding:"12px", background:G.sand, borderRadius:8 }}>
-            <Input label="Term name" value={newTerm.name} onChange={v=>setNewTerm(p=>({...p,name:v}))} style={{width:140}} />
-            <div>
-              <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:5 }}>Cut-off</label>
-              <select value={newTerm.cutoff} onChange={e=>setNewTerm(p=>({...p,cutoff:e.target.value}))}
-                style={{ padding:"9px 10px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none" }}>
-                {CUTOFF_HOURS.map(h=><option key={h} value={h}>{h}</option>)}
-              </select>
-            </div>
-            <div>
-              <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:5 }}>Before (days)</label>
-              <select value={newTerm.days_before} onChange={e=>setNewTerm(p=>({...p,days_before:Number(e.target.value)}))}
-                style={{ padding:"9px 10px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none" }}>
-                {DELIVERY_DAYS.map(d=><option key={d} value={d}>{d}</option>)}
-              </select>
-            </div>
-            <Btn size="sm" onClick={addTerm}>Add</Btn>
-            <Btn size="sm" variant="ghost" onClick={()=>setShowNewTerm(false)}>{tl("Cancel")}</Btn>
-          </div>
-        ) : (
-          <button onClick={()=>setShowNewTerm(true)} style={{ background:"none", border:`1px dashed ${G.border}`, color:G.caramel, cursor:"pointer", fontSize:13, fontFamily:G.mono, padding:"7px 14px", borderRadius:8, fontWeight:600 }}>
-            + New term
-          </button>
-        )}
-      </div>
-
-      <div style={{ display:"flex", gap:10, marginTop:4 }}>
-        <Btn size="sm" onClick={()=>onSave(buildPayload())} loading={saving}>{tl("Save")}</Btn>
-        <Btn variant="ghost" size="sm" onClick={onCancel}>{tl("Cancel")}</Btn>
-      </div>
+  const H = "h-10 px-3 font-semibold text-[11px] text-muted-foreground uppercase tracking-wider whitespace-nowrap";
+  const actions = (
+    <div className="flex justify-end gap-2 border-border border-t pt-4">
+      <Btn variant="ghost" onClick={onCancel}>{tl("Cancel")}</Btn>
+      <Btn onClick={()=>onSave(buildPayload())} loading={saving}>{tl("Save")}</Btn>
     </div>
   );
 
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
-        <Input label="Name" value={form.name} onChange={v=>set("name",v)} required />
-        <Input label={tl("Contact title")} value={form.contact_title||""} onChange={v=>set("contact_title",v)} placeholder="e.g. Sales Manager" />
-        <Input label={tl("Contact first name")} value={form.contact_fname||""} onChange={v=>set("contact_fname",v)} />
-        <Input label={tl("Contact last name")} value={form.contact_lname||""} onChange={v=>set("contact_lname",v)} />
-        <Input label="Email" type="email" value={form.email||""} onChange={v=>set("email",v)} required />
-        <Input label="Phone" value={form.phone||""} onChange={v=>set("phone",v)} required />
-        <Input label="Street address" value={form.street_address||""} onChange={v=>set("street_address",v)} required />
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-          <Input label="City" value={form.city||""} onChange={v=>set("city",v)} />
-          <Input label="ZIP" value={form.zip||""} onChange={v=>set("zip",v)} />
+    <div className="flex flex-col gap-5">
+      <SegToggle value={slide} onChange={setSlide} options={[["general",tl("General")],["schedule","Schedule"]]}/>
+
+      {slide==="schedule" ? (
+        <div className="flex flex-col gap-4">
+          <Select label="Timezone" value={timezone} onChange={setTimezone} options={TIMEZONES.map(z=>({label:z,value:z}))} />
+          <div className="flex flex-col gap-2">
+            <span className="font-medium text-sm">Delivery terms</span>
+            <div className="overflow-x-auto rounded-xl border border-border [&_thead_tr]:bg-muted">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className={H}>Term</TableHead>
+                    <TableHead className={H}>Cut-off</TableHead>
+                    <TableHead className={`${H} text-center`}>Before (days)</TableHead>
+                    <TableHead className={`${H} text-center`}>After (days)</TableHead>
+                    <TableHead className="w-10"/>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sortedTerms.map((t,i)=>(
+                    <TableRow key={i}>
+                      <TableCell className="px-3 py-2.5 font-medium">{t.name}</TableCell>
+                      <TableCell className="px-3 py-2.5 text-muted-foreground tabular-nums">{t.cutoff}</TableCell>
+                      <TableCell className="px-3 py-2.5 text-center tabular-nums">{t.days_before}</TableCell>
+                      <TableCell className="px-3 py-2.5 text-center text-muted-foreground tabular-nums">{t.days_after ?? t.days_before+1}</TableCell>
+                      <TableCell className="px-2 py-2">
+                        <Button variant="ghost" size="icon-xs" aria-label={`Remove ${t.name}`} className="text-muted-foreground hover:text-destructive-foreground" onClick={()=>removeTerm(terms.indexOf(t))}><XIcon/></Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {sortedTerms.length===0&&<TableRow className="hover:bg-transparent"><TableCell colSpan={5} className="py-6 text-center text-muted-foreground text-sm">{tl("No terms yet.")}</TableCell></TableRow>}
+                </TableBody>
+              </Table>
+            </div>
+            {showNewTerm ? (
+              <div className="grid grid-cols-1 items-end gap-3 rounded-xl border border-border bg-muted p-3 sm:grid-cols-[1fr_8rem_8rem_auto]">
+                <Input label="Term name" value={newTerm.name} onChange={v=>setNewTerm(p=>({...p,name:v}))} placeholder="e.g. Next day"/>
+                <Select label="Cut-off" value={newTerm.cutoff} onChange={v=>setNewTerm(p=>({...p,cutoff:v}))} options={CUTOFF_HOURS.map(h=>({label:h,value:h}))}/>
+                <Select label="Before (days)" value={String(newTerm.days_before)} onChange={v=>setNewTerm(p=>({...p,days_before:Number(v)}))} options={DELIVERY_DAYS.map(d=>({label:String(d),value:d}))}/>
+                <div className="flex gap-1.5">
+                  <Btn variant="ghost" onClick={()=>setShowNewTerm(false)}>{tl("Cancel")}</Btn>
+                  <Btn onClick={addTerm} disabled={!newTerm.name.trim()}>Add</Btn>
+                </div>
+              </div>
+            ) : (
+              <div><Button variant="outline" size="sm" className="border-dashed" onClick={()=>setShowNewTerm(true)}><PlusIcon/>New term</Button></div>
+            )}
+          </div>
         </div>
-      </div>
-      <div style={{ display:"flex", gap:10 }}>
-        <Btn size="sm" onClick={()=>onSave(buildPayload())} loading={saving}>{tl("Save")}</Btn>
-        <Btn variant="ghost" size="sm" onClick={onCancel}>{tl("Cancel")}</Btn>
-        <Btn variant="secondary" size="sm" onClick={()=>setSlide("schedule")} style={{ marginLeft:"auto" }}>{tl("Schedule →")}</Btn>
-      </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Input label="Name" value={form.name} onChange={v=>set("name",v)} required />
+          <Input label={tl("Contact title")} value={form.contact_title||""} onChange={v=>set("contact_title",v)} placeholder="e.g. Sales Manager" />
+          <Input label={tl("Contact first name")} value={form.contact_fname||""} onChange={v=>set("contact_fname",v)} />
+          <Input label={tl("Contact last name")} value={form.contact_lname||""} onChange={v=>set("contact_lname",v)} />
+          <Input label="Email" type="email" value={form.email||""} onChange={v=>set("email",v)} required />
+          <Input label="Phone" value={form.phone||""} onChange={v=>set("phone",v)} required />
+          <Input label="Street address" value={form.street_address||""} onChange={v=>set("street_address",v)} required />
+          <div className="grid grid-cols-2 gap-3">
+            <Input label="City" value={form.city||""} onChange={v=>set("city",v)} />
+            <Input label="ZIP" value={form.zip||""} onChange={v=>set("zip",v)} />
+          </div>
+        </div>
+      )}
+      {actions}
     </div>
   );
 }
@@ -6704,34 +6622,43 @@ function SuppliersPage({
   };
 
   const cols = [
-    { key:"sid",   label:"ID",    sortable:true,  render:r=><span style={{color:G.muted,fontSize:13}}>#{r._id}</span> },
+    { key:"sid",   label:"ID",    sortable:true,  render:r=><span className="font-mono text-muted-foreground text-xs">#{r._id}</span> },
     { key:"name",  label:"Name",  sortable:true,  render:r=>(
-      <button className="recipe-link" onClick={()=>setEditSupplier(r)} style={{ background:"none", border:"none", cursor:"pointer", fontFamily:G.mono, fontSize:14, color:G.dark, padding:0, textAlign:"left" }}>{r.name}</button>
+      <button type="button" data-slot="row-link" onClick={()=>setEditSupplier(r)} className="text-start font-semibold underline decoration-dotted underline-offset-3 hover:decoration-solid">{r.name}</button>
     )},
-    { key:"email", label:"Email", sortable:true,  render:r=>r.email||<span style={{color:G.muted}}>—</span> },
-    { key:"phone", label:"Phone", sortable:false, render:r=>r.phone||<span style={{color:G.muted}}>—</span> },
+    { key:"email", label:"Email", sortable:true,  render:r=>r.email||<span className="text-muted-foreground">—</span> },
+    { key:"phone", label:"Phone", sortable:false, render:r=>r.phone||<span className="text-muted-foreground">—</span> },
   ];
 
   return (
-    <Page title={tl("Suppliers")} actions={
-      <>{selected.length>0&&<Btn variant="danger" size="sm" onClick={()=>setDialog("del")}>Delete ({selected.length})</Btn>}
-      <Btn size="sm" onClick={()=>setShowNew(s=>!s)}>{tl("+ New supplier")}</Btn></>
-    }>
+    <Page title={tl("Suppliers")} actions={<>
+      {selected.length>0&&<Btn variant="danger" size="sm" onClick={()=>setDialog("del")}><Trash2Icon/>Delete ({selected.length})</Btn>}
+      <Btn size="sm" onClick={()=>setShowNew(s=>!s)}><PlusIcon/>{tl("+ New supplier").replace(/^\+\s*/,"")}</Btn>
+    </>}>
       {showNew&&(
-        <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, animation:"fadeIn 0.2s ease" }}>
-          <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>New Supplier</h3>
-          <SupplierForm onSave={doSave} onCancel={()=>setShowNew(false)} saving={saving} />
-        </div>
+        <Card className="mb-6" style={{ animation:"fadeIn 0.2s ease" }}>
+          <CardHeader>
+            <CardTitle className="font-heading text-lg">New supplier</CardTitle>
+            <CardAction><Button variant="ghost" size="icon-sm" aria-label="Close" onClick={()=>setShowNew(false)}><XIcon/></Button></CardAction>
+          </CardHeader>
+          <CardPanel><SupplierForm onSave={doSave} onCancel={()=>setShowNew(false)} saving={saving} /></CardPanel>
+        </Card>
       )}
-      {loading?<Spinner/>:<DataTable columns={cols} rows={sorted.map(s=>({...s,_id:s.sid}))} selected={selected} onSelect={toggleSel} onSelectAll={setSelected} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+      {loading?<Spinner/>: sorted.length===0 && !showNew ? (
+        <Empty className="rounded-2xl border border-border border-dashed bg-card">
+          <EmptyHeader>
+            <EmptyMedia variant="icon"><StoreIcon/></EmptyMedia>
+            <EmptyTitle>No suppliers yet</EmptyTitle>
+            <EmptyDescription>Add the companies you buy from, with their delivery terms, to place purchase orders.</EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent><Btn size="sm" onClick={()=>setShowNew(true)}><PlusIcon/>New supplier</Btn></EmptyContent>
+        </Empty>
+      ) : sorted.length>0 && <DataTable columns={cols} rows={sorted.map(s=>({...s,_id:s.sid}))} selected={selected} onSelect={toggleSel} onSelectAll={setSelected} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
 
       {editSupplier&&(
-        <div style={{ position:"fixed", inset:0, background:"rgba(44,24,16,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
-          <div style={{ background:G.white, borderRadius:16, padding:32, maxWidth:640, width:"100%", maxHeight:"90vh", overflowY:"auto", animation:"fadeIn 0.2s ease", boxShadow:"0 20px 60px rgba(44,24,16,0.2)" }}>
-            <h3 style={{ fontFamily:G.font, fontSize:20, marginBottom:20 }}>Edit Supplier</h3>
-            <SupplierForm initial={editSupplier} onSave={doSave} onCancel={()=>setEditSupplier(null)} saving={saving} />
-          </div>
-        </div>
+        <Modal onClose={()=>setEditSupplier(null)} title="Edit supplier" description={editSupplier.name} className="max-w-2xl">
+          <SupplierForm initial={editSupplier} onSave={doSave} onCancel={()=>setEditSupplier(null)} saving={saving} />
+        </Modal>
       )}
       <Dialog open={dialog==="del"} title="Delete suppliers?" onConfirm={doDelete} onCancel={()=>setDialog(null)}>
         Are you sure you wish to delete the selected supplier{selected.length>1?"s":""}? This action may not be undone.
