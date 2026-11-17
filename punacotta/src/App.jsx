@@ -21,13 +21,14 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog as CDialog, DialogPopup, DialogHeader, DialogTitle, DialogDescription, DialogPanel, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { Sheet, SheetPopup, SheetHeader, SheetTitle, SheetPanel } from "@/components/ui/sheet";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { CopyIcon, ImageIcon, ImageUpIcon, Trash2Icon, CheckIcon, MicIcon, SquareIcon, Undo2Icon, LayoutGridIcon, ListIcon, ListFilterIcon, PencilIcon, ArrowDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, ChevronsLeftIcon, ChevronsRightIcon, ChevronsUpDownIcon, MinusIcon, PlusIcon, UploadIcon, WorkflowIcon, CookingPotIcon, PowerIcon, PowerOffIcon, PlayIcon, PauseIcon, SkipForwardIcon, TimerIcon, RepeatIcon, CalendarDaysIcon, TagsIcon, UsersIcon, MailIcon } from "lucide-react";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator, MenuRadioGroup, MenuRadioItem, MenuCheckboxItem } from "@/components/ui/menu";
 import { AlertDialog, AlertDialogPopup, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from "@/components/ui/alert-dialog";
-import { HandIcon, TableIcon, FileDownIcon, SparklesIcon, SendIcon, BanIcon, MenuIcon, ReceiptTextIcon, PackageIcon, BookOpenIcon, TruckIcon, ChartColumnIcon, ArrowLeftIcon, ChefHatIcon, MailCheckIcon, PartyPopperIcon, StoreIcon, TriangleAlertIcon, BellIcon, ChevronDownIcon, CircleAlertIcon, CircleCheckIcon, CircleUserIcon, ClockIcon, GlobeIcon, InfoIcon, Link2Icon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SettingsIcon, SunIcon, XIcon } from "lucide-react";
+import { RefreshCwIcon, PlugIcon, Loader2Icon, MapPinIcon, ShieldAlertIcon, HandIcon, TableIcon, FileDownIcon, SparklesIcon, SendIcon, BanIcon, MenuIcon, ReceiptTextIcon, PackageIcon, BookOpenIcon, TruckIcon, ChartColumnIcon, ArrowLeftIcon, ChefHatIcon, MailCheckIcon, PartyPopperIcon, StoreIcon, TriangleAlertIcon, BellIcon, ChevronDownIcon, CircleAlertIcon, CircleCheckIcon, CircleUserIcon, ClockIcon, GlobeIcon, InfoIcon, Link2Icon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SettingsIcon, SunIcon, XIcon } from "lucide-react";
 
 const BoardOfArrivals = React.lazy(() => import('./screens/BoardOfArrivals.jsx'));
 
@@ -4658,6 +4659,53 @@ function maxLatestOrder(periods) {
 }
 
 // ─── GENERAL / PROFILE PAGE ───────────────────────────────────────────────────
+// Address search backed by OpenStreetMap Nominatim (shared by General and Schedule)
+function AddressSearch({ query, onQuery, onPick, lat, lng, lang }) {
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const timer = useRef(null);
+  const change = v => {
+    onQuery(v);
+    clearTimeout(timer.current);
+    if (v.length < 3) { setResults([]); return; }
+    timer.current = setTimeout(async()=>{
+      setLoading(true);
+      try {
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(v)}&format=json&limit=6&addressdetails=1`,
+          { headers:{ 'Accept-Language': lang==='ru'?'ru':'en' } }
+        );
+        setResults(await res.json()||[]);
+      } catch{}
+      finally{ setLoading(false); }
+    }, 400);
+  };
+  return (
+    <div className="relative">
+      <MapPinIcon className="-translate-y-1/2 pointer-events-none absolute start-3 top-1/2 z-10 size-4 text-muted-foreground"/>
+      <CInput size="lg" value={query} onChange={e=>change(e.target.value)} placeholder="Start typing your address…" aria-label="Address"
+        onBlur={()=>setTimeout(()=>setResults([]),150)} className={`[&_input]:ps-9 ${lat&&lng?"[&_input]:pe-36":"[&_input]:pe-9"}`}/>
+      <span className="-translate-y-1/2 pointer-events-none absolute end-3 top-1/2 z-10 text-xs">
+        {loading ? <Loader2Icon className="animate-spin size-4 text-muted-foreground"/>
+          : lat&&lng&&!results.length ? <span className="inline-flex items-center gap-1 text-success-foreground tabular-nums"><CheckIcon className="size-3.5"/>{Number(lat).toFixed(4)}, {Number(lng).toFixed(4)}</span>
+          : null}
+      </span>
+      {results.length>0&&(
+        <div data-slot="address-results" role="listbox" className="absolute inset-x-0 top-[calc(100%+4px)] z-[600] max-h-64 overflow-y-auto rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg/5">
+          {results.map((r,i)=>(
+            <button type="button" key={i} role="option" data-slot="address-option"
+              onMouseDown={()=>{ onPick({ display:r.display_name, lat:Number(r.lat), lng:Number(r.lon) }); setResults([]); }}
+              className="block w-full rounded-sm px-2.5 py-2 text-start text-sm hover:bg-accent hover:text-accent-foreground">
+              {r.display_name}
+            </button>
+          ))}
+          <p className="px-2.5 py-1 text-end text-[10px] text-muted-foreground">© OpenStreetMap contributors</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GeneralPage({ user, setUser, toast }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
@@ -4669,9 +4717,6 @@ function GeneralPage({ user, setUser, toast }) {
     lat:null, lng:null, address_display:'',
   });
   const [addrQuery,   setAddrQuery]   = useState('');
-  const [addrResults, setAddrResults] = useState([]);
-  const [addrLoading, setAddrLoading] = useState(false);
-  const addrTimer = useRef(null);
   const [loading,  setLoading]  = useState(true);
   const [saving,   setSaving]   = useState(false);
   const [uploading,setUploading]= useState(false);
@@ -4733,140 +4778,89 @@ function GeneralPage({ user, setUser, toast }) {
 
   if (loading) return <Page title="General"><Spinner/></Page>;
 
-  return (
-    <Page title="General" actions={<Btn onClick={save} loading={saving}>Save</Btn>}>
+  const sec = (title, description, children, extra="") => (
+    <Card className={`mb-4 ${extra}`}>
+      <CardHeader>
+        <CardTitle className="font-heading text-lg">{title}</CardTitle>
+        {description&&<CardDescription>{description}</CardDescription>}
+      </CardHeader>
+      <CardPanel className="flex flex-col gap-4">{children}</CardPanel>
+    </Card>
+  );
 
-      {/* Branding */}
-      <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,padding:24,marginBottom:16}}>
-        <h3 style={{fontFamily:G.font,fontSize:16,marginBottom:16,color:G.dark}}>Branding</h3>
-        <div style={{display:"flex",alignItems:"center",gap:20,marginBottom:16}}>
+  return (
+    <Page title="General" actions={<Btn onClick={save} loading={saving}><CheckIcon/>Save</Btn>}>
+      <div className="mx-auto max-w-3xl">
+      {sec("Branding", null, <>
+        <div className="flex flex-wrap items-center gap-5">
           {/* Logo preview */}
-          <div style={{width:120,height:48,borderRadius:8,border:`1px solid ${G.border}`,
-            background:G.sand,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",flexShrink:0}}>
+          <div className="flex h-12 w-30 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted">
             {form.logo_url
-              ? <img src={form.logo_url} alt="logo" style={{width:"100%",height:"100%",objectFit:"contain"}}/>
-              : <span style={{fontFamily:G.font,fontSize:18,fontWeight:700,color:G.caramel,fontStyle:"italic"}}>
-                  {form.business_name||'Logo'}
-                </span>
-            }
+              ? <img src={form.logo_url} alt="logo" className="size-full object-contain"/>
+              : <span className="truncate px-2 font-bold font-heading text-brand text-lg italic">{form.business_name||'Logo'}</span>}
           </div>
-          <div>
-            <label style={{fontSize:13,fontWeight:600,color:G.dark,display:"block",marginBottom:6}}>Restaurant logo</label>
-            <p style={{fontSize:12,color:G.muted,marginBottom:8}}>Appears in the nav bar instead of the app name. Recommended: 240×96px, transparent background.</p>
-            <div style={{display:"flex",gap:8}}>
-              <label style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 14px",borderRadius:7,
-                border:`1px solid ${G.border}`,cursor:"pointer",fontSize:12,fontFamily:G.mono,color:G.dark,background:G.sand}}>
-                {uploading ? '…' : '↑ Upload'}
-                <input type="file" accept="image/*" onChange={uploadLogo} style={{display:"none"}}/>
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
+            <div>
+              <p className="font-medium text-sm">Restaurant logo</p>
+              <p className="text-muted-foreground text-xs">Appears in the nav bar instead of the app name. Recommended: 240×96px, transparent background.</p>
+            </div>
+            <div className="flex gap-2">
+              <label className={buttonVariants({ variant:"outline", size:"sm", className:"cursor-pointer" })} data-slot="logo-upload">
+                {uploading ? <Loader2Icon className="animate-spin size-4"/> : <ImageUpIcon/>}Upload
+                <input type="file" accept="image/*" onChange={uploadLogo} className="sr-only"/>
               </label>
-              {form.logo_url&&<button onClick={()=>{set('logo_url',null);set('logo_cloudinary_id',null);}}
-                style={{background:"none",border:`1px solid ${G.border}`,borderRadius:7,cursor:"pointer",
-                  fontSize:12,fontFamily:G.mono,color:G.red,padding:"6px 14px"}}>Remove</button>}
+              {form.logo_url&&<Button variant="ghost" size="sm" className="text-destructive-foreground" onClick={()=>{set('logo_url',null);set('logo_cloudinary_id',null);}}><Trash2Icon/>Remove</Button>}
             </div>
           </div>
         </div>
         <Input label={tl("Business name")} value={form.business_name||''} onChange={v=>set('business_name',v)}
           hint="Shown to customers in menus and Board of Arrivals."/>
-      </div>
+      </>)}
 
-      {/* Contact info */}
-      <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,padding:24,marginBottom:16}}>
-        <h3 style={{fontFamily:G.font,fontSize:16,marginBottom:16,color:G.dark}}>Contact</h3>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+      {sec("Contact", null, <>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Input label={tl("First name")} value={form.first_name||''} onChange={v=>set('first_name',v)}/>
           <Input label={tl("Last name")}  value={form.last_name||''}  onChange={v=>set('last_name',v)}/>
         </div>
-        <Input label={tl("Email")} value={form.email||''} type="email" disabled
-          hint="Email cannot be changed here."/>
-        <label style={{display:"flex",alignItems:"center",gap:8,fontSize:14,cursor:"pointer",marginTop:10}}>
-          <input type="checkbox" checked={!!form.notify_email} onChange={e=>set('notify_email',e.target.checked)} style={{accentColor:G.caramel}}/>
-          also use it for notifications
-        </label>
-        <div style={{marginTop:14}}>
-          <Input label={tl("Phone")} value={form.phone||''} onChange={v=>set('phone',v)} placeholder="+374 91 …"/>
-        </div>
-      </div>
+        <Input label={tl("Email")} value={form.email||''} type="email" disabled hint="Email cannot be changed here."/>
+        <Label className="cursor-pointer font-normal">
+          <Checkbox checked={!!form.notify_email} onCheckedChange={v=>set('notify_email',!!v)}/>
+          Also use it for notifications
+        </Label>
+        <Input label={tl("Phone")} value={form.phone||''} onChange={v=>set('phone',v)} placeholder="+374 91 …"/>
+      </>)}
 
-      {/* Address with Nominatim */}
-      <div style={{background:G.white,border:`1px solid ${G.border}`,borderRadius:14,padding:24,marginBottom:16}}>
-        <h3 style={{fontFamily:G.font,fontSize:16,marginBottom:14,color:G.dark}}>Restaurant address</h3>
-        <p style={{fontSize:13,color:G.muted,marginBottom:12}}>
-          Used to show your restaurant's distance from customers on the Board of Arrivals.
-        </p>
-        <div style={{position:"relative",marginBottom:14}}>
-          <input value={addrQuery} onChange={e=>{
-            setAddrQuery(e.target.value);
-            set('address_display', e.target.value);
-            clearTimeout(addrTimer.current);
-            if (e.target.value.length < 3) { setAddrResults([]); return; }
-            addrTimer.current = setTimeout(async()=>{
-              setAddrLoading(true);
-              try {
-                const res = await fetch(
-                  `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(e.target.value)}&format=json&limit=6&addressdetails=1`,
-                  { headers:{ 'Accept-Language': lang==='ru'?'ru':'en' } }
-                );
-                setAddrResults(await res.json()||[]);
-              } catch{}
-              finally{ setAddrLoading(false); }
-            }, 400);
-          }}
-          placeholder="Start typing your address…"
-          style={{width:"100%",padding:"10px 14px",borderRadius:8,border:`1px solid ${G.border}`,
-            fontSize:14,fontFamily:G.mono,outline:"none",boxSizing:"border-box"}}/>
-          {addrLoading&&<span style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",color:G.muted,fontSize:12}}>…</span>}
-          {form.lat&&form.lng&&!addrResults.length&&(
-            <span style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",color:G.green,fontSize:12}}>
-              ✓ {Number(form.lat).toFixed(4)}, {Number(form.lng).toFixed(4)}
-            </span>
-          )}
-          {addrResults.length>0&&(
-            <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,background:G.white,
-              border:`1px solid ${G.border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(44,24,16,0.12)",
-              zIndex:200,maxHeight:260,overflowY:"auto"}}>
-              {addrResults.map((r,i)=>(
-                <button key={i} onMouseDown={()=>{
-                  setAddrQuery(r.display_name);
-                  set('address_display', r.display_name);
-                  set('lat', Number(r.lat));
-                  set('lng', Number(r.lon));
-                  setAddrResults([]);
-                }} style={{width:"100%",textAlign:"left",padding:"10px 14px",background:"none",
-                  border:"none",borderBottom:`1px solid ${G.border}`,cursor:"pointer",
-                  fontSize:13,fontFamily:G.mono,color:G.dark,display:"block"}}
-                onMouseEnter={e=>e.currentTarget.style.background=G.sand}
-                onMouseLeave={e=>e.currentTarget.style.background="none"}>
-                  {r.display_name}
-                </button>
-              ))}
-              <p style={{fontSize:10,color:G.muted,padding:"4px 10px",textAlign:"right"}}>© OpenStreetMap contributors</p>
-            </div>
-          )}
+      {sec("Restaurant address", "Used to show your restaurant's distance from customers on the Board of Arrivals.", <>
+        <AddressSearch query={addrQuery} lang={lang} lat={form.lat} lng={form.lng}
+          onQuery={v=>{ setAddrQuery(v); set('address_display', v); }}
+          onPick={a=>{ setAddrQuery(a.display); set('address_display',a.display); set('lat',a.lat); set('lng',a.lng); }}/>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Input label={tl("City")} value={form.city||''} onChange={v=>set('city',v)}/>
+          <Input label={tl("ZIP")}  value={form.zip||''}  onChange={v=>set('zip',v)}/>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
-          <Input label={tl("City")}           value={form.city||''}           onChange={v=>set('city',v)}/>
-          <Input label={tl("ZIP")}            value={form.zip||''}            onChange={v=>set('zip',v)}/>
-          <Input label={tl("Street address")} value={form.street_address||''} onChange={v=>set('street_address',v)} style={{gridColumn:"1/-1"}}/>
-        </div>
-      </div>
+        <Input label={tl("Street address")} value={form.street_address||''} onChange={v=>set('street_address',v)}/>
+      </>)}
 
       {/* Security area — only for the restaurant's administrator */}
       {form.restaurant?.can_delete&&(
-        <div style={{background:G.white,border:`1px solid ${G.red}`,borderRadius:14,padding:24,marginBottom:16}}>
-          <h3 style={{fontFamily:G.font,fontSize:16,marginBottom:14,color:G.red}}>{tl("Security area")}</h3>
-          <Input label={tl("Restaurant name")} value={delName} onChange={setDelName}
-            hint={`The account will be marked as deleted and will be completely deleted in 7 days. Type in the name of your organization - "${form.restaurant.name}"`}/>
-          <div style={{marginTop:14}}>
-            <Btn variant="danger" onClick={deleteRestaurant} loading={deleting}
-              disabled={delName.trim()!==form.restaurant.name.trim()}>{tl("Delete restaurant")}</Btn>
-          </div>
-        </div>
+        <Card className="mb-4 border-destructive/40">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 font-heading text-destructive-foreground text-lg"><ShieldAlertIcon className="size-5"/>{tl("Security area")}</CardTitle>
+          </CardHeader>
+          <CardPanel className="flex flex-col gap-4">
+            <Input label={tl("Restaurant name")} value={delName} onChange={setDelName}
+              hint={`The account will be marked as deleted and will be completely deleted in 7 days. Type in the name of your organization - "${form.restaurant.name}"`}/>
+            <div>
+              <Btn variant="danger" onClick={deleteRestaurant} loading={deleting}
+                disabled={delName.trim()!==form.restaurant.name.trim()}><Trash2Icon/>{tl("Delete restaurant")}</Btn>
+            </div>
+          </CardPanel>
+        </Card>
       )}
-
+      </div>
     </Page>
   );
 }
-
 
 function SchedulePage({
  toast, storeSchedule, setStoreSchedule }) {
@@ -4883,9 +4877,6 @@ function SchedulePage({
   const [lng,     setLng]     = useState(null);
   const [addressDisplay, setAddressDisplay] = useState('');
   const [addrQuery,      setAddrQuery]      = useState('');
-  const [addrResults,    setAddrResults]    = useState([]);
-  const [addrLoading,    setAddrLoading]    = useState(false);
-  const addrTimer = useRef(null);
 
   useEffect(()=>{
     api.getSchedule().then(s=>{
@@ -4944,122 +4935,74 @@ function SchedulePage({
   const globalMax = allMaxes.length ? allMaxes.reduce((a,b)=>timeToMins(a)<timeToMins(b)?a:b) : "12:00";
 
   return (
-    <Page title={tl("Schedule")} actions={<Btn onClick={save} loading={saving}>{tl("Save schedule")}</Btn>}>
-      {/* Address section */}
-      <div style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, padding:24, marginBottom:16 }}>
-        <h3 style={{ fontFamily:G.font, fontSize:16, marginBottom:14, color:G.dark }}>Restaurant address</h3>
-        <p style={{ fontSize:13, color:G.muted, marginBottom:12 }}>
-          Used to show your restaurant's distance from customers on the Board of Arrivals.
-        </p>
-        <div style={{ position:"relative" }}>
-          <input
-            value={addrQuery}
-            onChange={e=>{
-              setAddrQuery(e.target.value);
-              clearTimeout(addrTimer.current);
-              if (e.target.value.length < 3) { setAddrResults([]); return; }
-              addrTimer.current = setTimeout(async ()=>{
-                setAddrLoading(true);
-                try {
-                  const res = await fetch(
-                    `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(e.target.value)}&format=json&limit=6&addressdetails=1`,
-                    { headers:{ 'Accept-Language': lang==='ru'?'ru':'en' } }
-                  );
-                  const data = await res.json();
-                  setAddrResults(data||[]);
-                } catch{}
-                finally{ setAddrLoading(false); }
-              }, 400);
-            }}
-            placeholder="Start typing your address…"
-            style={{ width:"100%", padding:"10px 14px", borderRadius:8, border:`1px solid ${G.border}`,
-              fontSize:14, fontFamily:G.mono, outline:"none", boxSizing:"border-box" }}
-          />
-          {addrLoading&&<span style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", color:G.muted, fontSize:12 }}>…</span>}
-          {lat&&lng&&!addrResults.length&&(
-            <span style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", color:G.green, fontSize:12 }}>✓ {lat.toFixed(4)}, {lng.toFixed(4)}</span>
-          )}
-          {addrResults.length>0&&(
-            <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, background:G.white,
-              border:`1px solid ${G.border}`, borderRadius:8, boxShadow:"0 4px 16px rgba(44,24,16,0.12)",
-              zIndex:200, maxHeight:260, overflowY:"auto" }}>
-              {addrResults.map((r,i)=>(
-                <button key={i} onMouseDown={()=>{
-                  setAddrQuery(r.display_name);
-                  setAddressDisplay(r.display_name);
-                  setLat(Number(r.lat));
-                  setLng(Number(r.lon));
-                  setAddrResults([]);
-                }}
-                style={{ width:"100%", textAlign:"left", padding:"10px 14px", background:"none",
-                  border:"none", borderBottom:`1px solid ${G.border}`, cursor:"pointer",
-                  fontSize:13, fontFamily:G.mono, color:G.dark, display:"block" }}
-                onMouseEnter={e=>e.currentTarget.style.background=G.sand}
-                onMouseLeave={e=>e.currentTarget.style.background="none"}>
-                  {r.display_name}
-                </button>
-              ))}
-              <p style={{ fontSize:10, color:G.muted, padding:"4px 10px", textAlign:"right" }}>
-                © OpenStreetMap contributors
-              </p>
-            </div>
-          )}
-        </div>
-      </div>
+    <Page title={tl("Schedule")} actions={<Btn onClick={save} loading={saving}><CheckIcon/>{tl("Save schedule")}</Btn>}>
+      <div className="mx-auto flex max-w-3xl flex-col gap-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-heading text-lg">Restaurant address</CardTitle>
+          <CardDescription>Used to show your restaurant's distance from customers on the Board of Arrivals.</CardDescription>
+        </CardHeader>
+        <CardPanel>
+          <AddressSearch query={addrQuery} lang={lang} lat={lat} lng={lng}
+            onQuery={setAddrQuery}
+            onPick={a=>{ setAddrQuery(a.display); setAddressDisplay(a.display); setLat(a.lat); setLng(a.lng); }}/>
+        </CardPanel>
+      </Card>
 
-      <div style={{ background:G.white, borderRadius:14, border:`1px solid ${G.border}`, padding:24, marginBottom:16 }}>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20, alignItems:"end" }}>
+      <Card>
+        <CardPanel className="grid grid-cols-1 items-end gap-5 pt-6 sm:grid-cols-2">
           <Select label="Time zone" value={timezone} onChange={setTimezone}
             options={TIMEZONES.map(tz=>({value:tz,label:tz.replace("_"," ")}))} />
-          <div>
-            <label style={{ fontSize:13, fontWeight:600, color:G.dark, display:"block", marginBottom:6 }}>Latest order no later than</label>
-            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-              <input type="time" value={latestOrder} min="00:00" max={globalMax}
-                onChange={e=>setLatestOrder(e.target.value)}
-                style={{ padding:"9px 12px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:14, fontFamily:G.mono, outline:"none" }} />
-              <span style={{ fontSize:13, color:G.dark, fontWeight:600 }}>{tl("before closing")}</span>
-              <span style={{ fontSize:12, color:G.muted }}>(max {globalMax})</span>
+          <Field className="gap-1.5">
+            <FieldLabel>Latest order no later than</FieldLabel>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <CInput type="time" size="lg" value={latestOrder} min="00:00" max={globalMax} aria-label="Latest order"
+                onChange={e=>setLatestOrder(e.target.value)} className="w-32 [&_input]:[color-scheme:light] dark:[&_input]:[color-scheme:dark]"/>
+              <span className="font-medium text-sm">{tl("before closing")}</span>
+              <span className="text-muted-foreground text-xs">(max {globalMax})</span>
             </div>
-          </div>
-        </div>
-      </div>
-      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-        {DAYS.map((day,di)=>{
-          const periods = schedule[day]||[];
-          const isOff = periods.length===0;
-          return (
-            <div key={day} style={{ background:G.white, borderRadius:12, border:`1px solid ${G.border}`, padding:"16px 20px" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:16, flexWrap:"wrap" }}>
-                <div style={{ display:"flex", alignItems:"center", gap:10, minWidth:120 }}>
-                  <label style={{ display:"flex", alignItems:"center", gap:7, cursor:"pointer" }}>
-                    <input type="checkbox" checked={!isOff}
-                      onChange={e=>{ if(e.target.checked) addPeriod(day); else setSchedule(p=>({...p,[day]:[]})); }}
-                      style={{accentColor:G.caramel, width:16, height:16}} />
-                    <span style={{ fontWeight:700, fontSize:14, color:isOff?G.muted:G.dark }}>{tl(DAY_LABELS[di])}</span>
-                  </label>
-                  {isOff&&<span style={{ fontSize:12, color:G.muted, fontStyle:"italic" }}>Closed</span>}
+          </Field>
+        </CardPanel>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-heading text-lg">Opening hours</CardTitle>
+        </CardHeader>
+        <CardPanel className="flex flex-col divide-y divide-border pt-0">
+          {DAYS.map((day,di)=>{
+            const periods = schedule[day]||[];
+            const isOff = periods.length===0;
+            return (
+              <div key={day} data-slot="schedule-day" className="flex flex-wrap items-start gap-x-6 gap-y-2 py-3.5">
+                <div className="flex basis-full items-center gap-2.5 pt-1.5 sm:min-w-36 sm:basis-auto">
+                  <Label className="cursor-pointer">
+                    <Checkbox checked={!isOff} onCheckedChange={v=>{ if(v) addPeriod(day); else setSchedule(p=>({...p,[day]:[]})); }}/>
+                    <span className={`font-semibold ${isOff?"text-muted-foreground":""}`}>{tl(DAY_LABELS[di])}</span>
+                  </Label>
+                  {isOff&&<span className="text-muted-foreground text-xs italic">Closed</span>}
                 </div>
-                <div style={{ display:"flex", flexDirection:"column", gap:8, flex:1 }}>
+                <div className="flex flex-1 flex-col gap-2">
                   {periods.map((per,i)=>(
-                    <div key={i} style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
-                      <input type="time" value={per.start} onChange={e=>updatePeriod(day,i,"start",e.target.value)}
-                        style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none" }} />
-                      <span style={{ color:G.muted, fontSize:13 }}>–</span>
-                      <input type="time" value={per.end} onChange={e=>updatePeriod(day,i,"end",e.target.value)}
-                        style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:13, fontFamily:G.mono, outline:"none" }} />
-                      <button onClick={()=>removePeriod(day,i)} style={{ background:"none", border:"none", color:G.red, cursor:"pointer", fontSize:13, fontFamily:G.mono, padding:"0 4px" }}>{tl("Remove")}</button>
+                    <div key={i} className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-2 sm:flex">
+                      <CInput type="time" value={per.start} aria-label={`${DAY_LABELS[di]} opens`} onChange={e=>updatePeriod(day,i,"start",e.target.value)}
+                        className="w-full sm:w-32 [&_input]:[color-scheme:light] dark:[&_input]:[color-scheme:dark]"/>
+                      <span className="text-muted-foreground">–</span>
+                      <CInput type="time" value={per.end} aria-label={`${DAY_LABELS[di]} closes`} onChange={e=>updatePeriod(day,i,"end",e.target.value)}
+                        className="w-full sm:w-32 [&_input]:[color-scheme:light] dark:[&_input]:[color-scheme:dark]"/>
+                      <Button variant="ghost" size="icon-sm" aria-label={tl("Remove")} title={tl("Remove")}
+                        className="text-muted-foreground hover:text-destructive-foreground" onClick={()=>removePeriod(day,i)}><XIcon/></Button>
                     </div>
                   ))}
                   {!isOff&&(
-                    <button onClick={()=>addPeriod(day)} style={{ background:"none", border:`1px dashed ${G.border}`, color:G.caramel, cursor:"pointer", fontSize:12, fontFamily:G.mono, padding:"5px 12px", borderRadius:8, alignSelf:"flex-start", fontWeight:600 }}>
-                      {tl("Add period")}
-                    </button>
+                    <div><Button variant="outline" size="xs" className="border-dashed" onClick={()=>addPeriod(day)}><PlusIcon/>{tl("Add period").replace(/^\+\s*/,"")}</Button></div>
                   )}
                 </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </CardPanel>
+      </Card>
       </div>
     </Page>
   );
@@ -9607,6 +9550,7 @@ function EmbedMenuPage({ toast }) {
   const [testResult, setTestResult] = useState(null);
   const [domainInput, setDomainInput] = useState("");
   const [menus, setMenus] = useState([]);
+  const [confirmRotate, setConfirmRotate] = useState(false);
 
   useEffect(()=>{
     Promise.all([api.getEmbedSettings(), api.getMenus()])
@@ -9622,7 +9566,7 @@ function EmbedMenuPage({ toast }) {
   };
 
   const rotateKey = async () => {
-    if (!window.confirm("Rotate the API key? Your existing embed snippets will stop working until updated.")) return;
+    setConfirmRotate(false);
     try { const s = await api.rotateEmbedKey(); setSettings(s); toast("API key rotated"); }
     catch(e){ toast(e.message,"error"); }
   };
@@ -9649,138 +9593,117 @@ function EmbedMenuPage({ toast }) {
   if (loading) return <Page title="Embedded Menu"><Spinner/></Page>;
 
   const S = settings || {};
+  const copy = text => { navigator.clipboard.writeText(text); toast("Copied!"); };
+  const iframeSnippet = `<iframe\n  src="https://tanelu.com/order"\n  width="100%"\n  height="600"\n  frameborder="0"\n  style="border-radius:12px;border:1px solid #e8dcc8"\n  title="Board of Arrivals"\n></iframe>`;
+  const snippets = [
+    ["Single item", snippet("puncotta-item", ` rid="ITEM_ID"`)],
+    ["Menu (carousel)", snippet("puncotta-menu", ` mid="${menus[0]?.mid||"MENU_ID"}" view="carousel"`)],
+    ["Menu (table)", snippet("puncotta-menu", ` mid="${menus[0]?.mid||"MENU_ID"}" view="table"`)],
+    ["All active menus", snippet("puncotta-menu", ` view="carousel"`)],
+    ["Floating cart", snippet("puncotta-cart", ` float="bottom-right"`)],
+    ["Board of Arrivals", iframeSnippet],
+  ];
+  const sec = (title, description, children) => (
+    <Card className="mb-4">
+      <CardHeader>
+        <CardTitle className="font-heading text-lg">{title}</CardTitle>
+        {description&&<CardDescription>{description}</CardDescription>}
+      </CardHeader>
+      <CardPanel className="flex flex-col gap-4">{children}</CardPanel>
+    </Card>
+  );
 
   return (
     <Page title="Embedded Menu">
+      <div className="mx-auto max-w-3xl">
       {/* Enable toggle */}
-      <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20 }}>
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+      <Card className="mb-4">
+        <CardPanel className="flex flex-wrap items-center justify-between gap-4 pt-6">
           <div>
-            <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:4 }}>Embedded menu</h3>
-            <p style={{ fontSize:13, color:G.muted }}>Allow your menu to be embedded on external websites</p>
+            <h3 className="font-heading font-semibold text-lg">Embedded menu</h3>
+            <p className="text-muted-foreground text-sm">Allow your menu to be embedded on external websites</p>
           </div>
-          <label style={{ display:"flex", alignItems:"center", gap:10, cursor:"pointer" }}>
-            <span style={{ fontSize:13, color:G.muted }}>{S.enabled?"Enabled":"Disabled"}</span>
-            <div onClick={()=>save({enabled:!S.enabled})} style={{ width:44, height:24, borderRadius:12, background:S.enabled?G.caramel:G.border, cursor:"pointer", position:"relative", transition:"background 0.2s" }}>
-              <div style={{ position:"absolute", top:2, left:S.enabled?22:2, width:20, height:20, borderRadius:10, background:G.white, transition:"left 0.2s", boxShadow:"0 1px 4px rgba(0,0,0,0.2)" }}/>
-            </div>
-          </label>
-        </div>
-      </div>
+          <Label className="cursor-pointer font-normal text-muted-foreground">
+            {S.enabled?"Enabled":"Disabled"}
+            <Switch checked={!!S.enabled} disabled={saving} onCheckedChange={v=>save({enabled:!!v})} aria-label="Embedded menu"/>
+          </Label>
+        </CardPanel>
+      </Card>
 
       {S.enabled && (<>
-        {/* Order settings */}
-        <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20 }}>
-          <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>Order settings</h3>
-          <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-            <label style={{ display:"flex", alignItems:"center", gap:10, cursor:"pointer", fontSize:14 }}>
-              <input type="checkbox" checked={!!S.allow_order} onChange={e=>save({allow_order:e.target.checked})} style={{accentColor:G.caramel,width:16,height:16}}/>
-              Allow ordering through embedded widget
-            </label>
-            {S.allow_order && (
-              <div>
-                <p style={{ fontSize:13, color:G.muted, marginBottom:10 }}>Checkout mode</p>
-                <div style={{ display:"flex", gap:10 }}>
-                  {[["inline","Inline (complete order in widget)"],["redirect","Redirect to tanelu.com"]].map(([v,l])=>(
-                    <label key={v} style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontSize:13,
-                      padding:"10px 16px", borderRadius:8, border:`1px solid ${S.checkout_mode===v?G.caramel:G.border}`,
-                      background:S.checkout_mode===v?G.sand:G.white }}>
-                      <input type="radio" checked={S.checkout_mode===v} onChange={()=>save({checkout_mode:v})} style={{accentColor:G.caramel}}/>
-                      {l}
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+        {sec("Order settings", null, <>
+          <Label className="cursor-pointer font-normal">
+            <Checkbox checked={!!S.allow_order} onCheckedChange={v=>save({allow_order:!!v})}/>
+            Allow ordering through embedded widget
+          </Label>
+          {S.allow_order && (
+            <div className="flex flex-col gap-2">
+              <span className="font-medium text-sm">Checkout mode</span>
+              <RadioGroup value={S.checkout_mode||""} onValueChange={v=>save({checkout_mode:v})} className="grid gap-2 sm:grid-cols-2">
+                {[["inline","Inline (complete order in widget)"],["redirect","Redirect to tanelu.com"]].map(([v,l])=>(
+                  <Label key={v} className="cursor-pointer items-start gap-2.5 rounded-xl border border-border p-3 font-normal has-data-checked:border-brand/60 has-data-checked:bg-accent/50">
+                    <Radio value={v}/>{l}
+                  </Label>
+                ))}
+              </RadioGroup>
+            </div>
+          )}
+        </>)}
 
-        {/* Domain allowlist */}
-        <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20 }}>
-          <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:4 }}>Allowed domains</h3>
-          <p style={{ fontSize:13, color:G.muted, marginBottom:16 }}>Leave empty to allow all domains, or add specific domains to restrict access</p>
-          <div style={{ display:"flex", gap:10, marginBottom:12 }}>
-            <input value={domainInput} onChange={e=>setDomainInput(e.target.value)}
-              onKeyDown={e=>e.key==="Enter"&&addDomain()}
-              placeholder="e.g. myrestaurant.com"
-              style={{ flex:1, padding:"9px 12px", borderRadius:8, border:`1px solid ${G.border}`, fontSize:14, fontFamily:G.mono, outline:"none" }}/>
-            <Btn size="sm" onClick={addDomain}>Add</Btn>
-          </div>
+        {sec("Allowed domains", "Leave empty to allow all domains, or add specific domains to restrict access", <>
+          <form className="flex gap-2" onSubmit={e=>{ e.preventDefault(); addDomain(); }}>
+            <CInput size="lg" value={domainInput} onChange={e=>setDomainInput(e.target.value)} placeholder="e.g. myrestaurant.com" aria-label="Domain" className="flex-1"/>
+            <Button type="submit" size="lg" disabled={!domainInput.trim()}><PlusIcon/>Add</Button>
+          </form>
           {(S.allowed_domains||[]).length===0 ? (
-            <p style={{ fontSize:13, color:G.muted, fontStyle:"italic" }}>All domains allowed</p>
+            <p className="text-muted-foreground text-sm italic">All domains allowed</p>
           ) : (
-            <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+            <div className="flex flex-wrap gap-2">
               {(S.allowed_domains||[]).map(d=>(
-                <span key={d} style={{ display:"flex", alignItems:"center", gap:6, padding:"5px 12px", background:G.sand, borderRadius:20, fontSize:13, fontFamily:G.mono }}>
-                  {d}
-                  <button onClick={()=>removeDomain(d)} style={{ background:"none", border:"none", cursor:"pointer", color:G.muted, fontSize:14, lineHeight:1, padding:0 }}>×</button>
+                <span key={d} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted py-1 ps-3 pe-1.5 text-sm">
+                  <GlobeIcon className="size-3.5 text-muted-foreground"/>{d}
+                  <button type="button" data-slot="domain-remove" aria-label={`Remove ${d}`} onClick={()=>removeDomain(d)}
+                    className="inline-flex size-5 items-center justify-center rounded-full text-muted-foreground hover:bg-background hover:text-foreground"><XIcon className="size-3.5"/></button>
                 </span>
               ))}
             </div>
           )}
-        </div>
+        </>)}
 
-        {/* API Key */}
-        <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20 }}>
-          <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>API key</h3>
-          <div style={{ display:"flex", gap:10, alignItems:"center", marginBottom:10 }}>
-            <code style={{ flex:1, padding:"10px 14px", background:G.sand, borderRadius:8, fontSize:13, fontFamily:G.mono, wordBreak:"break-all" }}>{S.api_key}</code>
-            <Btn variant="secondary" size="sm" onClick={()=>{ navigator.clipboard.writeText(S.api_key); toast("Copied!"); }}>Copy</Btn>
-            <Btn variant="ghost" size="sm" onClick={rotateKey}>Rotate</Btn>
+        {sec("API key", null, <>
+          <div className="flex flex-wrap items-center gap-2">
+            <code className="min-w-0 flex-1 basis-full break-all rounded-lg sm:basis-0 border border-border bg-muted px-3.5 py-2.5 font-mono text-[13px]">{S.api_key}</code>
+            <Btn variant="secondary" size="sm" onClick={()=>copy(S.api_key)}><CopyIcon/>Copy</Btn>
+            <Btn variant="ghost" size="sm" onClick={()=>setConfirmRotate(true)}><RefreshCwIcon/>Rotate</Btn>
           </div>
-          <p style={{ fontSize:12, color:G.muted }}>Keep this key secret. Include it as <code>api-key</code> attribute in all embed tags.</p>
-          {/* Connectivity test */}
-          <div style={{ marginTop:16, display:"flex", alignItems:"center", gap:12 }}>
-            <Btn variant="secondary" size="sm" onClick={testConnect} loading={testing}>Test connectivity</Btn>
+          <p className="text-muted-foreground text-xs">Keep this key secret. Include it as <code className="font-mono">api-key</code> attribute in all embed tags.</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <Btn variant="secondary" size="sm" onClick={testConnect} loading={testing}><PlugIcon/>Test connectivity</Btn>
             {testResult&&(
-              <span style={{ fontSize:13, color:testResult.ok?G.green:G.red, fontWeight:600 }}>
-                {testResult.ok?"✓":"✗"} {testResult.msg}
+              <span className={`inline-flex items-center gap-1 font-medium text-sm ${testResult.ok?"text-success-foreground":"text-destructive-foreground"}`}>
+                {testResult.ok?<CheckIcon className="size-4"/>:<XIcon className="size-4"/>}{testResult.msg}
               </span>
             )}
           </div>
-        </div>
+        </>)}
 
-        {/* Embed snippets */}
-        <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24 }}>
-          <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:16 }}>Embed snippets</h3>
-          {[
-            ["Single item", "puncotta-item", ` rid="ITEM_ID"`],
-            ["Menu (carousel)", "puncotta-menu", ` mid="${menus[0]?.mid||"MENU_ID"}" view="carousel"`],
-            ["Menu (table)", "puncotta-menu", ` mid="${menus[0]?.mid||"MENU_ID"}" view="table"`],
-            ["All active menus", "puncotta-menu", ` view="carousel"`],
-            ["Floating cart", "puncotta-cart", ` float="bottom-right"`],
-            ["Board of Arrivals", "iframe", ``],
-          ].map(([label, tag, params])=>{
-            if (tag === "iframe") {
-              const iframeSnippet = `<iframe\n  src="https://tanelu.com/order"\n  width="100%"\n  height="600"\n  frameborder="0"\n  style="border-radius:12px;border:1px solid #e8dcc8"\n  title="Board of Arrivals"\n></iframe>`;
-              return (
-                <div key={label} style={{ marginBottom:20 }}>
-                  <p style={{ fontSize:13, fontWeight:600, color:G.dark, marginBottom:8 }}>{label}</p>
-                  <div style={{ position:"relative" }}>
-                    <pre style={{ background:G.sand, borderRadius:8, padding:"12px 14px", fontSize:12, fontFamily:G.mono, overflowX:"auto", margin:0, whiteSpace:"pre-wrap", wordBreak:"break-all", color:G.dark }}>{iframeSnippet}</pre>
-                    <button onClick={()=>{ navigator.clipboard.writeText(iframeSnippet); toast("Copied!"); }}
-                      style={{ position:"absolute", top:8, right:8, background:G.white, border:`1px solid ${G.border}`, borderRadius:6, cursor:"pointer", fontSize:11, fontFamily:G.mono, padding:"3px 8px", color:G.muted }}>
-                      Copy
-                    </button>
-                  </div>
-                </div>
-              );
-            }
-            return (
-            <div key={label} style={{ marginBottom:20 }}>
-              <p style={{ fontSize:13, fontWeight:600, color:G.dark, marginBottom:8 }}>{label}</p>
-              <div style={{ position:"relative" }}>
-                <pre style={{ background:G.sand, borderRadius:8, padding:"12px 14px", fontSize:12, fontFamily:G.mono, overflowX:"auto", margin:0, whiteSpace:"pre-wrap", wordBreak:"break-all", color:G.dark }}>{snippet(tag,params)}</pre>
-                <button onClick={()=>{ navigator.clipboard.writeText(snippet(tag,params)); toast("Copied!"); }}
-                  style={{ position:"absolute", top:8, right:8, background:G.white, border:`1px solid ${G.border}`, borderRadius:6, cursor:"pointer", fontSize:11, fontFamily:G.mono, padding:"3px 8px", color:G.muted }}>
-                  Copy
-                </button>
+        {sec("Embed snippets", null, <>
+          {snippets.map(([label, code])=>(
+            <div key={label} className="flex flex-col gap-1.5">
+              <span className="font-medium text-sm">{label}</span>
+              <div className="relative">
+                <pre className="m-0 overflow-x-auto whitespace-pre-wrap break-all rounded-lg border border-border bg-muted py-3 ps-3.5 pe-20 font-mono text-xs">{code}</pre>
+                <Button variant="outline" size="xs" className="absolute end-2 top-2" onClick={()=>copy(code)} aria-label={`Copy ${label} snippet`}><CopyIcon/>Copy</Button>
               </div>
             </div>
-            );
-          })}
-        </div>
+          ))}
+        </>)}
       </>)}
+      </div>
+
+      <Dialog open={confirmRotate} title="Rotate the API key?" confirmLabel="Rotate" onCancel={()=>setConfirmRotate(false)} onConfirm={rotateKey}>
+        Your existing embed snippets will stop working until updated.
+      </Dialog>
     </Page>
   );
 }
