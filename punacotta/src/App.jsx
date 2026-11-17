@@ -22,6 +22,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog as CDialog, DialogPopup, DialogHeader, DialogTitle, DialogDescription, DialogPanel, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { Popover, PopoverTrigger, PopoverPopup } from "@/components/ui/popover";
 import { Sheet, SheetPopup, SheetHeader, SheetTitle, SheetPanel } from "@/components/ui/sheet";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { CopyIcon, ImageIcon, ImageUpIcon, Trash2Icon, CheckIcon, MicIcon, SquareIcon, Undo2Icon, LayoutGridIcon, ListIcon, ListFilterIcon, PencilIcon, ArrowDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, ChevronsLeftIcon, ChevronsRightIcon, ChevronsUpDownIcon, MinusIcon, PlusIcon, UploadIcon, WorkflowIcon, CookingPotIcon, PowerIcon, PowerOffIcon, PlayIcon, PauseIcon, SkipForwardIcon, TimerIcon, RepeatIcon, CalendarDaysIcon, TagsIcon, UsersIcon, MailIcon } from "lucide-react";
@@ -423,13 +424,21 @@ function Dialog({ open, title, children, onConfirm, onCancel, confirmLabel="Yes"
 
 // ─── LIGHTBOX ─────────────────────────────────────────────────────────────────
 function Lightbox({ src, description, onClose }) {
+  useEffect(()=>{
+    if (!src) return;
+    const h = e => { if (e.key==="Escape") { e.stopPropagation(); onClose(); } };
+    window.addEventListener("keydown", h, true);
+    return ()=>window.removeEventListener("keydown", h, true);
+  },[src]);
   if (!src) return null;
+  // Above coss dialogs and sheets (z 2300–2500), since a photo can be opened from inside one
   return (
-    <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", zIndex:2000, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24 }}>
-      <div onClick={e=>e.stopPropagation()} style={{ maxWidth:"90vw", maxHeight:"90vh", display:"flex", flexDirection:"column", gap:12 }}>
-        <img src={src} alt="" style={{ maxWidth:"100%", maxHeight:"75vh", objectFit:"contain", borderRadius:8 }} />
-        {description&&<p style={{ color:"rgba(255,255,255,0.8)", fontSize:14, textAlign:"center" }}>{description}</p>}
-        <button onClick={onClose} style={{ background:"none", border:"1px solid rgba(255,255,255,0.3)", color:"white", padding:"8px 20px", borderRadius:8, cursor:"pointer", fontFamily:G.mono, alignSelf:"center" }}>Close</button>
+    <div data-slot="lightbox" onClick={onClose} role="dialog" aria-modal="true" aria-label="Photo"
+      className="fixed inset-0 z-[2600] flex flex-col items-center justify-center bg-black/85 p-6">
+      <div onClick={e=>e.stopPropagation()} className="flex max-h-[90vh] max-w-[90vw] flex-col gap-3">
+        <img src={src} alt="" className="max-h-[75vh] max-w-full rounded-lg object-contain"/>
+        {description&&<p className="text-center text-sm text-white/80">{description}</p>}
+        <Button variant="outline" onClick={onClose} className="self-center border-white/30 bg-transparent text-white hover:bg-white/10 dark:bg-transparent"><XIcon/>Close</Button>
       </div>
     </div>
   );
@@ -971,50 +980,47 @@ function CommandPalette({ user, setPage, onClose }) {
   let lastGroup = null;
 
   return (
-    <div style={{ position:'fixed', inset:0, zIndex:2000, display:'flex', flexDirection:'column', alignItems:'center', paddingTop:80 }}
+    <div data-slot="command-palette" className="fixed inset-0 z-[2300] flex flex-col items-center px-3 pt-[12vh]"
       onClick={e=>{ if(e.target===e.currentTarget) onClose(); }}>
       {/* Backdrop */}
-      <div style={{ position:'absolute', inset:0, background:'rgba(44,24,16,0.35)', backdropFilter:'blur(2px)' }} onClick={onClose}/>
+      <div className="absolute inset-0 bg-black/32 backdrop-blur-sm" onClick={onClose}/>
       {/* Panel */}
-      <div style={{ position:'relative', width:'100%', maxWidth:580, background:G.white, borderRadius:16,
-        boxShadow:'0 24px 80px rgba(44,24,16,0.22)', overflow:'hidden', animation:'fadeIn 0.15s ease' }}>
+      <div role="dialog" aria-modal="true" aria-label="Search" className="relative w-full max-w-xl overflow-hidden rounded-2xl border border-border bg-popover text-popover-foreground shadow-lg/5" style={{ animation:'fadeIn 0.15s ease' }}>
         {/* Input */}
-        <div style={{ display:'flex', alignItems:'center', gap:10, padding:'14px 18px', borderBottom:`1px solid ${G.border}` }}>
-          <span style={{ fontSize:18, flexShrink:0 }}>🔍</span>
+        <div className="flex items-center gap-2.5 border-border border-b px-4 py-3">
+          <SearchIcon className="size-5 shrink-0 text-muted-foreground"/>
           <input
             ref={inputRef}
+            data-slot="command-input"
             value={query}
             onChange={e=>setQuery(e.target.value)}
             onKeyDown={handleKey}
             placeholder="Search or type a command…"
+            aria-label="Search or type a command"
             autoFocus
-            style={{ flex:1, border:'none', outline:'none', fontSize:16, fontFamily:G.mono, color:G.dark, background:'transparent' }}/>
-          {query&&<button onClick={()=>setQuery('')} style={{ background:'none',border:'none',cursor:'pointer',color:G.muted,fontSize:16 }}>×</button>}
-          <kbd style={{ fontSize:11, padding:'2px 6px', background:G.sand, border:`1px solid ${G.border}`, borderRadius:4, color:G.muted, fontFamily:G.mono, flexShrink:0 }}>Esc</kbd>
+            className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground"/>
+          {query&&<Button variant="ghost" size="icon-xs" aria-label="Clear" className="text-muted-foreground" onClick={()=>setQuery('')}><XIcon/></Button>}
+          <Kbd>Esc</Kbd>
         </div>
         {/* Results */}
-        <div style={{ maxHeight:420, overflowY:'auto' }}>
+        <div className="max-h-[min(420px,60vh)] overflow-y-auto p-1.5" role="listbox">
           {results.length===0&&query?(
-            <div style={{ padding:'24px 18px', textAlign:'center', color:G.muted, fontSize:14 }}>No results for "{query}"</div>
+            <div className="px-4 py-6 text-center text-muted-foreground text-sm">No results for “{query}”</div>
           ):results.map((a,i)=>{
             const showGroup = a._group && a._group!==lastGroup;
             lastGroup = a._group||lastGroup;
             return (
               <div key={a.id}>
                 {showGroup&&(
-                  <div style={{ padding:'8px 18px 4px', fontSize:11, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.06em', color:G.muted }}>
-                    {a._group}
-                  </div>
+                  <div className="px-3 pt-2 pb-1 font-semibold text-[11px] text-muted-foreground uppercase tracking-wider">{a._group}</div>
                 )}
-                <button
+                <button type="button" role="option" aria-selected={i===focused} data-slot="command-item"
                   onClick={()=>execute(a)}
                   onMouseEnter={()=>setFocused(i)}
-                  style={{ width:'100%', textAlign:'left', padding:'10px 18px', border:'none', cursor:'pointer',
-                    background:i===focused?G.sand:'transparent', display:'flex', alignItems:'center', gap:12,
-                    fontFamily:G.mono, fontSize:14, color:G.dark }}>
-                  <span style={{ fontSize:16, width:24, textAlign:'center', flexShrink:0 }}>{a.icon}</span>
-                  <span style={{ flex:1 }}>{a.label}</span>
-                  <span style={{ fontSize:11, color:G.muted, flexShrink:0 }}>
+                  className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-start text-sm ${i===focused?"bg-accent text-accent-foreground":""}`}>
+                  <span className="w-6 shrink-0 text-center text-base">{a.icon}</span>
+                  <span className="flex-1">{a.label}</span>
+                  <span className="shrink-0 text-muted-foreground text-xs">
                     {a.page?.replace('-',' ').replace('manuf','').replace('cust','').replace('emp','').trim()}
                   </span>
                 </button>
@@ -1023,10 +1029,10 @@ function CommandPalette({ user, setPage, onClose }) {
           })}
         </div>
         {/* Footer hint */}
-        <div style={{ padding:'8px 18px', borderTop:`1px solid ${G.border}`, display:'flex', gap:16, fontSize:11, color:G.muted }}>
-          <span><kbd style={{fontFamily:G.mono,background:G.sand,border:`1px solid ${G.border}`,borderRadius:3,padding:'1px 5px'}}>↑↓</kbd> navigate</span>
-          <span><kbd style={{fontFamily:G.mono,background:G.sand,border:`1px solid ${G.border}`,borderRadius:3,padding:'1px 5px'}}>Enter</kbd> open</span>
-          <span><kbd style={{fontFamily:G.mono,background:G.sand,border:`1px solid ${G.border}`,borderRadius:3,padding:'1px 5px'}}>Esc</kbd> close</span>
+        <div className="flex gap-4 border-border border-t px-4 py-2 text-muted-foreground text-xs max-sm:hidden">
+          <span className="flex items-center gap-1.5"><Kbd>↑↓</Kbd> navigate</span>
+          <span className="flex items-center gap-1.5"><Kbd>Enter</Kbd> open</span>
+          <span className="flex items-center gap-1.5"><Kbd>Esc</Kbd> close</span>
         </div>
       </div>
     </div>
@@ -1243,20 +1249,6 @@ function fmtNotifTs(addedAt) {
 
 function NotificationBell({ notifs, unseenCount, markSeen, dismiss, refresh, period, setPeriod, showPeriod }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
-
-  const toggle = () => {
-    if (!open) markSeen();
-    setOpen(p => !p);
-  };
-
   const items = [...notifs.values()].sort((a, b) => b.addedAt - a.addedAt);
   const badge = unseenCount > 9 ? '9+' : unseenCount > 0 ? String(unseenCount) : null;
 
@@ -1271,59 +1263,59 @@ function NotificationBell({ notifs, unseenCount, markSeen, dismiss, refresh, per
   };
 
   return (
-    <div ref={ref} style={{ position:'relative', flexShrink:0, marginRight:8 }}>
-      <Button variant="outline" size="icon-sm" onClick={toggle} aria-label={badge?`Notifications (${badge} new)`:"Notifications"} className="relative">
+    <Popover open={open} onOpenChange={o=>{ if (o) markSeen(); setOpen(o); }}>
+      <PopoverTrigger className={buttonVariants({ variant:"outline", size:"icon-sm", className:"relative me-1" })}
+        aria-label={badge?`Notifications (${badge} new)`:"Notifications"}>
         <BellIcon/>
         {badge&&(
           <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full border-2 border-card bg-destructive px-0.5 font-bold text-[10px] text-white leading-none">
             {badge}
           </span>
         )}
-      </Button>
-      {open&&(
-        <div style={{ position:'fixed', top:62, right:16, width:340, maxHeight:480, overflowY:'auto', background:G.white, border:`1px solid ${G.border}`, borderRadius:12, boxShadow:'0 8px 32px rgba(44,24,16,0.18)', zIndex:500, animation:'fadeIn 0.15s ease' }}>
-          <div style={{ padding:'12px 16px', borderBottom:`1px solid ${G.border}`, fontFamily:G.mono, fontSize:13, fontWeight:600, color:G.dark, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-            <span>Notifications</span>
-            {items.length>0&&<button onClick={()=>{ items.forEach(n=>dismiss(n.psrid)); }} style={{ background:'none', border:'none', cursor:'pointer', fontFamily:G.mono, fontSize:11, color:G.muted }}>Clear all</button>}
+      </PopoverTrigger>
+      <PopoverPopup align="end" sideOffset={8} className="w-[min(360px,calc(100vw-24px))]">
+        <div data-slot="notif-panel" className="-mx-4 -my-4 flex max-h-[min(480px,70vh)] flex-col">
+          <div className="flex items-center justify-between border-border border-b px-4 py-2.5">
+            <span className="font-semibold text-sm">Notifications</span>
+            {items.length>0&&<Button variant="ghost" size="xs" className="text-muted-foreground" onClick={()=>{ items.forEach(n=>dismiss(n.psrid)); }}>Clear all</Button>}
           </div>
-          {items.length===0
-            ? <div style={{ padding:'28px 16px', fontFamily:G.mono, fontSize:13, color:G.muted, textAlign:'center' }}>No notifications</div>
-            : items.map(n => {
-                const timeStr = fmtNotifTime(n.dueAt, n.type);
-                let text;
-                if (n.type==='stock') text = n.text;
-                else if (n.type==='now') text = `${n.process_name} | ${n.step_name} is due to start now`;
-                else if (n.type==='overdue') text = `${n.process_name} | ${n.step_name} was due to start ${timeStr} ago`;
-                else text = `${n.process_name} | ${n.step_name} due to start in ${timeStr}`;
-                return (
-                  <div key={n.psrid} style={{ display:'flex', alignItems:'flex-start', gap:10, padding:'11px 14px', borderBottom:`1px solid ${G.sand}`, background:n.seenAt?'transparent':G.sand }}>
-                    {(n.type==='now'||n.type==='overdue')
-                      ? <button onClick={()=>handlePlay(n)} title="Start step" style={{ background:G.caramel, border:'none', borderRadius:6, cursor:'pointer', color:'#fff', fontSize:11, padding:'3px 7px', flexShrink:0, marginTop:1, fontWeight:700 }}>▶</button>
-                      : <span style={{ width:28, flexShrink:0 }}/>
-                    }
-                    <div style={{ flex:1, minWidth:0 }}>
-                      <div style={{ fontFamily:G.mono, fontSize:12, color:G.dark, lineHeight:1.4 }}>{String(text).split(/\*\*(.+?)\*\*/g).map((t,i)=>i%2?<strong key={i}>{t}</strong>:t)}</div>
-                      <div style={{ fontFamily:G.mono, fontSize:10, color:G.muted, marginTop:3 }}>{fmtNotifTs(n.addedAt)}</div>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {items.length===0
+              ? <div className="flex flex-col items-center gap-2 px-4 py-8 text-muted-foreground text-sm"><BellIcon className="size-5 opacity-60"/>No notifications</div>
+              : items.map(n => {
+                  const timeStr = fmtNotifTime(n.dueAt, n.type);
+                  let text;
+                  if (n.type==='stock') text = n.text;
+                  else if (n.type==='now') text = `${n.process_name} | ${n.step_name} is due to start now`;
+                  else if (n.type==='overdue') text = `${n.process_name} | ${n.step_name} was due to start ${timeStr} ago`;
+                  else text = `${n.process_name} | ${n.step_name} due to start in ${timeStr}`;
+                  return (
+                    <div key={n.psrid} data-slot="notif-item" className={`flex items-start gap-2.5 border-border border-b px-3.5 py-2.5 last:border-b-0 ${n.seenAt?"":"bg-accent/40"}`}>
+                      {(n.type==='now'||n.type==='overdue')
+                        ? <Button size="icon-xs" aria-label="Start step" title="Start step" className="mt-0.5" onClick={()=>handlePlay(n)}><PlayIcon/></Button>
+                        : <span className="flex size-6 shrink-0 items-center justify-center text-muted-foreground">{n.type==='stock'?<PackageIcon className="size-4"/>:<ClockIcon className="size-4"/>}</span>}
+                      <div className="min-w-0 flex-1">
+                        <div className={`text-sm leading-snug ${n.type==='overdue'?"text-destructive-foreground":""}`}>{String(text).split(/\*\*(.+?)\*\*/g).map((t,i)=>i%2?<strong key={i}>{t}</strong>:t)}</div>
+                        <div className="mt-0.5 text-muted-foreground text-xs">{fmtNotifTs(n.addedAt)}</div>
+                      </div>
+                      <Button variant="ghost" size="icon-xs" aria-label="Dismiss" className="text-muted-foreground" onClick={()=>dismiss(n.psrid)}><XIcon/></Button>
                     </div>
-                    <button onClick={()=>dismiss(n.psrid)} style={{ background:'none', border:'none', cursor:'pointer', color:G.muted, fontSize:14, lineHeight:1, flexShrink:0, padding:'2px 4px' }}>×</button>
-                  </div>
-                );
-              })
-          }
+                  );
+                })}
+          </div>
           {showPeriod&&(
-            <div style={{ position:'sticky', bottom:0, background:G.white, borderTop:`1px solid ${G.border}`, padding:'10px 16px', display:'flex', alignItems:'center', gap:14, fontFamily:G.mono, fontSize:12, color:G.dark }}>
-              <span style={{ color:G.muted }}>Period</span>
-              {[['day','Day'],['week','Week'],['month','Month']].map(([v,l])=>(
-                <label key={v} style={{ display:'flex', alignItems:'center', gap:5, cursor:'pointer' }}>
-                  <input type="radio" name="notif-period" value={v} checked={period===v} onChange={()=>setPeriod(v)} style={{ accentColor:G.caramel }}/>
-                  {l}
-                </label>
-              ))}
+            <div className="flex items-center gap-3 border-border border-t px-4 py-2.5 text-sm">
+              <span className="text-muted-foreground">Period</span>
+              <SegmentedControl size="sm">
+                {[['day','Day'],['week','Week'],['month','Month']].map(([v,l])=>(
+                  <SegmentedControlItem key={v} data-checked={period===v?"":undefined} aria-pressed={period===v} onClick={()=>setPeriod(v)} className="px-2.5">{l}</SegmentedControlItem>
+                ))}
+              </SegmentedControl>
             </div>
           )}
         </div>
-      )}
-    </div>
+      </PopoverPopup>
+    </Popover>
   );
 }
 
