@@ -27,7 +27,7 @@ import { CopyIcon, ImageIcon, ImageUpIcon, Trash2Icon, CheckIcon, MicIcon, Squar
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator, MenuRadioGroup, MenuRadioItem, MenuCheckboxItem } from "@/components/ui/menu";
 import { AlertDialog, AlertDialogPopup, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from "@/components/ui/alert-dialog";
-import { ArrowLeftIcon, ChefHatIcon, MailCheckIcon, PartyPopperIcon, StoreIcon, TriangleAlertIcon, BellIcon, ChevronDownIcon, CircleAlertIcon, CircleCheckIcon, CircleUserIcon, ClockIcon, GlobeIcon, InfoIcon, Link2Icon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SettingsIcon, SunIcon, XIcon } from "lucide-react";
+import { MenuIcon, ReceiptTextIcon, PackageIcon, BookOpenIcon, TruckIcon, ChartColumnIcon, ArrowLeftIcon, ChefHatIcon, MailCheckIcon, PartyPopperIcon, StoreIcon, TriangleAlertIcon, BellIcon, ChevronDownIcon, CircleAlertIcon, CircleCheckIcon, CircleUserIcon, ClockIcon, GlobeIcon, InfoIcon, Link2Icon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SettingsIcon, SunIcon, XIcon } from "lucide-react";
 
 const BoardOfArrivals = React.lazy(() => import('./screens/BoardOfArrivals.jsx'));
 
@@ -1329,6 +1329,7 @@ function NotificationBell({ notifs, unseenCount, markSeen, dismiss, refresh, per
 function Nav({ user, page, setPage, logout, lang, setLang, notifProps, themePref, setThemePref }) {
   const isM = user?.is_manufacturer;
   const [cpOpen,     setCpOpen]     = useState(false);
+  const [menuOpen,   setMenuOpen]   = useState(false);
 
   useEffect(()=>{
     const handler = e => {
@@ -1342,11 +1343,23 @@ function Nav({ user, page, setPage, logout, lang, setLang, notifProps, themePref
     ? [{key:"orders-manuf",label:tl("Orders")},{key:"inventory",label:tl("Inventory")},{key:"menus",label:tl("Menus")},{key:"procurement",label:tl("Procurement")},{key:"suppliers",label:tl("Suppliers")},{key:"reports",label:tl("Reports")},{key:"staff",label:tl("Staff")},{key:"processes",label:tl("Processes")},{key:"equipment",label:tl("Equipment")}]
     : user?.employer_uid ? [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")},{key:"roster-emp",label:tl("My Roster")},{key:"processes-emp",label:tl("Processes")}]
     : [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")}];
-  const navigate = key => { setPage(key); };
+  const navigate = key => { setPage(key); setMenuOpen(false); };
+  // Below this width the page links move into the hamburger sheet (the owner has 9 links, staff 2–4)
+  // Russian labels are longer, so the owner's links collapse one breakpoint later
+  const collapse = isM ? (lang==='ru' ? "2xl" : "xl") : "md";
+  const COLLAPSE = { md:["md:hidden","hidden md:flex"], xl:["xl:hidden","hidden xl:flex"], "2xl":["2xl:hidden","hidden 2xl:flex"] }[collapse];
+  const NAV_ICONS = { "orders-manuf":ReceiptTextIcon, inventory:PackageIcon, menus:BookOpenIcon, procurement:TruckIcon, suppliers:StoreIcon,
+    reports:ChartColumnIcon, staff:UsersIcon, processes:WorkflowIcon, equipment:CookingPotIcon, restaurants:StoreIcon,
+    "orders-cust":ReceiptTextIcon, "roster-emp":CalendarDaysIcon, "processes-emp":WorkflowIcon };
   const navActive = k => page===k || (k==="inventory" && (page==="products"||page==="items")) || (k==="orders-manuf" && page==="quick-sale");
   return (
     <>
     <nav className="sticky top-0 z-[300] flex h-14 items-center gap-1 border-b border-border bg-card/90 px-3 backdrop-blur supports-[backdrop-filter]:bg-card/75 sm:px-5">
+      {/* Hamburger (narrow screens) */}
+      <Button variant="ghost" size="icon-sm" aria-label="Open menu" aria-expanded={menuOpen} onClick={()=>setMenuOpen(true)}
+        className={`-ms-1 me-1 shrink-0 ${COLLAPSE[0]}`}>
+        <MenuIcon/>
+      </Button>
       {/* Brand logo / name */}
       {user?.logo_url
         ? <img src={user.logo_url} alt={user.business_name||'logo'}
@@ -1357,7 +1370,7 @@ function Nav({ user, page, setPage, logout, lang, setLang, notifProps, themePref
             style={{ fontSize:isM&&user?.business_name?15:20 }}>
             {isM && user?.business_name ? user.business_name : 'Pun&Cotta'}
           </button>}
-      <div className="flex min-w-0 flex-1 gap-0.5 overflow-x-auto [scrollbar-width:none]">
+      <div className={`min-w-0 flex-1 gap-0.5 overflow-x-auto [scrollbar-width:none] ${COLLAPSE[1]}`}>
         {links.map(l=>(
           <Button key={l.key} variant="ghost" size="sm" onClick={()=>navigate(l.key)} aria-current={navActive(l.key)?"page":undefined}
             className={`px-2 ${navActive(l.key) ? "bg-accent font-semibold text-accent-foreground" : "font-normal text-muted-foreground"}`}>
@@ -1365,6 +1378,7 @@ function Nav({ user, page, setPage, logout, lang, setLang, notifProps, themePref
           </Button>
         ))}
       </div>
+      <div className={`flex-1 ${COLLAPSE[0]}`} aria-hidden/>
       <div className="flex shrink-0 items-center gap-1.5">
         {/* Notification bell */}
         {notifProps&&<NotificationBell {...notifProps}/>}
@@ -1406,6 +1420,36 @@ function Nav({ user, page, setPage, logout, lang, setLang, notifProps, themePref
         </Menu>
       </div>
     </nav>
+    <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
+      <SheetPopup side="left" showCloseButton={false} className="w-[min(300px,85vw)]">
+        <SheetHeader className="flex-row items-center justify-between gap-3 border-border border-b py-4">
+          <SheetTitle className="truncate font-heading text-brand text-lg italic">{isM && user?.business_name ? user.business_name : 'Pun&Cotta'}</SheetTitle>
+          <Button variant="ghost" size="icon-sm" aria-label="Close menu" onClick={()=>setMenuOpen(false)}><XIcon/></Button>
+        </SheetHeader>
+        <SheetPanel className="flex flex-col gap-1 py-3">
+          <nav aria-label="Pages" className="flex flex-col gap-0.5">
+            {links.map(l=>{ const Icon = NAV_ICONS[l.key]||ChevronRightIcon; const on = navActive(l.key); return (
+              <button type="button" key={l.key} data-slot="nav-sheet-link" onClick={()=>navigate(l.key)} aria-current={on?"page":undefined}
+                className={`flex h-10 items-center gap-3 rounded-lg px-3 text-start text-[15px] ${on?"bg-accent font-semibold text-accent-foreground":"text-foreground hover:bg-muted"}`}>
+                <Icon className={`size-4.5 ${on?"":"text-muted-foreground"}`}/>{l.label}
+              </button>
+            ); })}
+          </nav>
+          {isM&&(<>
+            <div className="my-2 border-border border-t"/>
+            {[["general",SettingsIcon,"General"],["schedule",ClockIcon,tl("🕐 Schedule").replace(/^🕐\s*/,"")],["embed",Link2Icon,"Embedded Menu"]].map(([k,Icon,label])=>(
+              <button type="button" key={k} data-slot="nav-sheet-link" onClick={()=>navigate(k)} aria-current={page===k?"page":undefined}
+                className={`flex h-10 items-center gap-3 rounded-lg px-3 text-start text-[15px] ${page===k?"bg-accent font-semibold text-accent-foreground":"text-foreground hover:bg-muted"}`}>
+                <Icon className={`size-4.5 ${page===k?"":"text-muted-foreground"}`}/>{label}
+              </button>
+            ))}
+          </>)}
+        </SheetPanel>
+        <div className="border-border border-t px-6 py-4 text-muted-foreground text-xs">
+          {user?.first_name||user?.email}{user?.restaurant?.name?` · ${user.restaurant.name}`:""}
+        </div>
+      </SheetPopup>
+    </Sheet>
     {cpOpen&&<CommandPalette user={user} setPage={key=>{ setPage(key); setCpOpen(false); }} onClose={()=>setCpOpen(false)}/>}
     </>
   );
