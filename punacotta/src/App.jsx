@@ -4196,7 +4196,7 @@ function OrdersManufPage({
             const cfg=STATUS_CONFIG[status]; const col=searched.filter(o=>o.status===status);
             return (
               <Card key={status} className="overflow-hidden">
-                <div className="flex items-center justify-between px-3.5 py-2.5" style={{ background:cfg.bg, borderBottom:`2px solid ${cfg.color}` }}>
+                <div className="flex items-center justify-between px-3.5 py-2.5" style={{ background:`${cfg.color}1a`, borderBottom:`2px solid ${cfg.color}` }}>
                   <span className="font-bold text-[13px] tracking-wide" style={{ color:cfg.color }}>{tl(status.toUpperCase())}</span>
                   <span className="rounded-full bg-card px-2 py-0.5 font-bold text-xs tabular-nums" style={{ color:cfg.color }}>{col.length}</span>
                 </div>
@@ -4254,7 +4254,7 @@ function OrdersManufPage({
                       <TableCell className={CELL}>{o.customer?.first_name}</TableCell>
                       <TableCell className={CELL}>{o.customer?.last_name}</TableCell>
                       <TableCell className={CELL}>
-                        <span className="rounded-full px-2.5 py-0.5 font-bold text-xs" style={{background:cfg.bg,color:cfg.color}}>{tl(o.status)}</span>
+                        <span className="rounded-full px-2.5 py-0.5 font-bold text-xs" style={{background:`${cfg.color}1f`,color:cfg.color}}>{tl(o.status)}</span>
                       </TableCell>
                       <TableCell className={`${CELL} font-bold text-brand tabular-nums`}>{o.total} AMD</TableCell>
                     </TableRow>
@@ -6005,7 +6005,7 @@ function BoaImpactSection({ toast }) {
 
           {/* Data entry */}
           <div className="mt-5 border-border border-t pt-3.5">
-            <Button variant="ghost" size="sm" className="-ms-2 text-accent-foreground" aria-expanded={showLog} onClick={()=>setShowLog(s=>!s)}>
+            <Button variant="ghost" size="sm" className="-ms-2 h-auto min-h-8 whitespace-normal text-start text-accent-foreground" aria-expanded={showLog} onClick={()=>setShowLog(s=>!s)}>
               <ChevronRightIcon className={`transition-transform ${showLog?"rotate-90":""}`}/>
               Log missing data ({d.pending_handover.length} handovers · {unlogged.length} batches)
             </Button>
