@@ -27,7 +27,7 @@ import { CopyIcon, ImageIcon, ImageUpIcon, Trash2Icon, CheckIcon, MicIcon, Squar
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator, MenuRadioGroup, MenuRadioItem, MenuCheckboxItem } from "@/components/ui/menu";
 import { AlertDialog, AlertDialogPopup, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from "@/components/ui/alert-dialog";
-import { FileDownIcon, SparklesIcon, SendIcon, BanIcon, MenuIcon, ReceiptTextIcon, PackageIcon, BookOpenIcon, TruckIcon, ChartColumnIcon, ArrowLeftIcon, ChefHatIcon, MailCheckIcon, PartyPopperIcon, StoreIcon, TriangleAlertIcon, BellIcon, ChevronDownIcon, CircleAlertIcon, CircleCheckIcon, CircleUserIcon, ClockIcon, GlobeIcon, InfoIcon, Link2Icon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SettingsIcon, SunIcon, XIcon } from "lucide-react";
+import { HandIcon, TableIcon, FileDownIcon, SparklesIcon, SendIcon, BanIcon, MenuIcon, ReceiptTextIcon, PackageIcon, BookOpenIcon, TruckIcon, ChartColumnIcon, ArrowLeftIcon, ChefHatIcon, MailCheckIcon, PartyPopperIcon, StoreIcon, TriangleAlertIcon, BellIcon, ChevronDownIcon, CircleAlertIcon, CircleCheckIcon, CircleUserIcon, ClockIcon, GlobeIcon, InfoIcon, Link2Icon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SettingsIcon, SunIcon, XIcon } from "lucide-react";
 
 const BoardOfArrivals = React.lazy(() => import('./screens/BoardOfArrivals.jsx'));
 
@@ -5658,6 +5658,45 @@ function SupplierForm({
 }
 
 // ─── REPORTS PAGE ─────────────────────────────────────────────────────────────
+// Report building blocks (coss)
+function ReportCard({ title, description, actions, children, className="" }) {
+  return (
+    <Card className={`mb-5 ${className}`}>
+      <div data-slot="report-card-header" className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 px-6 pt-6">
+        <div className="flex min-w-0 max-w-2xl flex-col gap-1">
+          <CardTitle className="font-heading text-lg">{title}</CardTitle>
+          {description&&<CardDescription className="leading-relaxed">{description}</CardDescription>}
+        </div>
+        {actions&&<div className="flex flex-wrap items-center gap-2">{actions}</div>}
+      </div>
+      <CardPanel>{children}</CardPanel>
+    </Card>
+  );
+}
+function StatTile({ label, value, sub, tone }) {
+  const toneCls = { brand:"text-accent-foreground", success:"text-success-foreground", destructive:"text-destructive-foreground" }[tone]||"";
+  return (
+    <div data-slot="stat-tile" className="min-w-36 flex-1 basis-36 rounded-xl border border-border bg-muted px-4 py-3">
+      <p className="mb-1 font-semibold text-[11px] text-muted-foreground uppercase tracking-wider">{label}</p>
+      <p className={`font-heading font-semibold text-2xl tabular-nums ${toneCls}`}>{value}</p>
+      {sub&&<p className="mt-0.5 text-muted-foreground text-xs leading-snug">{sub}</p>}
+    </div>
+  );
+}
+function OptionSeg({ value, onChange, options, label }) {
+  return (
+    <SegmentedControl aria-label={label}>
+      {options.map(([k,l])=>(
+        <SegmentedControlItem key={k} data-checked={value===k?"":undefined} aria-pressed={value===k} onClick={()=>onChange(k)} className="px-3">{l}</SegmentedControlItem>
+      ))}
+    </SegmentedControl>
+  );
+}
+const ReportEmpty = ({ children }) => <div className="px-3 py-12 text-center text-muted-foreground text-sm leading-relaxed">{children}</div>;
+const ChartTip = ({ x, y, children, className="" }) => (
+  <div data-slot="chart-tip" className={`pointer-events-none absolute z-20 min-w-32 rounded-lg border border-border bg-popover px-3 py-2 text-popover-foreground text-xs leading-relaxed shadow-lg/5 ${className}`} style={{ left:x, top:y }}>{children}</div>
+);
+
 // ─── BOARD OF ARRIVALS IMPACT (Reports) ───────────────────────────────────────
 // Does pre-selling through the Board of Arrivals complement the stock model?
 // Series colours were run through the dataviz palette validator (light surface, 2 series).
@@ -5677,28 +5716,22 @@ const barPath = (x,y,w,h,r,roundTop) => {
   return `M${x},${y+h} V${y+rr} ${rr?`Q${x},${y} ${x+rr},${y}`:`L${x},${y}`} H${x+w-rr} ${rr?`Q${x+w},${y} ${x+w},${y+rr}`:`L${x+w},${y}`} V${y+h} Z`;
 };
 
-const BoaTile = ({label,value,sub}) => (
-  <div style={{background:G.sand,borderRadius:10,padding:"12px 16px",flex:"1 1 150px",minWidth:150}}>
-    <p style={{fontSize:11,color:G.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>{label}</p>
-    <p style={{fontFamily:G.font,fontSize:22,fontWeight:700,color:G.dark}}>{value}</p>
-    {sub&&<p style={{fontSize:11,color:G.muted,marginTop:2}}>{sub}</p>}
-  </div>
-);
+const BoaTile = ({label,value,sub}) => <StatTile label={label} value={value} sub={sub}/>;
 const BoaLegend = ({items}) => (
-  <div style={{display:"flex",flexWrap:"wrap",gap:14,marginBottom:8,fontSize:12,color:G.dark}}>
+  <div className="mb-2 flex flex-wrap gap-x-3.5 gap-y-1 text-xs">
     {items.map((it,i)=>(
-      <span key={i} style={{display:"inline-flex",alignItems:"center",gap:6}}>
-        <span style={{width:12,height:12,borderRadius:3,background:it.color,display:"inline-block"}}/>{it.label}
+      <span key={i} className="inline-flex items-center gap-1.5">
+        <span className="inline-block size-3 rounded-[3px]" style={{ background:it.color }}/>{it.label}
       </span>
     ))}
   </div>
 );
 const BoaTable = ({cols,rows}) => (
-  <div style={{overflowX:"auto"}}>
-    <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-      <thead><tr>{cols.map(c=><th key={c} style={{textAlign:"left",padding:"4px 8px",color:G.muted,fontWeight:600,borderBottom:`1px solid ${G.border}`,whiteSpace:"nowrap"}}>{c}</th>)}</tr></thead>
-      <tbody>{rows.map((r,i)=><tr key={i}>{r.map((v,j)=><td key={j} style={{padding:"4px 8px",borderBottom:`1px solid ${G.border}`,color:G.dark,whiteSpace:"nowrap"}}>{v}</td>)}</tr>)}</tbody>
-    </table>
+  <div className="overflow-x-auto rounded-xl border border-border [&_thead_tr]:bg-muted">
+    <Table>
+      <TableHeader><TableRow>{cols.map(c=><TableHead key={c} className="h-9 px-3 font-semibold text-[11px] text-muted-foreground uppercase tracking-wider">{c}</TableHead>)}</TableRow></TableHeader>
+      <TableBody>{rows.map((row,i)=><TableRow key={i}>{row.map((v,k)=><TableCell key={k} className="px-3 py-2 text-xs tabular-nums">{v}</TableCell>)}</TableRow>)}</TableBody>
+    </Table>
   </div>
 );
 
@@ -5734,28 +5767,26 @@ function BoaImpactSection({ toast }) {
     onPointerLeave: ()=>setTip(null), onBlur: ()=>setTip(null),
   });
   const Tip = ({id}) => (tip&&tip.card===id) ? (
-    <div style={{position:"absolute",left:tip.x,top:tip.y,pointerEvents:"none",zIndex:20,background:G.white,
-      border:`1px solid ${G.border}`,borderRadius:8,padding:"8px 12px",fontSize:12,minWidth:130,lineHeight:1.6,
-      boxShadow:"0 4px 14px rgba(0,0,0,0.12)"}}>
-      <div style={{color:G.muted,marginBottom:2}}>{tip.title}</div>
-      {tip.rows.map((r,i)=>(
-        <div key={i} style={{display:"flex",alignItems:"center",gap:8}}>
-          {r.color&&<span style={{width:10,height:2,background:r.color,display:"inline-block",flex:"none"}}/>}
-          <b style={{color:G.dark}}>{r.value}</b><span style={{color:G.muted}}>{r.label}</span>
+    <ChartTip x={tip.x} y={tip.y}>
+      <div className="mb-0.5 text-muted-foreground">{tip.title}</div>
+      {tip.rows.map((row,i)=>(
+        <div key={i} className="flex items-center gap-2">
+          {row.color&&<span className="inline-block h-0.5 w-2.5 flex-none" style={{ background:row.color }}/>}
+          <b className="tabular-nums">{row.value}</b><span className="text-muted-foreground">{row.label}</span>
         </div>
       ))}
-    </div>
+    </ChartTip>
   ) : null;
 
   const card = (id,title,sub,body) => (
-    <div data-chartbox={id} style={{position:"relative",border:`1px solid ${G.border}`,borderRadius:12,padding:16,flex:"1 1 420px",minWidth:0}}>
-      <h4 style={{fontFamily:G.font,fontSize:15,marginBottom:2}}>{title}</h4>
-      <p style={{fontSize:12,color:G.muted,marginBottom:10,lineHeight:1.5}}>{sub}</p>
+    <div data-chartbox={id} className="relative min-w-0 flex-[1_1_420px] rounded-xl border border-border p-4">
+      <h4 className="mb-0.5 font-heading font-semibold">{title}</h4>
+      <p className="mb-2.5 text-muted-foreground text-xs leading-relaxed">{sub}</p>
       {body}
       <Tip id={id}/>
     </div>
   );
-  const empty = msg => <div style={{padding:"36px 12px",textAlign:"center",color:G.muted,fontSize:13,lineHeight:1.6}}>{msg}</div>;
+  const empty = msg => <ReportEmpty>{msg}</ReportEmpty>;
 
   // ── derived data ────────────────────────────────────────────────────────────
   const fr = d?.freshness, boa = fr?.boa, stk = fr?.stock;
@@ -5791,8 +5822,8 @@ function BoaImpactSection({ toast }) {
       <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{display:"block"}} role="img" aria-label="Age of orders at handover, Board of Arrivals versus stock model">
         {[0,0.25,0.5,0.75,1].map(t=>(
           <g key={t}>
-            <line x1={PL} y1={PT+cH*(1-t)} x2={PL+cW} y2={PT+cH*(1-t)} stroke={G.border} strokeWidth={1}/>
-            <text x={PL-6} y={PT+cH*(1-t)+4} textAnchor="end" fontSize={10} fill={G.muted}>{Math.round(yMax*t*100)}%</text>
+            <line x1={PL} y1={PT+cH*(1-t)} x2={PL+cW} y2={PT+cH*(1-t)} stroke={"var(--border)"} strokeWidth={1}/>
+            <text x={PL-6} y={PT+cH*(1-t)+4} textAnchor="end" fontSize={10} fill={"var(--muted-foreground)"}>{Math.round(yMax*t*100)}%</text>
           </g>
         ))}
         {fr.labels.map((lab,i)=>{
@@ -5805,13 +5836,13 @@ function BoaImpactSection({ toast }) {
             <g key={i}>
               {boa.n>0&&<path d={barPath(gx,yOf(sh(boa,i)),bw,PT+cH-yOf(sh(boa,i)),4,true)} fill={BOA_C}/>}
               {stk.n>0&&<path d={barPath(gx+bw+2,yOf(sh(stk,i)),bw,PT+cH-yOf(sh(stk,i)),4,true)} fill={STOCK_C}/>}
-              <text x={PL+i*slot+slot/2} y={H-26} textAnchor="middle" fontSize={10} fill={G.muted}>{lab}</text>
+              <text x={PL+i*slot+slot/2} y={H-26} textAnchor="middle" fontSize={10} fill={"var(--muted-foreground)"}>{lab}</text>
               <rect x={PL+i*slot} y={PT} width={slot} height={cH} fill="transparent" {...tipProps(`Handed over ${lab} after the batch was ready`,rows)}/>
             </g>
           );
         })}
-        <line x1={PL} y1={PT+cH} x2={PL+cW} y2={PT+cH} stroke={G.border}/>
-        <text x={PL+cW/2} y={H-6} textAnchor="middle" fontSize={10} fill={G.muted}>Time from batch ready to handover · share of each group’s orders</text>
+        <line x1={PL} y1={PT+cH} x2={PL+cW} y2={PT+cH} stroke={"var(--border)"}/>
+        <text x={PL+cW/2} y={H-6} textAnchor="middle" fontSize={10} fill={"var(--muted-foreground)"}>Time from batch ready to handover · share of each group’s orders</text>
       </svg>
     );
   };
@@ -5830,8 +5861,8 @@ function BoaImpactSection({ toast }) {
       <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{display:"block"}} role="img" aria-label="Weekly revenue, stock model and Board of Arrivals stacked">
         {[0,0.25,0.5,0.75,1].map(t=>(
           <g key={t}>
-            <line x1={PL} y1={PT+cH*(1-t)} x2={PL+cW} y2={PT+cH*(1-t)} stroke={G.border} strokeWidth={1}/>
-            <text x={PL-6} y={PT+cH*(1-t)+4} textAnchor="end" fontSize={10} fill={G.muted}>{fmtK(yMax*t)}</text>
+            <line x1={PL} y1={PT+cH*(1-t)} x2={PL+cW} y2={PT+cH*(1-t)} stroke={"var(--border)"} strokeWidth={1}/>
+            <text x={PL-6} y={PT+cH*(1-t)+4} textAnchor="end" fontSize={10} fill={"var(--muted-foreground)"}>{fmtK(yMax*t)}</text>
           </g>
         ))}
         {weeks.map((w,i)=>{
@@ -5847,7 +5878,7 @@ function BoaImpactSection({ toast }) {
             <g key={w.wk}>
               {hs>0&&<path d={barPath(x,base-hs,bw,hs,4,hb<=0)} fill={STOCK_C}/>}
               {hb>0&&<path d={barPath(x,base-hs-hb-(hs>0?2:0),bw,hb,4,true)} fill={BOA_C}/>}
-              {i%lblEvery===0&&<text x={PL+i*slot+slot/2} y={H-18} textAnchor="middle" fontSize={9} fill={G.muted}>
+              {i%lblEvery===0&&<text x={PL+i*slot+slot/2} y={H-18} textAnchor="middle" fontSize={9} fill={"var(--muted-foreground)"}>
                 {`${String(dt.getDate()).padStart(2,"0")}/${String(dt.getMonth()+1).padStart(2,"0")}`}</text>}
               <rect x={PL+i*slot} y={PT} width={slot} height={cH} fill="transparent"
                 {...tipProps(`Week of ${dt.toLocaleDateString()}`,rows)}/>
@@ -5855,11 +5886,11 @@ function BoaImpactSection({ toast }) {
           );
         })}
         {fi>=0&&<g>
-          <line x1={PL+fi*slot} y1={PT} x2={PL+fi*slot} y2={base} stroke={G.dark} strokeWidth={1}/>
-          <text x={PL+fi*slot+4} y={PT+9} fontSize={10} fill={G.dark}>first BoA order</text>
+          <line x1={PL+fi*slot} y1={PT} x2={PL+fi*slot} y2={base} stroke={"var(--foreground)"} strokeWidth={1}/>
+          <text x={PL+fi*slot+4} y={PT+9} fontSize={10} fill={"var(--foreground)"}>first BoA order</text>
         </g>}
-        <line x1={PL} y1={base} x2={PL+cW} y2={base} stroke={G.border}/>
-        <text x={PL+cW/2} y={H-3} textAnchor="middle" fontSize={10} fill={G.muted}>Week starting · revenue, AMD</text>
+        <line x1={PL} y1={base} x2={PL+cW} y2={base} stroke={"var(--border)"}/>
+        <text x={PL+cW/2} y={H-3} textAnchor="middle" fontSize={10} fill={"var(--muted-foreground)"}>Week starting · revenue, AMD</text>
       </svg>
     );
   };
@@ -5876,8 +5907,8 @@ function BoaImpactSection({ toast }) {
       <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{display:"block"}} role="img" aria-label="How long before the batch was ready reservations arrived">
         {[...new Set(ticks)].map(v=>(
           <g key={v}>
-            <line x1={PL} y1={PT+cH-(v/yMax)*cH} x2={PL+cW} y2={PT+cH-(v/yMax)*cH} stroke={G.border}/>
-            <text x={PL-6} y={PT+cH-(v/yMax)*cH+4} textAnchor="end" fontSize={10} fill={G.muted}>{v}</text>
+            <line x1={PL} y1={PT+cH-(v/yMax)*cH} x2={PL+cW} y2={PT+cH-(v/yMax)*cH} stroke={"var(--border)"}/>
+            <text x={PL-6} y={PT+cH-(v/yMax)*cH+4} textAnchor="end" fontSize={10} fill={"var(--muted-foreground)"}>{v}</text>
           </g>
         ))}
         {labels.map((lab,i)=>{
@@ -5885,15 +5916,15 @@ function BoaImpactSection({ toast }) {
           return (
             <g key={i}>
               <path d={barPath(PL+i*slot+(slot-bw)/2,PT+cH-h,bw,h,4,true)} fill={BOA_C}/>
-              <text x={PL+i*slot+slot/2} y={H-26} textAnchor="middle" fontSize={10} fill={G.muted}>{lab.length>10?lab.split(" ").slice(0,2).join(" "):lab}</text>
+              <text x={PL+i*slot+slot/2} y={H-26} textAnchor="middle" fontSize={10} fill={"var(--muted-foreground)"}>{lab.length>10?lab.split(" ").slice(0,2).join(" "):lab}</text>
               <rect x={PL+i*slot} y={PT} width={slot} height={cH} fill="transparent"
                 {...tipProps(lab==="After ready"?"Reserved after the batch was ready":lab==="Batch in production"?"Reserved, batch still in production":`Reserved ${lab} before the batch was ready`,
                   [{color:BOA_C,value:String(counts[i]),label:"reservations"}])}/>
             </g>
           );
         })}
-        <line x1={PL} y1={PT+cH} x2={PL+cW} y2={PT+cH} stroke={G.border}/>
-        <text x={PL+cW/2} y={H-6} textAnchor="middle" fontSize={10} fill={G.muted}>How long before the batch was ready the customer reserved</text>
+        <line x1={PL} y1={PT+cH} x2={PL+cW} y2={PT+cH} stroke={"var(--border)"}/>
+        <text x={PL+cW/2} y={H-6} textAnchor="middle" fontSize={10} fill={"var(--muted-foreground)"}>How long before the batch was ready the customer reserved</text>
       </svg>
     );
   };
@@ -5908,16 +5939,16 @@ function BoaImpactSection({ toast }) {
       <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{display:"block"}} role="img" aria-label="Share of each batch reserved before ready versus unsold share">
         {[0,0.25,0.5,0.75,1].map(t=>(
           <g key={t}>
-            <line x1={PL} y1={PT+cH*(1-t)} x2={PL+cW} y2={PT+cH*(1-t)} stroke={G.border}/>
-            <text x={PL-6} y={PT+cH*(1-t)+4} textAnchor="end" fontSize={10} fill={G.muted}>{Math.round(yMax*t)}%</text>
-            <text x={xOf(t)} y={PT+cH+16} textAnchor="middle" fontSize={10} fill={G.muted}>{Math.round(t*100)}%</text>
+            <line x1={PL} y1={PT+cH*(1-t)} x2={PL+cW} y2={PT+cH*(1-t)} stroke={"var(--border)"}/>
+            <text x={PL-6} y={PT+cH*(1-t)+4} textAnchor="end" fontSize={10} fill={"var(--muted-foreground)"}>{Math.round(yMax*t)}%</text>
+            <text x={xOf(t)} y={PT+cH+16} textAnchor="middle" fontSize={10} fill={"var(--muted-foreground)"}>{Math.round(t*100)}%</text>
           </g>
         ))}
-        <line x1={xOf(0.3)} y1={PT} x2={xOf(0.3)} y2={PT+cH} stroke={G.dark} strokeWidth={1}/>
-        <text x={xOf(0.3)+4} y={PT+9} fontSize={10} fill={G.dark}>30% pre-sold</text>
+        <line x1={xOf(0.3)} y1={PT} x2={xOf(0.3)} y2={PT+cH} stroke={"var(--foreground)"} strokeWidth={1}/>
+        <text x={xOf(0.3)+4} y={PT+9} fontSize={10} fill={"var(--foreground)"}>30% pre-sold</text>
         {logged.map((b,i)=>(
           <g key={`${b.prid}-${b.rid}`}>
-            <circle cx={xOf(b.pre_share)} cy={yOf(b.waste*100)} r={4} fill={BOA_C} stroke={G.white} strokeWidth={2}/>
+            <circle cx={xOf(b.pre_share)} cy={yOf(b.waste*100)} r={4} fill={BOA_C} stroke={"var(--card)"} strokeWidth={2}/>
             <circle cx={xOf(b.pre_share)} cy={yOf(b.waste*100)} r={12} fill="transparent"
               {...tipProps(`${b.item} · ${new Date(b.completed_at).toLocaleDateString()}`,[
                 {value:pctStr(b.pre_share),label:"reserved before ready"},
@@ -5925,9 +5956,9 @@ function BoaImpactSection({ toast }) {
               ])}/>
           </g>
         ))}
-        <line x1={PL} y1={PT+cH} x2={PL+cW} y2={PT+cH} stroke={G.border}/>
-        <text x={PL+cW/2} y={H-6} textAnchor="middle" fontSize={10} fill={G.muted}>Share of the batch reserved before it was ready</text>
-        <text x={12} y={PT+cH/2} textAnchor="middle" fontSize={10} fill={G.muted} transform={`rotate(-90,12,${PT+cH/2})`}>Unsold / wasted</text>
+        <line x1={PL} y1={PT+cH} x2={PL+cW} y2={PT+cH} stroke={"var(--border)"}/>
+        <text x={PL+cW/2} y={H-6} textAnchor="middle" fontSize={10} fill={"var(--muted-foreground)"}>Share of the batch reserved before it was ready</text>
+        <text x={12} y={PT+cH/2} textAnchor="middle" fontSize={10} fill={"var(--muted-foreground)"} transform={`rotate(-90,12,${PT+cH/2})`}>Unsold / wasted</text>
       </svg>
     );
   };
@@ -5953,32 +5984,16 @@ function BoaImpactSection({ toast }) {
 
   const ready = d && fr;
   return (
-    <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20 }}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:12,marginBottom:4}}>
-        <h3 style={{fontFamily:G.font,fontSize:17}}>Board of Arrivals impact</h3>
-        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-          <div style={{display:"flex",borderRadius:8,border:`1px solid ${G.border}`,overflow:"hidden"}}>
-            {[[84,"12 weeks"],[182,"26 weeks"],[364,"1 year"]].map(([n,l])=>(
-              <button key={n} onClick={()=>changeDays(n)} style={{padding:"6px 14px",border:"none",cursor:"pointer",fontSize:13,fontFamily:G.mono,
-                background:days===n?G.caramel:G.white,color:days===n?G.white:G.muted,transition:"all 0.15s"}}>{l}</button>
-            ))}
-          </div>
-          <div style={{display:"flex",borderRadius:8,border:`1px solid ${G.border}`,overflow:"hidden"}}>
-            {[["chart","Charts"],["table","Tables"]].map(([k,l])=>(
-              <button key={k} onClick={()=>setView(k)} style={{padding:"6px 14px",border:"none",cursor:"pointer",fontSize:13,fontFamily:G.mono,
-                background:view===k?G.caramel:G.white,color:view===k?G.white:G.muted,transition:"all 0.15s"}}>{l}</button>
-            ))}
-          </div>
-        </div>
-      </div>
-      <p style={{fontSize:13,color:G.muted,marginBottom:16,lineHeight:1.5}}>
-        Does selling a batch while it is still being made complement the stock model? Three checks: freshness at handover, whether BoA adds to stock sales, and waste per batch.
-      </p>
-
+    <ReportCard title="Board of Arrivals impact"
+      description="Does selling a batch while it is still being made complement the stock model? Three checks: freshness at handover, whether BoA adds to stock sales, and waste per batch."
+      actions={<>
+        <OptionSeg label="Period" value={days} onChange={changeDays} options={[[84,"12 weeks"],[182,"26 weeks"],[364,"1 year"]]}/>
+        <OptionSeg label="View" value={view} onChange={setView} options={[["chart","Charts"],["table","Tables"]]}/>
+      </>}>
       {!ready ? (loading ? <Spinner/> : empty("Could not load the report.")) : (
-        <div style={{opacity:loading?0.55:1,transition:"opacity 0.15s"}}>
+        <div className="transition-opacity" style={{opacity:loading?0.55:1}}>
           {/* KPIs */}
-          <div style={{display:"flex",flexWrap:"wrap",gap:12,marginBottom:12}}>
+          <div className="mb-3 flex flex-wrap gap-3">
             <BoaTile label="Median age at handover · BoA" value={fmtHours(boa.median_h)} sub={`${boa.n} orders with a handover time`}/>
             <BoaTile label="Median age · stock model (est.)" value={fmtHours(stk.median_h)} sub={`${stk.n} order lines · most recent batch`}/>
             <BoaTile label="Reserved before ready" value={lead.n?pctStr(lead.before_ready/lead.n):"—"} sub={`${lead.n} confirmed reservations`}/>
@@ -5986,7 +6001,7 @@ function BoaImpactSection({ toast }) {
             <BoaTile label="Waitlisted units" value={Math.round(fun.waitlist_units*10)/10} sub="demand beyond batch capacity"/>
           </div>
           {/* Funnel + buyers */}
-          <div style={{display:"flex",flexWrap:"wrap",gap:12,marginBottom:20}}>
+          <div className="mb-5 flex flex-wrap gap-3">
             <BoaTile label="Board visits" value={fun.views} sub={fun.views_since?`counted since ${fun.views_since}`:"counting starts with this release"}/>
             <BoaTile label="Reservations" value={fun.reservations} sub={fun.views?`${pctStr(fun.reservations/fun.views)} of visits`:"—"}/>
             <BoaTile label="Handed over" value={fun.handed_over} sub={fun.reservations?`${pctStr(fun.handed_over/fun.reservations)} of reservations`:"—"}/>
@@ -5996,86 +6011,94 @@ function BoaImpactSection({ toast }) {
           </div>
 
           {view==="chart" ? (
-            <div style={{display:"flex",flexWrap:"wrap",gap:16}}>
+            <div className="flex flex-wrap gap-4">
               {card("fresh","Freshness at handover","Age of the batch when the customer collects, as a share of each group’s orders. The stock-model age is an estimate: it uses the most recent finished batch of the same item, which is the youngest that stock could be.",
                 <>{(boa.n||stk.n)>0&&<BoaLegend items={[{color:BOA_C,label:`Board of Arrivals (n=${boa.n})`},{color:STOCK_C,label:`Stock model, estimated (n=${stk.n})`}]}/>}{renderFresh()}</>)}
               {card("weekly","Complement or substitute?","Weekly revenue split by channel. If BoA complements stock sales, the blue stack holds steady after the first BoA order while the total grows.",
                 <><BoaLegend items={[{color:STOCK_C,label:"Stock model"},{color:BOA_C,label:"Board of Arrivals"}]}/>{renderWeekly()}</>)}
               {card("lead","When do reservations arrive?","Confirmed reservations by how long before the batch was ready they were made. Pre-selling only works if most of them land on the left of “After ready”.",
-                <><p style={{fontSize:13,color:G.dark,marginBottom:8}}>{lead.n?`${pctStr(lead.before_ready/lead.n)} of ${lead.n} reservations arrived before the batch was ready.`:""}</p>{renderLead()}</>)}
+                <><p className="mb-2 text-sm">{lead.n?`${pctStr(lead.before_ready/lead.n)} of ${lead.n} reservations arrived before the batch was ready.`:""}</p>{renderLead()}</>)}
               {card("waste","Pre-selling vs. waste","One dot per finished batch item: the more of it was reserved before it was ready, the less should go unsold.",
                 <>
-                  {logged.length>0&&<p style={{fontSize:13,color:G.dark,marginBottom:8,lineHeight:1.5}}>
+                  {logged.length>0&&<p className="mb-2 text-sm leading-relaxed">
                     ≥30% pre-sold: <b>{pctStr(avgOf(hi))}</b> unsold ({hi.length} batches) · under 30%: <b>{pctStr(avgOf(lo))}</b> ({lo.length}).
-                    {logged.length<10&&<span style={{color:G.muted}}> Fewer than 10 batches logged, so treat this as anecdotal.</span>}
+                    {logged.length<10&&<span className="text-muted-foreground"> Fewer than 10 batches logged, so treat this as anecdotal.</span>}
                   </p>}
                   {renderScatter()}
                 </>)}
             </div>
           ) : (
-            <div style={{display:"flex",flexDirection:"column",gap:20}}>
-              <div><h4 style={{fontFamily:G.font,fontSize:15,marginBottom:6}}>Freshness at handover (orders per age bucket)</h4>
+            <div className="flex flex-col gap-5">
+              <div><h4 className="mb-1.5 font-heading font-semibold">Freshness at handover (orders per age bucket)</h4>
                 <BoaTable cols={["Age","Board of Arrivals","Stock model (est.)"]}
                   rows={fr.labels.map((l,i)=>[l,`${boa.counts[i]}${boa.n?` (${pctStr(boa.counts[i]/boa.n)})`:""}`,`${stk.counts[i]}${stk.n?` (${pctStr(stk.counts[i]/stk.n)})`:""}`])}/></div>
-              <div><h4 style={{fontFamily:G.font,fontSize:15,marginBottom:6}}>Weekly revenue (AMD)</h4>
+              <div><h4 className="mb-1.5 font-heading font-semibold">Weekly revenue (AMD)</h4>
                 <BoaTable cols={["Week starting","Stock model","Stock orders","Board of Arrivals","BoA orders","Total"]}
                   rows={weeks.map(w=>[w.wk,Math.round(w.stock).toLocaleString(),w.stockN,Math.round(w.boa).toLocaleString(),w.boaN,Math.round(w.stock+w.boa).toLocaleString()])}/></div>
-              <div><h4 style={{fontFamily:G.font,fontSize:15,marginBottom:6}}>Reservation lead time</h4>
+              <div><h4 className="mb-1.5 font-heading font-semibold">Reservation lead time</h4>
                 <BoaTable cols={["Reserved","Reservations"]}
                   rows={[...lead.labels.map((l,i)=>[l,lead.counts[i]]),["Batch in production",lead.in_production]]}/></div>
-              <div><h4 style={{fontFamily:G.font,fontSize:15,marginBottom:6}}>Batches</h4>
+              <div><h4 className="mb-1.5 font-heading font-semibold">Batches</h4>
                 <BoaTable cols={["Item","Finished","Batch qty","Pre-sold","All BoA","Unsold qty","Unsold %"]}
                   rows={d.batches.map(b=>[b.item,new Date(b.completed_at).toLocaleDateString(),b.run_qty,pctStr(b.pre_share),pctStr(b.boa_share),b.wasted_qty==null?"not logged":b.wasted_qty,b.wasted_qty==null||!b.run_qty?"—":pctStr(b.wasted_qty/b.run_qty)])}/></div>
             </div>
           )}
 
           {/* Data entry */}
-          <div style={{marginTop:20,borderTop:`1px solid ${G.border}`,paddingTop:14}}>
-            <button onClick={()=>setShowLog(s=>!s)} style={{background:"none",border:"none",cursor:"pointer",fontFamily:G.mono,fontSize:13,color:G.caramel,padding:0}}>
-              {showLog?"▾":"▸"} Log missing data ({d.pending_handover.length} handovers · {unlogged.length} batches)
-            </button>
+          <div className="mt-5 border-border border-t pt-3.5">
+            <Button variant="ghost" size="sm" className="-ms-2 text-accent-foreground" aria-expanded={showLog} onClick={()=>setShowLog(s=>!s)}>
+              <ChevronRightIcon className={`transition-transform ${showLog?"rotate-90":""}`}/>
+              Log missing data ({d.pending_handover.length} handovers · {unlogged.length} batches)
+            </Button>
             {showLog&&(
-              <div style={{display:"flex",flexWrap:"wrap",gap:24,marginTop:14}}>
-                <div style={{flex:"1 1 360px",minWidth:0}}>
-                  <h4 style={{fontFamily:G.font,fontSize:14,marginBottom:4}}>Ready orders without a handover time</h4>
-                  <p style={{fontSize:12,color:G.muted,marginBottom:8,lineHeight:1.5}}>Click when the customer collects the order. The time of the click is recorded, which is what the freshness chart measures.</p>
-                  {!d.pending_handover.length ? <p style={{fontSize:13,color:G.muted}}>Nothing waiting.</p> : d.pending_handover.map(o=>(
-                    <div key={o.oid} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"8px 0",borderBottom:`1px solid ${G.border}`}}>
-                      <div style={{fontSize:13,minWidth:0}}>
-                        <b style={{color:G.dark}}>#{o.oid}</b> <span style={{color:G.muted}}>{o.is_boa?"BoA":"Stock model"} · {o.customer||"Guest"}</span>
-                        <div style={{fontSize:12,color:G.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{o.items||"—"}</div>
-                      </div>
-                      <Btn size="sm" onClick={()=>markHanded(o.oid)} disabled={busy===`h${o.oid}`}>Handed over</Btn>
+              <div className="mt-3.5 flex flex-wrap gap-6">
+                <div className="min-w-0 flex-[1_1_360px]">
+                  <h4 className="mb-1 font-heading font-semibold text-sm">Ready orders without a handover time</h4>
+                  <p className="mb-2 text-muted-foreground text-xs leading-relaxed">Click when the customer collects the order. The time of the click is recorded, which is what the freshness chart measures.</p>
+                  {!d.pending_handover.length ? <p className="text-muted-foreground text-sm">Nothing waiting.</p> : (
+                    <div className="flex flex-col divide-y divide-border">
+                      {d.pending_handover.map(o=>(
+                        <div key={o.oid} className="flex items-center justify-between gap-2.5 py-2">
+                          <div className="min-w-0 text-sm">
+                            <b>#{o.oid}</b> <span className="text-muted-foreground">{o.is_boa?"BoA":"Stock model"} · {o.customer||"Guest"}</span>
+                            <div className="truncate text-muted-foreground text-xs">{o.items||"—"}</div>
+                          </div>
+                          <Btn size="sm" variant="secondary" onClick={()=>markHanded(o.oid)} loading={busy===`h${o.oid}`}><HandIcon/>Handed over</Btn>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
                 </div>
-                <div style={{flex:"1 1 360px",minWidth:0}}>
-                  <h4 style={{fontFamily:G.font,fontSize:14,marginBottom:4}}>Finished batches without an unsold count</h4>
-                  <p style={{fontSize:12,color:G.muted,marginBottom:8,lineHeight:1.5}}>Enter how many units went unsold or were thrown away (0 if none).</p>
-                  {!unlogged.length ? <p style={{fontSize:13,color:G.muted}}>All finished batches are logged.</p> : unlogged.map(b=>{
-                    const key=`${b.prid}-${b.rid}`;
-                    return (
-                      <div key={key} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"8px 0",borderBottom:`1px solid ${G.border}`}}>
-                        <div style={{fontSize:13,minWidth:0}}>
-                          <b style={{color:G.dark}}>{b.item}</b>
-                          <div style={{fontSize:12,color:G.muted}}>{new Date(b.completed_at).toLocaleDateString()} · batch of {b.run_qty}</div>
-                        </div>
-                        <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                          <input type="number" min="0" max={b.run_qty} step="any" value={wasteIn[key]??""} placeholder="unsold"
-                            onChange={e=>setWasteIn(p=>({...p,[key]:e.target.value}))}
-                            style={{width:80,padding:"5px 8px",borderRadius:7,border:`1px solid ${G.border}`,fontFamily:G.mono,fontSize:13}}/>
-                          <Btn size="sm" onClick={()=>saveWaste(b)} disabled={busy===key||(wasteIn[key]??"")===""}>Save</Btn>
-                        </div>
-                      </div>
-                    );
-                  })}
+                <div className="min-w-0 flex-[1_1_360px]">
+                  <h4 className="mb-1 font-heading font-semibold text-sm">Finished batches without an unsold count</h4>
+                  <p className="mb-2 text-muted-foreground text-xs leading-relaxed">Enter how many units went unsold or were thrown away (0 if none).</p>
+                  {!unlogged.length ? <p className="text-muted-foreground text-sm">All finished batches are logged.</p> : (
+                    <div className="flex flex-col divide-y divide-border">
+                      {unlogged.map(b=>{
+                        const key=`${b.prid}-${b.rid}`;
+                        return (
+                          <div key={key} className="flex items-center justify-between gap-2.5 py-2">
+                            <div className="min-w-0 text-sm">
+                              <b>{b.item}</b>
+                              <div className="text-muted-foreground text-xs">{new Date(b.completed_at).toLocaleDateString()} · batch of {b.run_qty}</div>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <CInput type="number" size="sm" min="0" max={b.run_qty} step="any" value={wasteIn[key]??""} placeholder="unsold" aria-label={`Unsold ${b.item}`}
+                                onChange={e=>setWasteIn(p=>({...p,[key]:e.target.value}))} className="w-20"/>
+                              <Btn size="sm" onClick={()=>saveWaste(b)} loading={busy===key} disabled={(wasteIn[key]??"")===""}>Save</Btn>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
           </div>
         </div>
       )}
-    </div>
+    </ReportCard>
   );
 }
 
@@ -6113,7 +6136,7 @@ function buildPnl(data, expanded, tl) {
   const nodes = [], links = [];
   const add = n => { nodes.push({ ...n }); return n.id; };
   list.forEach((c, ci) => {
-    const color = c.other ? G.muted : pal[ci];
+    const color = c.other ? "var(--muted-foreground)" : pal[ci];
     if (expanded.has(c.caid)) {
       c.items.sort((a, b) => b.revenue - a.revenue).forEach((it, ii) => {
         const id = add({ id: `i-${it.rid}`, col: 0, kind: "item", label: it.item, value: it.revenue, color, shade: ii % 2 ? 0.62 : 0.88, caid: c.caid, category: c.name });
@@ -6124,7 +6147,7 @@ function buildPnl(data, expanded, tl) {
       links.push({ s: id, t: "rev", v: c.value, color });
     }
   });
-  const ink = G.muted;
+  const ink = "var(--muted-foreground)";
   if (R > 0 || E > 0) {
     add({ id: "rev", col: 1, kind: "total", label: tl("Revenue"), value: Math.max(R, 0), color: ink });
     if (E > R) add({ id: "def", col: 1, kind: "total", label: tl("Deficit"), value: E - R, color: ink });
@@ -6230,12 +6253,7 @@ function PnlSection({ toast }) {
     return `M${l.x0},${l.y0} C${xm},${l.y0} ${xm},${l.y1} ${l.x1},${l.y1} L${l.x1},${l.y1 + l.h} C${xm},${l.y1 + l.h} ${xm},${l.y0 + l.h} ${l.x0},${l.y0 + l.h} Z`;
   };
 
-  const tile = (label, value, color) => (
-    <div style={{ background: G.sand, borderRadius: 10, padding: "12px 20px" }}>
-      <p style={{ fontSize: 11, color: G.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>{label}</p>
-      <p style={{ fontFamily: G.font, fontSize: 22, fontWeight: 700, color: color || G.dark }}>{value}</p>
-    </div>
-  );
+  const tile = (label, value, tone) => <StatTile label={label} value={value} tone={tone}/>;
   const ex = data?.expenses;
   const tableRows = [];
   if (data) {
@@ -6262,41 +6280,35 @@ function PnlSection({ toast }) {
   }
 
   return (
-    <div style={{ background: G.white, border: `1px solid ${G.border}`, borderRadius: 14, padding: 24, marginBottom: 20 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, gap: 12, flexWrap: "wrap" }}>
-        <h3 style={{ fontFamily: G.font, fontSize: 17 }}>{tl("Profit & Loss")}</h3>
-        <div style={{ display: "flex", borderRadius: 8, border: `1px solid ${G.border}`, overflow: "hidden" }}>
-          {[["week", "Week"], ["month", "Month"], ["year", "Year"]].map(([k, l]) => (
-            <button key={k} onClick={() => changePeriod(k)} style={{
-              padding: "6px 16px", border: "none", cursor: "pointer", fontSize: 13, fontFamily: G.mono,
-              background: period === k ? G.caramel : G.white, color: period === k ? G.white : G.muted, transition: "all 0.15s"
-            }}>{tl(l)}</button>
-          ))}
-        </div>
-      </div>
-      <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
-        {tile(tl("Revenue"), `${fmt(R)} AMD`, G.caramel)}
+    <ReportCard title={tl("Profit & Loss")}
+      actions={<OptionSeg label="Period" value={period} onChange={changePeriod} options={[["week",tl("Week")],["month",tl("Month")],["year",tl("Year")]]}/>}>
+      <div className="mb-4 flex flex-wrap gap-3">
+        {tile(tl("Revenue"), `${fmt(R)} AMD`, "brand")}
         {tile(tl("Expenses"), `${fmt(E)} AMD`)}
-        {tile(net >= 0 ? tl("Profit") : tl("Loss"), `${net < 0 ? "−" : ""}${fmt(Math.abs(net))} AMD`, net >= 0 ? G.green : G.red)}
+        {tile(net >= 0 ? tl("Profit") : tl("Loss"), `${net < 0 ? "−" : ""}${fmt(Math.abs(net))} AMD`, net >= 0 ? "success" : "destructive")}
       </div>
-      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 12, color: G.muted }}>{tl("Click a revenue category or Profit to drill down.")}</span>
-        {expanded.size > 0 && <button onClick={() => setExpanded(new Set())} style={{ background: "none", border: `1px solid ${G.border}`, borderRadius: 6, cursor: "pointer", fontSize: 12, fontFamily: G.mono, color: G.muted, padding: "3px 10px" }}>{tl("Collapse all")}</button>}
-        <button onClick={() => setView(v => v === 'chart' ? 'table' : 'chart')} style={{ marginLeft: "auto", background: "none", border: `1px solid ${G.border}`, borderRadius: 6, cursor: "pointer", fontSize: 12, fontFamily: G.mono, color: G.muted, padding: "3px 10px" }}>{view === 'chart' ? tl("Table view") : tl("Chart view")}</button>
+      <div className="mb-2 flex flex-wrap items-center gap-2.5">
+        <span className="text-muted-foreground text-xs">{tl("Click a revenue category or Profit to drill down.")}</span>
+        {expanded.size > 0 && <Button variant="outline" size="xs" onClick={() => setExpanded(new Set())}>{tl("Collapse all")}</Button>}
+        <Button variant="outline" size="xs" className="ms-auto" onClick={() => setView(v => v === 'chart' ? 'table' : 'chart')}>
+          {view === 'chart' ? <><TableIcon/>{tl("Table view")}</> : <><ChartColumnIcon/>{tl("Chart view")}</>}
+        </Button>
       </div>
       {loading ? <Spinner /> : !nodes.length ? (
-        <div style={{ padding: 60, textAlign: "center", color: G.muted }}>{tl("No data yet.")}</div>
+        <ReportEmpty>{tl("No data yet.")}</ReportEmpty>
       ) : view === 'table' ? (
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <tbody>
-            {tableRows.map((r, i) => (
-              <tr key={i} style={{ borderBottom: `1px solid ${G.border}`, background: r.kind === 'h' ? G.sand : "transparent" }}>
-                <td style={{ padding: "7px 12px", paddingLeft: r.kind === 'h' ? 12 : 28, fontWeight: r.kind === 'h' ? 700 : 400, color: G.dark }}>{r.a}</td>
-                <td style={{ padding: "7px 12px", textAlign: "right", fontFamily: G.mono, color: G.dark }}>{fmt(r.v)} AMD</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="overflow-hidden rounded-xl border border-border">
+          <Table>
+            <TableBody>
+              {tableRows.map((r, i) => (
+                <TableRow key={i} className={r.kind === 'h' ? "bg-muted font-semibold hover:bg-muted" : ""}>
+                  <TableCell className={`py-2 pe-3 ${r.kind === 'h' ? "ps-3" : "ps-7"}`}>{r.a}</TableCell>
+                  <TableCell className="px-3 py-2 text-end tabular-nums">{fmt(r.v)} AMD</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       ) : (
         <div key={period} style={{ position: "relative", animation: "fadeIn 0.3s ease" }}>
           <svg width="100%" viewBox={`0 0 ${lay.W} ${lay.H}`} style={{ display: "block", maxWidth: lay.W, margin: "0 auto" }} role="img"
@@ -6319,15 +6331,15 @@ function PnlSection({ toast }) {
                   onClick={() => clickable && toggleCat(n)}
                   onKeyDown={e => { if (clickable && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggleCat(n); } }}
                   onMouseMove={e => showTip(e, lines)} onMouseLeave={() => setTip(null)}>
-                  <rect x={n.x} y={n.y} width={n.w} height={n.h} rx={2} fill={n.color} opacity={n.shade ?? 1} stroke={G.white} strokeWidth={2} paintOrder="stroke" />
+                  <rect x={n.x} y={n.y} width={n.w} height={n.h} rx={2} fill={n.color} opacity={n.shade ?? 1} stroke={"var(--card)"} strokeWidth={2} paintOrder="stroke" />
                   {n.col === 0 && (
-                    <text x={n.x - 8} y={(n.ly ?? n.y + n.h / 2) + 4} textAnchor="end" fontSize={11} fill={G.dark}>
-                      {n.kind === 'cat' ? "▸ " : "· "}{n.label}<tspan fill={G.muted}> {fmtK(n.value)}</tspan>
+                    <text x={n.x - 8} y={(n.ly ?? n.y + n.h / 2) + 4} textAnchor="end" fontSize={11} fill={"var(--foreground)"}>
+                      {n.kind === 'cat' ? "▸ " : "· "}{n.label}<tspan fill={"var(--muted-foreground)"}> {fmtK(n.value)}</tspan>
                     </text>
                   )}
                   {n.col === 3 && (
-                    <text x={n.x + n.w + 8} y={(n.ly ?? n.y + n.h / 2) + 4} fontSize={11} fill={G.dark}>
-                      {n.label}<tspan fill={G.muted}> {n.kind === 'chan' ? `${n.actual < 0 ? "−" : ""}${fmtK(Math.abs(n.actual))} · ${pct(n.actual, net)}` : fmtK(n.value)}</tspan>
+                    <text x={n.x + n.w + 8} y={(n.ly ?? n.y + n.h / 2) + 4} fontSize={11} fill={"var(--foreground)"}>
+                      {n.label}<tspan fill={"var(--muted-foreground)"}> {n.kind === 'chan' ? `${n.actual < 0 ? "−" : ""}${fmtK(Math.abs(n.actual))} · ${pct(n.actual, net)}` : fmtK(n.value)}</tspan>
                     </text>
                   )}
                   {(n.col === 1 || n.col === 2) && (() => {
@@ -6336,8 +6348,8 @@ function PnlSection({ toast }) {
                       : n.col === 1 ? { x: n.x - 8, y: n.y + n.h / 2 + 4, textAnchor: "end" }
                       : { x: n.x + n.w + 8, y: n.y + n.h / 2 + 4, textAnchor: "start" };
                     return (
-                      <text {...props} fontSize={11} fontWeight={700} fill={G.dark}>
-                        {canDrill ? (expanded.has("profit") ? "▾ " : "▸ ") : ""}{n.label}<tspan fill={G.muted} fontWeight={400}> {fmtK(n.value)}</tspan>
+                      <text {...props} fontSize={11} fontWeight={700} fill={"var(--foreground)"}>
+                        {canDrill ? (expanded.has("profit") ? "▾ " : "▸ ") : ""}{n.label}<tspan fill={"var(--muted-foreground)"} fontWeight={400}> {fmtK(n.value)}</tspan>
                       </text>
                     );
                   })()}
@@ -6346,16 +6358,17 @@ function PnlSection({ toast }) {
             })}
           </svg>
           {tip && (
-            <div style={{ position: "absolute", left: Math.min(tip.x + 12, 520), top: tip.y + 12, background: G.dark, color: G.white, borderRadius: 8, padding: "6px 10px", fontSize: 12, pointerEvents: "none", zIndex: 5, boxShadow: "0 4px 14px rgba(0,0,0,0.25)" }}>
-              {tip.lines.map((t, i) => <div key={i} style={{ fontWeight: i === 0 ? 700 : 400 }}>{t}</div>)}
-            </div>
+            <ChartTip x={Math.min(tip.x + 12, 520)} y={tip.y + 12}>
+              {tip.lines.map((t, i) => <div key={i} className={i === 0 ? "font-semibold" : "text-muted-foreground"}>{t}</div>)}
+            </ChartTip>
           )}
         </div>
       )}
-    </div>
+    </ReportCard>
   );
 }
 
+const ABC_COL = { A:"#00a383", B:"#e0a400", C:"#d63031" };
 function ReportsPage({ toast }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
@@ -6378,7 +6391,7 @@ function ReportsPage({ toast }) {
 
   const changePeriod = p => { setPeriod(p); load(p); };
   const totalRevenue = salesData.reduce((s,d)=>s+Number(d.revenue),0);
-  const abcColor = { A:"#00b894", B:"#fdcb6e", C:"#d63031" };
+  const abcColor = ABC_COL;
 
   // ── Sales bar chart ─────────────────────────────────────────────────────
   const W=600,H=220,PL=55,PR=20,PT=20,PB=45,cW=W-PL-PR,cH=H-PT-PB;
@@ -6409,37 +6422,21 @@ function ReportsPage({ toast }) {
   return (
     <Page title={tl("Reports")}>
       {/* SALES */}
-      <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20 }}>
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
-          <h3 style={{ fontFamily:G.font, fontSize:17 }}>{tl("Sales")}</h3>
-          <div style={{ display:"flex", borderRadius:8, border:`1px solid ${G.border}`, overflow:"hidden" }}>
-            {[["week","Week"],["month","Month"],["year","Year"]].map(([k,l])=>(
-              <button key={k} onClick={()=>changePeriod(k)} style={{
-                padding:"6px 16px",border:"none",cursor:"pointer",fontSize:13,fontFamily:G.mono,
-                background:period===k?G.caramel:G.white,color:period===k?G.white:G.muted,transition:"all 0.15s"
-              }}>{tl(l)}</button>
-            ))}
-          </div>
-        </div>
-        <div style={{ display:"flex", gap:16, marginBottom:16 }}>
-          <div style={{ background:G.sand, borderRadius:10, padding:"12px 20px" }}>
-            <p style={{ fontSize:11, color:G.muted, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:4 }}>{tl("Revenue")}</p>
-            <p style={{ fontFamily:G.font, fontSize:22, fontWeight:700, color:G.caramel }}>{totalRevenue.toLocaleString()} AMD</p>
-          </div>
-          <div style={{ background:G.sand, borderRadius:10, padding:"12px 20px" }}>
-            <p style={{ fontSize:11, color:G.muted, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:4 }}>Days with sales</p>
-            <p style={{ fontFamily:G.font, fontSize:22, fontWeight:700, color:G.dark }}>{salesData.length}</p>
-          </div>
+      <ReportCard title={tl("Sales")}
+        actions={<OptionSeg label="Period" value={period} onChange={changePeriod} options={[["week",tl("Week")],["month",tl("Month")],["year",tl("Year")]]}/>}>
+        <div className="mb-4 flex flex-wrap gap-3">
+          <StatTile label={tl("Revenue")} value={`${totalRevenue.toLocaleString()} AMD`} tone="brand"/>
+          <StatTile label="Days with sales" value={salesData.length}/>
         </div>
         {loading?<Spinner/>:!vals.length?(
-          <div style={{padding:60,textAlign:"center",color:G.muted}}>{tl("No data yet.")}</div>
+          <ReportEmpty>{tl("No data yet.")}</ReportEmpty>
         ):(
           <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{maxWidth:W,display:"block",margin:"0 auto"}}>
             {[0,0.25,0.5,0.75,1].map(t=>{
               const y=PT+cH*(1-t);
               return <g key={t}>
-                <line x1={PL} y1={y} x2={PL+cW} y2={y} stroke={G.border} strokeWidth={0.5}/>
-                <text x={PL-6} y={y+4} textAnchor="end" fontSize={10} fill={G.muted}>{fmtAMD(maxV*t)}</text>
+                <line x1={PL} y1={y} x2={PL+cW} y2={y} stroke={"var(--border)"} strokeWidth={0.5}/>
+                <text x={PL-6} y={y+4} textAnchor="end" fontSize={10} fill={"var(--muted-foreground)"}>{fmtAMD(maxV*t)}</text>
               </g>;
             })}
             {vals.map((v,i)=>{
@@ -6448,27 +6445,27 @@ function ReportsPage({ toast }) {
               const date=new Date(salesData[i].day);
               const label=`${String(date.getDate()).padStart(2,"0")}/${String(date.getMonth()+1).padStart(2,"0")}`;
               return <g key={i}>
-                <rect x={x} y={PT+cH-bh} width={barW} height={bh} fill={G.caramel} opacity={0.8} rx={2}/>
-                {i%(Math.ceil(n/8))===0&&<text x={x+barW/2} y={H-8} textAnchor="middle" fontSize={9} fill={G.muted}>{label}</text>}
+                <rect x={x} y={PT+cH-bh} width={barW} height={bh} fill={"var(--brand)"} opacity={0.8} rx={2}/>
+                {i%(Math.ceil(n/8))===0&&<text x={x+barW/2} y={H-8} textAnchor="middle" fontSize={9} fill={"var(--muted-foreground)"}>{label}</text>}
               </g>;
             })}
-            {n>1&&<polyline points={trendPts.map(p=>p.join(",")).join(" ")} fill="none" stroke={G.dark} strokeWidth={1.5} strokeDasharray="1.5,4" strokeLinecap="round"/>}
+            {n>1&&<polyline points={trendPts.map(p=>p.join(",")).join(" ")} fill="none" stroke={"var(--foreground)"} strokeWidth={1.5} strokeDasharray="1.5,4" strokeLinecap="round"/>}
             {trendPts.map(([x,y],i)=>{
               const prev=i>0?vals[i-1]:null;
               const pct=prev&&prev>0?Math.round((vals[i]-prev)/prev*100):null;
               return <g key={"t"+i}>
-                <circle cx={x} cy={y} r={4} fill={G.dark} stroke={G.white} strokeWidth={2}>
+                <circle cx={x} cy={y} r={4} fill={"var(--foreground)"} stroke={"var(--card)"} strokeWidth={2}>
                   <title>{`${String(new Date(salesData[i].day).getDate()).padStart(2,"0")}/${String(new Date(salesData[i].day).getMonth()+1).padStart(2,"0")}: ${vals[i].toLocaleString()} AMD${pct!==null?` (${pct>0?"+":""}${pct}%)`:""}`}</title>
                 </circle>
-                {n<=14&&pct!==null&&<text x={x} y={Math.max(10,y-9)} textAnchor="middle" fontSize={8} fill={G.muted}>{pct>0?"+":""}{pct}%</text>}
+                {n<=14&&pct!==null&&<text x={x} y={Math.max(10,y-9)} textAnchor="middle" fontSize={8} fill={"var(--muted-foreground)"}>{pct>0?"+":""}{pct}%</text>}
               </g>;
             })}
-            <line x1={PL} y1={PT} x2={PL} y2={PT+cH} stroke={G.border} strokeWidth={1}/>
-            <line x1={PL} y1={PT+cH} x2={PL+cW} y2={PT+cH} stroke={G.border} strokeWidth={1}/>
-            <text x={PL-44} y={PT+cH/2} textAnchor="middle" fontSize={10} fill={G.muted} transform={`rotate(-90,${PL-44},${PT+cH/2})`}>AMD</text>
+            <line x1={PL} y1={PT} x2={PL} y2={PT+cH} stroke={"var(--border)"} strokeWidth={1}/>
+            <line x1={PL} y1={PT+cH} x2={PL+cW} y2={PT+cH} stroke={"var(--border)"} strokeWidth={1}/>
+            <text x={PL-44} y={PT+cH/2} textAnchor="middle" fontSize={10} fill={"var(--muted-foreground)"} transform={`rotate(-90,${PL-44},${PT+cH/2})`}>AMD</text>
           </svg>
         )}
-      </div>
+      </ReportCard>
 
       {/* PROFIT & LOSS */}
       <PnlSection toast={toast}/>
@@ -6477,93 +6474,83 @@ function ReportsPage({ toast }) {
       <BoaImpactSection toast={toast}/>
 
       {/* ABC/XYZ */}
-      <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24, marginBottom:20, position:"relative" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
-          <h3 style={{ fontFamily:G.font, fontSize:17 }}>{tl("ABC Analysis")}</h3>
-          <div style={{ display:"flex", gap:10 }}>
-            {[["A","#00b894"],["B","#fdcb6e"],["C","#d63031"]].map(([cat,col])=>(
-              <span key={cat} style={{ fontSize:12, display:"flex", alignItems:"center", gap:4 }}>
-                <span style={{ width:10, height:10, borderRadius:"50%", background:col, display:"inline-block" }}/>
-                {cat}
-              </span>
-            ))}
-            <span style={{ fontSize:12, color:G.muted }}>· X(stable) Y(variable) Z(erratic)</span>
-          </div>
-        </div>
-        <label style={{ display:"inline-flex", alignItems:"center", gap:8, fontSize:13, color:G.dark, marginBottom:16, cursor:"pointer" }}>
-          <input type="checkbox" checked={abcAvailOnly} onChange={e=>setAbcAvailOnly(e.target.checked)}/>
+      <ReportCard title={tl("ABC Analysis")}
+        description={<span className="flex flex-wrap items-center gap-2.5">
+          {[["A",ABC_COL.A],["B",ABC_COL.B],["C",ABC_COL.C]].map(([cat,col])=>(
+            <span key={cat} className="flex items-center gap-1 text-foreground"><span className="inline-block size-2.5 rounded-full" style={{ background:col }}/>{cat}</span>
+          ))}
+          <span>· X (stable) Y (variable) Z (erratic)</span>
+        </span>}>
+        <Label className="mb-4 cursor-pointer font-normal">
+          <Checkbox checked={abcAvailOnly} onCheckedChange={v=>setAbcAvailOnly(!!v)}/>
           {tl("Display available items only")}
-        </label>
+        </Label>
         {loading?<Spinner/>:!items.length?(
-          <div style={{padding:60,textAlign:"center",color:G.muted}}>{tl("No data yet.")}</div>
+          <ReportEmpty>{tl("No data yet.")}</ReportEmpty>
         ):(
-          <div style={{position:"relative",display:"inline-block",width:"100%",maxWidth:SW}}>
+          <div className="relative mx-auto w-full" style={{ maxWidth:SW }}>
             <svg width="100%" viewBox={`0 0 ${SW} ${SH}`} style={{display:"block"}}>
-              <rect x={SPL} y={SPT} width={z05-SPL} height={ScH} fill="#f0fdf4" opacity={0.4}/>
-              <rect x={z05} y={SPT} width={z1-z05} height={ScH} fill="#fefce8" opacity={0.4}/>
-              <rect x={z1}  y={SPT} width={SPL+ScW-z1} height={ScH} fill="#fef2f2" opacity={0.4}/>
-              <text x={SPL+5} y={SPT+14} fontSize={10} fill="#00b894" fontWeight="700">X</text>
-              <text x={z05+5} y={SPT+14} fontSize={10} fill="#fdcb6e" fontWeight="700">Y</text>
-              <text x={z1+5}  y={SPT+14} fontSize={10} fill="#d63031" fontWeight="700">Z</text>
+              <rect x={SPL} y={SPT} width={z05-SPL} height={ScH} fill={ABC_COL.A} opacity={0.07}/>
+              <rect x={z05} y={SPT} width={z1-z05} height={ScH} fill={ABC_COL.B} opacity={0.08}/>
+              <rect x={z1}  y={SPT} width={SPL+ScW-z1} height={ScH} fill={ABC_COL.C} opacity={0.07}/>
+              <text x={SPL+5} y={SPT+14} fontSize={10} fill={ABC_COL.A} fontWeight="700">X</text>
+              <text x={z05+5} y={SPT+14} fontSize={10} fill={ABC_COL.B} fontWeight="700">Y</text>
+              <text x={z1+5}  y={SPT+14} fontSize={10} fill={ABC_COL.C} fontWeight="700">Z</text>
               {[0,0.25,0.5,0.75,1].map(t=>{
                 const y=SPT+ScH*(1-t);
                 return <g key={t}>
-                  <line x1={SPL} y1={y} x2={SPL+ScW} y2={y} stroke={G.border} strokeWidth={0.5}/>
-                  <text x={SPL-5} y={y+4} textAnchor="end" fontSize={9} fill={G.muted}>{Math.round(maxRev*t/1000)}k</text>
+                  <line x1={SPL} y1={y} x2={SPL+ScW} y2={y} stroke={"var(--border)"} strokeWidth={0.5}/>
+                  <text x={SPL-5} y={y+4} textAnchor="end" fontSize={9} fill={"var(--muted-foreground)"}>{Math.round(maxRev*t/1000)}k</text>
                 </g>;
               })}
-              <line x1={z05} y1={SPT} x2={z05} y2={SPT+ScH} stroke={G.border} strokeDasharray="3,3" strokeWidth={1}/>
-              <line x1={z1}  y1={SPT} x2={z1}  y2={SPT+ScH} stroke={G.border} strokeDasharray="3,3" strokeWidth={1}/>
-              <line x1={SPL} y1={SPT} x2={SPL} y2={SPT+ScH} stroke={G.border}/>
-              <line x1={SPL} y1={SPT+ScH} x2={SPL+ScW} y2={SPT+ScH} stroke={G.border}/>
-              <text x={SPL+ScW/2} y={SH-5} textAnchor="middle" fontSize={10} fill={G.muted}>Coefficient of variation (volatility →)</text>
-              <text x={14} y={SPT+ScH/2} textAnchor="middle" fontSize={10} fill={G.muted} transform={`rotate(-90,14,${SPT+ScH/2})`}>Revenue →</text>
+              <line x1={z05} y1={SPT} x2={z05} y2={SPT+ScH} stroke={"var(--border)"} strokeDasharray="3,3" strokeWidth={1}/>
+              <line x1={z1}  y1={SPT} x2={z1}  y2={SPT+ScH} stroke={"var(--border)"} strokeDasharray="3,3" strokeWidth={1}/>
+              <line x1={SPL} y1={SPT} x2={SPL} y2={SPT+ScH} stroke={"var(--border)"}/>
+              <line x1={SPL} y1={SPT+ScH} x2={SPL+ScW} y2={SPT+ScH} stroke={"var(--border)"}/>
+              <text x={SPL+ScW/2} y={SH-5} textAnchor="middle" fontSize={10} fill={"var(--muted-foreground)"}>Coefficient of variation (volatility →)</text>
+              <text x={14} y={SPT+ScH/2} textAnchor="middle" fontSize={10} fill={"var(--muted-foreground)"} transform={`rotate(-90,14,${SPT+ScH/2})`}>Revenue →</text>
               {items.map((it,i)=>(
                 <circle key={i} cx={xPos(it.cv)} cy={yPos(it.revenue)} r={6}
-                  fill={abcColor[it.abc]||G.muted} opacity={0.85} style={{cursor:"pointer"}}
+                  fill={abcColor[it.abc]||"var(--muted-foreground)"} opacity={0.85} style={{cursor:"pointer"}}
                   onMouseEnter={e=>setTooltip({...it,px:xPos(it.cv),py:yPos(it.revenue)})}
                   onMouseLeave={()=>setTooltip(null)}/>
               ))}
             </svg>
             {tooltip&&(
-              <div style={{position:"absolute",left:Math.min(tooltip.px+14,SW-170),top:Math.max(tooltip.py-40,0),
-                background:G.white,border:`1px solid ${G.border}`,borderRadius:8,padding:"8px 12px",fontSize:12,
-                boxShadow:"0 4px 14px rgba(0,0,0,0.12)",pointerEvents:"none",maxWidth:170,zIndex:10,lineHeight:1.6}}>
-                <b style={{color:G.dark,display:"block",marginBottom:2}}>{tooltip.name}</b>
-                <span style={{color:G.muted}}>Revenue: </span>{Math.round(tooltip.revenue).toLocaleString()} AMD<br/>
-                <span style={{color:G.muted}}>Orders: </span>{tooltip.order_count}<br/>
-                <span style={{color:G.muted}}>Class: </span>
-                <span style={{fontWeight:700,color:abcColor[tooltip.abc]}}>{tooltip.abc}</span>
-                <span style={{fontWeight:700,color:tooltip.xyz==='X'?"#00b894":tooltip.xyz==='Y'?"#fdcb6e":"#d63031"}}>{tooltip.xyz}</span>
-                <span style={{color:G.muted}}> CV:{tooltip.cv}</span>
-              </div>
+              <ChartTip x={Math.min(tooltip.px+14,SW-170)} y={Math.max(tooltip.py-40,0)} className="max-w-44">
+                <b className="mb-0.5 block">{tooltip.name}</b>
+                <span className="text-muted-foreground">Revenue: </span>{Math.round(tooltip.revenue).toLocaleString()} AMD<br/>
+                <span className="text-muted-foreground">Orders: </span>{tooltip.order_count}<br/>
+                <span className="text-muted-foreground">Class: </span>
+                <span className="font-bold" style={{color:abcColor[tooltip.abc]}}>{tooltip.abc}</span>
+                <span className="font-bold" style={{color:tooltip.xyz==='X'?ABC_COL.A:tooltip.xyz==='Y'?ABC_COL.B:ABC_COL.C}}>{tooltip.xyz}</span>
+                <span className="text-muted-foreground"> CV:{tooltip.cv}</span>
+              </ChartTip>
             )}
           </div>
         )}
-      </div>
+      </ReportCard>
 
       {/* ASSOCIATION RULES */}
-      <div style={{ background:G.white, border:`1px solid ${G.border}`, borderRadius:14, padding:24 }}>
-        <h3 style={{ fontFamily:G.font, fontSize:17, marginBottom:4 }}>{tl("Association Rules")}</h3>
-        <p style={{ fontSize:13, color:G.muted, marginBottom:10 }}>Top 10 item pairs by confidence — bar width = confidence, colour = lift</p>
-        <label style={{ display:"inline-flex", alignItems:"center", gap:8, fontSize:13, color:G.dark, marginBottom:16, cursor:"pointer" }}>
-          <input type="checkbox" checked={availOnly} onChange={e=>setAvailOnly(e.target.checked)}/>
+      <ReportCard title={tl("Association Rules")} description="Top 10 item pairs by confidence — bar width = confidence, colour = lift" className="mb-0">
+        <Label className="mb-4 cursor-pointer font-normal">
+          <Checkbox checked={availOnly} onCheckedChange={v=>setAvailOnly(!!v)}/>
           {tl("Display available items only")}
-        </label>
+        </Label>
         {loading?<Spinner/>:!rules.length?(
-          <div style={{padding:40,textAlign:"center",color:G.muted,fontSize:13}}>{availOnly?"No association rules for items currently in inventory.":"Not enough order data for association rules (need ≥5 orders with multiple items)."}</div>
+          <ReportEmpty>{availOnly?"No association rules for items currently in inventory.":"Not enough order data for association rules (need ≥5 orders with multiple items)."}</ReportEmpty>
         ):(
           <svg width="100%" viewBox={`0 0 ${RW} ${RPT+RPB+rules.length*34}`} style={{maxWidth:RW,display:"block",margin:"0 auto"}}>
             {rules.map((r,i)=>{
               const y=RPT+i*34;
               const confW=r.confidence*RcW;
-              const liftCol=r.lift>1.5?"#00b894":r.lift>1?"#fdcb6e":"#d63031";
+              const liftCol=r.lift>1.5?ABC_COL.A:r.lift>1?ABC_COL.B:ABC_COL.C;
               const label=`${r.antecedent.slice(0,20)} → ${r.consequent.slice(0,16)}`;
               return <g key={i}>
-                <text x={RPL-6} y={y+16} textAnchor="end" fontSize={11} fill={G.dark}>{label}</text>
-                <rect x={RPL} y={y+4} width={RcW} height={20} fill={G.sand} rx={4}/>
-                <rect x={RPL} y={y+4} width={confW} height={20} fill={G.caramel} rx={4} opacity={0.85}/>
-                <text x={RPL+confW+6} y={y+18} fontSize={10} fill={G.muted}>
+                <text x={RPL-6} y={y+16} textAnchor="end" fontSize={11} fill={"var(--foreground)"}>{label}</text>
+                <rect x={RPL} y={y+4} width={RcW} height={20} fill={"var(--muted)"} rx={4}/>
+                <rect x={RPL} y={y+4} width={confW} height={20} fill={"var(--brand)"} rx={4} opacity={0.85}/>
+                <text x={RPL+confW+6} y={y+18} fontSize={10} fill={"var(--muted-foreground)"}>
                   {`conf ${Math.round(r.confidence*100)}%`}
                 </text>
                 <text x={RPL+confW+68} y={y+18} fontSize={10} fill={liftCol} fontWeight="700">
@@ -6573,7 +6560,7 @@ function ReportsPage({ toast }) {
             })}
           </svg>
         )}
-      </div>
+      </ReportCard>
     </Page>
   );
 }
