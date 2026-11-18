@@ -1,8 +1,11 @@
 // Marketplace (/market) — every restaurant's listed items in one shop: category rows, search,
-// item pop-up, basket and checkout. Browsing is public; placing an order needs a Tanelu account.
+// item pop-up and the shared basket (src/cart.js, CartPanel) — the same one the Board of Arrivals and
+// Online Order use. Browsing and ordering are public; guests leave a name and email.
 // Loaded lazily from App.jsx, like the Board of Arrivals.
 import { useState, useEffect, useRef, useMemo } from "react";
 import { api } from "../api.js";
+import { cart, useCart, snapFromMarket } from "../cart.js";
+import CartPanel, { LoginDialog } from "./CartPanel.jsx";
 import { RU, conv, subAbbr, unitAbbr } from "../App.jsx";
 import { Button } from "@/components/ui/button";
 import { Input as CInput } from "@/components/ui/input";
@@ -53,10 +56,6 @@ const MRU = {
 };
 const CAT_ICON = { popular:FlameIcon, meals:UtensilsIcon, pastry:CroissantIcon, confectionery:CandyIcon, drinks:CoffeeIcon,
   cheese:CakeSliceIcon, honey:HexagonIcon, "gift-sets":GiftIcon, "whole-foods":WheatIcon };
-const CART_KEY = "market_cart_v1";
-const loadCart = () => { try { return JSON.parse(localStorage.getItem(CART_KEY) || "{}") || {}; } catch { return {}; } };
-const saveCart = c => { try { localStorage.setItem(CART_KEY, JSON.stringify(c)); } catch {} };
-
 // Items sold in sub-unit steps (250 g of an item priced per kg): one step = moq sub-units
 const stepOf = it => (it.allow_submultiples && Number(it.moq) > 0) ? Number(it.moq) / conv(it.units) : 1;
 const maxSteps = it => Math.max(0, Math.floor(Number(it.available_qty) / stepOf(it) + 1e-9));
@@ -97,20 +96,10 @@ export default function Marketplace({ toast, user, onLogin }) {
   const [query, setQuery] = useState(() => viewFromUrl().q || "");
   const [openRid, setOpenRid] = useState(null);
   const [detail, setDetail] = useState(null);
-  const [cart, setCartState] = useState(loadCart); // rid → { steps, item }
+  const { lines: cartMap } = useCart();
   const [cartOpen, setCartOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
-  const [checkout, setCheckout] = useState(false);
-  const [fulfillment, setFulfillment] = useState("pickup");
-  const [address, setAddress] = useState("");
-  const [comments, setComments] = useState("");
-  const [placing, setPlacing] = useState(false);
-  const [placed, setPlaced] = useState(null);
-  const [badRid, setBadRid] = useState(null);
   const [loginOpen, setLoginOpen] = useState(false);
-  const [login, setLogin] = useState({ email: "", password: "", error: "", busy: false });
-
-  const setCart = fn => setCartState(prev => { const next = typeof fn === "function" ? fn(prev) : fn; saveCart(next); return next; });
   const go = (v, { replace = false } = {}) => {
     const url = urlOf(v);
     if (url !== window.location.pathname + window.location.search) (replace ? history.replaceState : history.pushState).call(history, null, "", url);
@@ -166,61 +155,18 @@ export default function Marketplace({ toast, user, onLogin }) {
     return () => { live = false; };
   }, [openRid]);
 
-  // Basket
-  const cartLines = Object.values(cart);
-  const stepsOf = rid => cart[rid]?.steps || 0;
-  const setSteps = (item, steps) => setCart(p => {
-    const n = Math.max(0, Math.min(maxSteps(item), steps));
-    if (!n) { const { [item.rid]: _, ...rest } = p; return rest; }
-    return { ...p, [item.rid]: { steps: n, item: { ...item, also_bought: undefined, contents: undefined } } };
-  });
-  const lineTotal = l => l.steps * stepOf(l.item) * Number(l.item.price);
-  const cartTotal = cartLines.reduce((s, l) => s + lineTotal(l), 0);
-  const cartCurrency = cartLines[0]?.item.currency || "AMD";
-  const cartCount = cartLines.length;
-  const bySeller = useMemo(() => {
-    const m = new Map();
-    cartLines.forEach(l => { const k = l.item.restaurant?.uid; if (!m.has(k)) m.set(k, { name: l.item.restaurant?.name, lines: [] }); m.get(k).lines.push(l); });
-    return [...m.values()];
-  }, [cart]);
-  const pickupOnly = cartLines.some(l => l.item.deliverable === false);
-  useEffect(() => { if (pickupOnly && fulfillment === "delivery") setFulfillment("pickup"); }, [pickupOnly]);
-
-  const placeOrder = async () => {
-    if (fulfillment === "delivery" && !address.trim()) { toast(tl("Delivery address") + " ✱", "error"); return; }
-    setPlacing(true); setBadRid(null);
-    try {
-      const res = await api.placeMarketOrder({
-        items: cartLines.map(l => ({ rid: l.item.rid, steps: l.steps })),
-        fulfillment, delivery_address: fulfillment === "delivery" ? address.trim() : null, delivery_comments: comments.trim() || null,
-      });
-      setPlaced(res.orders || []);
-      setCart({});
-      setCheckout(false); setComments("");
-      loadHome();
-    } catch (e) {
-      toast(e.message, "error");
-      const rid = e.data?.rid ?? e.rid;
-      if (rid) setBadRid(rid);
-    } finally { setPlacing(false); }
-  };
-  const doLogin = async e => {
-    e?.preventDefault();
-    setLogin(l => ({ ...l, busy: true, error: "" }));
-    try {
-      const { token, user: u } = await api.login(login.email.trim(), login.password);
-      localStorage.setItem("token", token);
-      onLogin?.(u);
-      setLoginOpen(false);
-      setLogin({ email: "", password: "", error: "", busy: false });
-    } catch (err) { setLogin(l => ({ ...l, busy: false, error: err.message })); }
-  };
+  // Basket (shared with the Board of Arrivals and Online Order)
+  const stepsOf = rid => cartMap[rid]?.steps || 0;
+  // Items also picked from a restaurant menu can be made to order, so they aren't capped by what's available
+  const maxFor = item => cartMap[item.rid]?.mid ? 9999 : maxSteps(item);
+  const setSteps = (item, steps) => cart.setSteps(snapFromMarket(item), Math.min(maxFor(item), steps));
+  const cartCount = Object.keys(cartMap).length;
   const toMyOrders = () => { try { sessionStorage.setItem("tanelu_next_page", "orders-cust"); } catch {} window.location.assign("/"); };
   const toggleLang = () => { const nl = lang === "en" ? "ru" : "en"; setLangState(nl); try { localStorage.setItem("lang", nl); } catch {} };
 
   // ── pieces (plain functions returning JSX, so inputs keep focus across renders) ──
   const stepper = (item, size = "sm") => {
-    const steps = stepsOf(item.rid), max = maxSteps(item);
+    const steps = stepsOf(item.rid), max = maxFor(item);
     return (
       <div className="inline-flex items-center gap-1">
         <Button variant="outline" size={size === "sm" ? "icon-sm" : "icon-xs"} aria-label={`Remove one ${item.name}`} disabled={!steps} onClick={() => setSteps(item, steps - 1)}><MinusIcon/></Button>
@@ -317,104 +263,8 @@ export default function Marketplace({ toast, user, onLogin }) {
   );
 
   const basket = () => (
-    <div className="flex flex-col">
-      {placed ? (
-        <div className="flex flex-col gap-3">
-          <Alert variant="success"><CheckIcon/><AlertTitle>{tl("Order placed!")}</AlertTitle><AlertDescription>{tl("Track them in My orders.")}</AlertDescription></Alert>
-          {placed.map(o => (
-            <div key={o.oid} className="flex items-center justify-between gap-2 rounded-lg border bg-muted/50 px-3 py-2 text-sm">
-              <span className="min-w-0 truncate"><b>#{o.oid}</b> · {o.seller_name}</span>
-              <span className="shrink-0 tabular-nums text-muted-foreground">{fmtMoney((o.items || []).reduce((s, i) => s + i.qty * i.price, 0), cartCurrency)}</span>
-            </div>
-          ))}
-          <div className="flex gap-2">
-            <Button variant="outline" className="flex-1" onClick={() => setPlaced(null)}>{tl("New order")}</Button>
-            <Button className="flex-1" onClick={toMyOrders}><ReceiptTextIcon/>{tl("My orders")}</Button>
-          </div>
-        </div>
-      ) : !cartCount ? (
-        <div className="flex flex-col items-center gap-2 py-6 text-center">
-          <ShoppingBasketIcon className="size-8 text-muted-foreground/50"/>
-          <p className="font-medium text-sm">{tl("Your basket is empty.")}</p>
-          <p className="text-muted-foreground text-xs">{tl("Open an item and add it to your basket.")}</p>
-        </div>
-      ) : !checkout ? (
-        <>
-          {bySeller.length > 1 && (
-            <Alert variant="info" className="mb-3"><InfoIcon/><AlertDescription>{tl("Items from different restaurants arrive as separate orders.")}</AlertDescription></Alert>
-          )}
-          {bySeller.map(g => (
-            <div key={g.name} className="flex flex-col">
-              <p className="flex items-center gap-1.5 pt-1 pb-1.5 font-medium text-muted-foreground text-xs uppercase tracking-wide"><StoreIcon className="size-3.5"/>{g.name}</p>
-              {g.lines.map(l => {
-                const it = l.item, bad = badRid === it.rid;
-                return (
-                  <div key={it.rid} className={`flex items-center justify-between gap-2 border-b py-2.5 last:border-b-0 ${bad ? "rounded-md bg-destructive/8 px-2" : ""}`}>
-                    <button type="button" className="min-w-0 text-start" onClick={() => setOpenRid(it.rid)}>
-                      <p className="truncate font-semibold text-sm">{it.name}</p>
-                      <p className="text-muted-foreground text-xs tabular-nums">{fmtMoney(lineTotal(l), it.currency)}</p>
-                      {l.steps >= maxSteps(it) && <p className="text-warning-foreground text-xs">{tl("Max available")}</p>}
-                    </button>
-                    {stepper(it, "xs")}
-                  </div>
-                );
-              })}
-            </div>
-          ))}
-          <div className="flex items-baseline justify-between pt-3 pb-4 font-semibold">
-            <span className="text-sm">{tl("Total")}</span>
-            <span className="text-brand tabular-nums">{fmtMoney(cartTotal, cartCurrency)}</span>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="ghost" size="icon" aria-label={tl("Clear")} title={tl("Clear")} onClick={() => setCart({})}><TrashIcon/></Button>
-            <Button className="flex-1" onClick={() => setCheckout(true)}>{tl("Checkout")}<ArrowRightIcon/></Button>
-          </div>
-        </>
-      ) : !user ? (
-        <div className="flex flex-col gap-3">
-          <p className="text-muted-foreground text-sm">{tl("Log in to place your order")}</p>
-          <Button onClick={() => setLoginOpen(true)}><LogInIcon/>{tl("Log in")}</Button>
-          <p className="text-center text-muted-foreground text-xs">{tl("No account yet?")} <a className="font-medium text-brand underline-offset-2 hover:underline" href="/#signup">{tl("Sign up")}</a></p>
-          <Button variant="ghost" onClick={() => setCheckout(false)}><ArrowLeftIcon/>{tl("Back")}</Button>
-        </div>
-      ) : (
-        <form className="flex flex-col gap-4" noValidate onSubmit={e => { e.preventDefault(); placeOrder(); }}>
-          <div className="flex flex-col gap-2">
-            <RadioGroup value={fulfillment} onValueChange={setFulfillment} className="flex flex-row gap-5">
-              <Label className="cursor-pointer"><Radio value="pickup"/>{tl("Pickup")}</Label>
-              <Label className={pickupOnly ? "cursor-not-allowed opacity-60" : "cursor-pointer"}><Radio value="delivery" disabled={pickupOnly}/>{tl("Delivery")}</Label>
-            </RadioGroup>
-            {pickupOnly && <p className="text-muted-foreground text-xs">{tl("Some items can only be picked up.")}</p>}
-          </div>
-          {fulfillment === "delivery" && (
-            <Field>
-              <FieldLabel>{tl("Delivery address")} <span className="text-destructive-foreground">*</span></FieldLabel>
-              <CInput autoComplete="street-address" value={address} onChange={e => setAddress(e.target.value)}/>
-            </Field>
-          )}
-          <Field>
-            <FieldLabel>{tl("Comments for the restaurant")}</FieldLabel>
-            <Textarea rows={2} value={comments} onChange={e => setComments(e.target.value)}/>
-          </Field>
-          <Separator/>
-          <div className="flex flex-col gap-1 text-sm">
-            {bySeller.map(g => (
-              <div key={g.name} className="flex justify-between gap-2 text-muted-foreground">
-                <span className="truncate">{g.name}</span>
-                <span className="tabular-nums">{fmtMoney(g.lines.reduce((s, l) => s + lineTotal(l), 0), cartCurrency)}</span>
-              </div>
-            ))}
-            <div className="mt-1 flex items-baseline justify-between font-semibold">
-              <span>{tl("Total")}</span><span className="text-brand tabular-nums">{fmtMoney(cartTotal, cartCurrency)}</span>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="outline" size="icon" aria-label={tl("Back")} onClick={() => setCheckout(false)}><ArrowLeftIcon/></Button>
-            <Button type="submit" className="flex-1" loading={placing}>{tl("Place order")}</Button>
-          </div>
-        </form>
-      )}
-    </div>
+    <CartPanel user={user} tl={tl} toast={toast} onLogin={onLogin} onMyOrders={toMyOrders}
+      onOpenItem={rid => { setCartOpen(false); setOpenRid(rid); }} emptyHint={tl("Open an item and add it to your basket.")}/>
   );
 
   // ── main column ──
@@ -483,7 +333,7 @@ export default function Marketplace({ toast, user, onLogin }) {
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-2">
                 {stepsOf(d.rid) ? stepper(d) : (
-                  <Button onClick={() => setSteps(d, 1)} disabled={!maxSteps(d)}><ShoppingBasketIcon/>{tl("Add to basket")}</Button>
+                  <Button onClick={() => setSteps(d, 1)} disabled={!maxFor(d)}><ShoppingBasketIcon/>{tl("Add to basket")}</Button>
                 )}
                 {stepsOf(d.rid) > 0 && <span className="text-muted-foreground text-sm tabular-nums">= {fmtMoney(stepsOf(d.rid) * stepOf(d) * d.price, d.currency)}</span>}
               </div>
@@ -525,34 +375,7 @@ export default function Marketplace({ toast, user, onLogin }) {
     </CDialog>
   );
 
-  const loginDialog = (
-    <CDialog open={loginOpen} onOpenChange={setLoginOpen}>
-      <DialogPopup className="max-w-sm">
-        <form onSubmit={doLogin} noValidate>
-          <DialogHeader>
-            <DialogTitle>{tl("Log in")}</DialogTitle>
-            <DialogDescription>{tl("Log in to place your order")}</DialogDescription>
-          </DialogHeader>
-          <DialogPanel className="flex flex-col gap-4">
-            {login.error && <Alert variant="error"><AlertDescription>{login.error}</AlertDescription></Alert>}
-            <Field>
-              <FieldLabel>{tl("Email")}</FieldLabel>
-              <CInput type="email" autoComplete="email" value={login.email} onChange={e => setLogin(l => ({ ...l, email: e.target.value }))}/>
-            </Field>
-            <Field>
-              <FieldLabel>{tl("Password")}</FieldLabel>
-              <CInput type="password" autoComplete="current-password" value={login.password} onChange={e => setLogin(l => ({ ...l, password: e.target.value }))}/>
-            </Field>
-            <p className="text-muted-foreground text-xs">{tl("No account yet?")} <a className="font-medium text-brand underline-offset-2 hover:underline" href="/#signup">{tl("Sign up")}</a></p>
-          </DialogPanel>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setLoginOpen(false)}>{tl("Back")}</Button>
-            <Button type="submit" loading={login.busy} disabled={!login.email.trim() || !login.password}>{tl("Log in")}</Button>
-          </DialogFooter>
-        </form>
-      </DialogPopup>
-    </CDialog>
-  );
+  const loginDialog = <LoginDialog open={loginOpen} onOpenChange={setLoginOpen} tl={tl} onLogin={onLogin}/>;
 
   return (
     <div className="coss min-h-screen bg-background">
@@ -596,7 +419,7 @@ export default function Marketplace({ toast, user, onLogin }) {
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-lg">
                 <ShoppingBasketIcon className="size-4.5 text-brand"/>{tl("Your basket")}
-                {cartCount > 0 && !placed && <CBadge variant="secondary" className="ms-auto">{cartCount}</CBadge>}
+                {cartCount > 0 && <CBadge variant="secondary" className="ms-auto">{cartCount}</CBadge>}
               </CardTitle>
             </CardHeader>
             <CardPanel className="max-h-[calc(100vh-11rem)] overflow-y-auto pt-0">{basket()}</CardPanel>

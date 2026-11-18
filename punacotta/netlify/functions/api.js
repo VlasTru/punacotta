@@ -88,6 +88,102 @@ async function marketCategoryTree() {
   for (const r of rows.filter(r => r.parent_mcid)) tops.find(t => t.mcid === r.parent_mcid)?.children.push({ mcid: r.mcid, slug: r.slug, name: r.name })
   return tops
 }
+// ─── CHECKOUT (one basket for the Board of Arrivals, the Marketplace and Online Order) ───────────
+// Each basket line is an item and a number of steps (one step = one piece, or one MOQ of an item sold
+// in sub-units). The quantity is split first-in-first-out: what is in stock now (minus what open orders
+// already claim), then the output of running batches in order of their ETA, and — only for items the
+// customer picked from a restaurant's menu — the rest is made to order.
+// Every part becomes its own order: one per menu (or per restaurant for stock), one per batch.
+const CHECKOUT_ETA_SQL = `COALESCE((SELECT SUM(CASE ps.duration_unit WHEN 'hours' THEN ps.duration*60
+    WHEN 'seconds' THEN ps.duration/60 ELSE ps.duration END) FROM process_skill ps WHERE ps.procid=pr.procid), 0)`
+async function planCheckout(run, rawLines, { lock = false } = {}) {
+  // Merge lines of the same item (quantities are summed whichever page they came from)
+  const merged = new Map()
+  for (const l of Array.isArray(rawLines) ? rawLines : []) {
+    const rid = Number(l?.rid), steps = Math.round(Number(l?.steps))
+    if (!Number.isInteger(rid) || rid <= 0 || !(steps > 0)) continue
+    const mid = Number(l?.mid) > 0 ? Number(l.mid) : null
+    const cur = merged.get(rid)
+    merged.set(rid, { rid, steps: Math.min(9999, (cur?.steps || 0) + steps), mid: mid || cur?.mid || null })
+  }
+  const lines = [...merged.values()]
+  if (!lines.length) return { lines: [], orders: [] }
+  const rids = lines.map(l => l.rid)
+  const recs = new Map((await run(`
+    SELECT r.rid, r.name, r.price, r.currency, r.allow_submultiples, r.moq, r.deliverable, r.owner_uid,
+           r.image_thumb_url, r.image_url, u.name AS units, ow.business_name
+    FROM recipe r JOIN "user" ow ON ow.uid=r.owner_uid AND ow.deleted_at IS NULL
+    LEFT JOIN units u ON u.unid=r.unid
+    WHERE r.rid=ANY($1::int[]) AND r.deleted=false`, [rids])).map(r => [r.rid, r]))
+  if (lock) for (const uid of [...new Set([...recs.values()].map(r => r.owner_uid))].sort((a, b) => a - b))
+    await run('SELECT pg_advisory_xact_lock(7311, $1)', [uid])        // one checkout per seller at a time
+  const mids = [...new Set(lines.map(l => l.mid).filter(Boolean))]
+  const menus = new Map(mids.length ? (await run(`
+    SELECT m.mid, m.name, m.owner_uid, m.delivery_fee, ARRAY(SELECT mr.rid FROM menu_recipe mr WHERE mr.mid=m.mid) AS rids
+    FROM menu m WHERE m.mid=ANY($1::int[]) AND m.available=true AND m.deleted=false`, [mids])).map(m => [m.mid, m]) : [])
+  const stock = new Map((await run(`
+    SELECT r.rid,
+      GREATEST(COALESCE((SELECT SUM(rs.qty) FROM recipe_stock rs WHERE rs.rid=r.rid AND rs.owner_uid=r.owner_uid), 0), 0)
+      - COALESCE((SELECT SUM(oi.qty * CASE WHEN r.allow_submultiples AND r.moq > 0
+                     THEN r.moq / (CASE u.name WHEN 'kilograms' THEN 1000 WHEN 'litres' THEN 1000 WHEN 'pounds' THEN 16 ELSE 1 END) ELSE 1 END)
+                  FROM order_item oi JOIN "order" o ON o.oid=oi.oid JOIN menu m ON m.mid=o.mid AND m.owner_uid=r.owner_uid
+                  WHERE oi.rid=r.rid AND o.status IN ('New','Accepted','Preparing') AND COALESCE(o.fulfillment,'pickup') <> 'stock'), 0) AS free
+    FROM recipe r LEFT JOIN units u ON u.unid=r.unid WHERE r.rid=ANY($1::int[])`, [rids])).map(r => [r.rid, Math.max(0, Number(r.free))]))
+  const batches = (await run(`
+    SELECT pr.prid, pri.rid, pri.qty, pr.started_at, pr.hold_secs, ${CHECKOUT_ETA_SQL} AS planned_mins,
+      COALESCE((SELECT SUM(b.qty) FROM boa_reservation b WHERE b.prid=pr.prid AND b.rid=pri.rid AND b.status IN ('pending','confirmed')), 0) AS reserved
+    FROM process_run pr JOIN process_run_item pri ON pri.prid=pr.prid
+    JOIN recipe r ON r.rid=pri.rid AND r.owner_uid=pr.owner_uid
+    WHERE pri.rid=ANY($1::int[]) AND pr.status IN ('in_progress','on_hold')`, [rids]))
+    .map(b => ({ prid: b.prid, rid: b.rid, free: Math.max(0, Number(b.qty) - Number(b.reserved)),
+      eta: new Date(new Date(b.started_at).getTime() + Number(b.planned_mins) * 60000 + (Number(b.hold_secs) || 0) * 1000) }))
+    .sort((a, b) => a.eta - b.eta || a.prid - b.prid)
+
+  const outLines = [], orders = new Map()
+  const addTo = (key, base, rid, steps, price) => {
+    if (!orders.has(key)) orders.set(key, { key, ...base, items: [] })
+    orders.get(key).items.push({ rid, steps, price })
+  }
+  for (const l of lines) {
+    const r = recs.get(l.rid)
+    if (!r) { outLines.push({ rid: l.rid, steps: l.steps, ok: false, error: 'This item is no longer sold', max_steps: 0, parts: [] }); continue }
+    let menu = l.mid ? menus.get(l.mid) : null
+    if (menu && (menu.owner_uid !== r.owner_uid || !menu.rids.includes(r.rid))) menu = null
+    const sub = !!(r.allow_submultiples && Number(r.moq) > 0)
+    const stepU = sub ? Number(r.moq) / (UNIT_CONV[r.units] || 1) : 1
+    const price = sub ? Math.round(Number(r.price) * stepU * 100) / 100 : Number(r.price)
+    const fl = n => Math.floor(n / stepU + 1e-9)
+    let left = l.steps
+    const parts = []
+    const stockSteps = fl(stock.get(r.rid) || 0)
+    const fromStock = Math.min(left, stockSteps); left -= fromStock
+    if (fromStock) parts.push({ kind: 'stock', steps: fromStock })
+    let batchSteps = 0
+    for (const b of batches.filter(b => b.rid === r.rid)) {
+      const can = fl(b.free); batchSteps += can
+      const take = Math.min(left, can)
+      if (take) { parts.push({ kind: 'batch', steps: take, prid: b.prid, eta: b.eta.toISOString() }); left -= take }
+    }
+    const made = menu ? left : 0; left -= made
+    if (made) parts.push({ kind: 'made', steps: made })
+    const nowKey = menu ? `menu:${menu.mid}` : `stock:${r.owner_uid}`
+    const nowBase = { kind: 'now', seller_uid: r.owner_uid, seller_name: r.business_name, mid: menu?.mid || null,
+      menu_name: menu?.name || null, delivery_fee: menu ? Number(menu.delivery_fee) || 0 : 0 }
+    if (fromStock + made) addTo(nowKey, nowBase, r.rid, fromStock + made, price)
+    for (const p of parts.filter(p => p.kind === 'batch'))
+      addTo(`batch:${p.prid}:${r.rid}`, { kind: 'batch', seller_uid: r.owner_uid, seller_name: r.business_name, prid: p.prid, eta: p.eta, delivery_fee: 0 }, r.rid, p.steps, price)
+    outLines.push({
+      rid: r.rid, name: r.name, steps: l.steps, mid: menu?.mid || null, ok: left === 0,
+      max_steps: menu ? 9999 : stockSteps + batchSteps, short_steps: left, step_units: stepU, price_per_step: price,
+      currency: r.currency || 'AMD', units: r.units || 'pcs', allow_submultiples: !!r.allow_submultiples, moq: r.moq ? Number(r.moq) : null,
+      deliverable: r.deliverable !== false, seller_uid: r.owner_uid, seller_name: r.business_name,
+      image: r.image_thumb_url || r.image_url || null, parts,
+      error: left ? (stockSteps + batchSteps ? 'Not enough available' : 'Out of stock') : null,
+    })
+  }
+  return { lines: outLines, orders: [...orders.values()] }
+}
+
 // Marketplace search: every word of the query must match a word of the item's names, either as a
 // prefix/substring ("past" → "pastry") or within one edit ("pastri" → "pastry"; "passstri" does not match)
 function editDistance(a, b) {
@@ -580,7 +676,7 @@ async function attachContents(rows) {
 
 // ─── MENU HELPER ──────────────────────────────────────────────────────────────
 async function fetchMenu(mid) {
-  const [menu] = await dbq('SELECT * FROM menu WHERE mid = $1', [mid])
+  const [menu] = await dbq('SELECT m.*, u.business_name FROM menu m LEFT JOIN "user" u ON u.uid=m.owner_uid WHERE m.mid = $1', [mid])
   if (!menu) return null
   const recipes = await dbq(`
     SELECT r.rid, r.name, r.description, r.price, r.currency,
@@ -612,6 +708,7 @@ async function fetchOrder(oid) {
       'SELECT uid, first_name, last_name, email FROM "user" WHERE uid = $1', [order.owner_uid])
     customer = c || null
   }
+  if (!customer && order.guest_name) customer = { first_name: order.guest_name, last_name: '', email: order.guest_email, uid: null }
   if (!customer && order.walkin_name) {
     customer = { first_name: order.walkin_name, last_name: '', email: null, uid: null }
   }
@@ -911,8 +1008,9 @@ async function reverseOrderStock(oid) {          // a Done order was declined or
 
 // A Board of Arrivals order is placed as a guest (owner_uid = seller). It belongs to the
 // customer whose verified account email matches the guest email.
+// Orders placed by email rather than by account: Board of Arrivals orders, and guest checkouts
 function isOwnBoaOrder(o, user) {
-  return !!(o && !o.mid && o.prid && o.guest_email && user?.email
+  return !!(o && ((!o.mid && o.prid) || !o.owner_uid) && o.guest_email && user?.email
     && String(o.guest_email).trim().toLowerCase() === String(user.email).trim().toLowerCase())
 }
 
@@ -2325,7 +2423,8 @@ async function route(method, segments, body, headers, event) {
                      ORDER BY o.created_at DESC`, [user.uid])
         : await dbq(`SELECT oid FROM "order"
                      WHERE owner_uid=$1
-                        OR (mid IS NULL AND prid IS NOT NULL AND guest_email IS NOT NULL AND lower(guest_email)=lower($2))
+                        OR (guest_email IS NOT NULL AND lower(guest_email)=lower($2)
+                            AND ((mid IS NULL AND prid IS NOT NULL) OR owner_uid IS NULL))
                      ORDER BY created_at DESC`, [user.uid, user.email || ''])
       return [200, await Promise.all(rows.map(r => fetchOrder(r.oid)))]
     }
@@ -2498,48 +2597,85 @@ async function route(method, segments, body, headers, event) {
         also_bought: also }]
     }
 
-    // POST /market/orders { items:[{rid, steps}], fulfillment, delivery_address, delivery_comments }
-    // One order per restaurant, all created together (or none).
-    if (r1 === 'orders' && method === 'POST') {
-      if (!user) return [401, { error: 'Please log in to place an order' }]
-      const lines = (Array.isArray(body?.items) ? body.items : []).map(i => ({ rid: Number(i.rid), steps: Number(i.steps ?? i.qty) }))
-        .filter(i => i.rid && i.steps > 0)
-      if (!lines.length) return [400, { error: 'Your basket is empty' }]
-      const fulfillment = body?.fulfillment === 'delivery' ? 'delivery' : 'pickup'
-      if (fulfillment === 'delivery' && !String(body?.delivery_address || '').trim()) return [400, { error: 'Delivery address required' }]
-      const byRid = new Map((await listed()).map(i => [i.rid, i]))
-      const groups = new Map()
-      for (const l of lines) {
-        const it = byRid.get(l.rid)
-        if (!it) return [400, { error: 'Some items are no longer available', rid: l.rid }]
-        const sub = it.allow_submultiples && it.moq > 0
-        const stepU = sub ? it.moq / (UNIT_CONV[it.units] || 1) : 1
-        const steps = Math.round(l.steps)
-        if (steps * stepU > it.available_qty + 1e-9) return [400, { error: `Only ${it.available_qty} ${it.units} of ${it.name} available`, rid: it.rid }]
-        if (fulfillment === 'delivery' && !it.deliverable) return [400, { error: `${it.name} is available for pickup only`, rid: it.rid }]
-        const price = sub ? Math.round(it.price * stepU * 100) / 100 : it.price
-        if (!groups.has(it.restaurant.uid)) groups.set(it.restaurant.uid, [])
-        groups.get(it.restaurant.uid).push({ rid: it.rid, qty: steps, price })
-      }
-      const oids = await withTx(async q => {
-        const out = []
-        for (const [seller, its] of groups) {
-          // Marketplace orders hang off a hidden per-restaurant menu, like walk-in sales, so the order
-          // board, stock and reports treat them like any other menu order
-          let { rows: [mm] } = await q(`SELECT mid FROM menu WHERE owner_uid=$1 AND name='Marketplace' AND deleted=true ORDER BY mid LIMIT 1`, [seller])
-          if (!mm) mm = (await q(`INSERT INTO menu (name, available, delivery_fee, owner_uid, deleted) VALUES ('Marketplace', false, 0, $1, true) RETURNING mid`, [seller])).rows[0]
-          const { rows: [o] } = await q(`INSERT INTO "order" (owner_uid, mid, pickup, fulfillment, delivery_address, delivery_comments, source)
-            VALUES ($1,$2,$3,$4,$5,$6,'market') RETURNING oid`,
-            [user.uid, mm.mid, fulfillment === 'pickup', fulfillment, fulfillment === 'delivery' ? String(body.delivery_address).trim() : null, body?.delivery_comments || null])
-          for (const it of its) await q('INSERT INTO order_item (oid,rid,qty,price) VALUES ($1,$2,$3,$4)', [o.oid, it.rid, it.qty, it.price])
-          out.push({ oid: o.oid, seller })
-        }
-        return out
-      })
-      for (const { seller } of oids) await notifyStockChange(seller)
-      return [201, { orders: await Promise.all(oids.map(o => fetchOrder(o.oid))) }]
-    }
     return [404, { error: 'Not found' }]
+  }
+
+  // ── CHECKOUT ─────────────────────────────────────────────────────────────────
+  // POST /checkout/quote { items:[{rid, steps, mid?}] } — public: how the basket would be split
+  // POST /checkout { items, fulfillment, delivery_address, delivery_comments, guest:{name,email,phone} }
+  //   Account or guest (guests can't order from restaurant menus). All orders are created together, or none.
+  if (r0 === 'checkout' && method === 'POST') {
+    if (r1 === 'quote') return [200, await planCheckout(dbq, body?.items)]
+    if (r1) return [404, { error: 'Not found' }]
+    const fulfillment = body?.fulfillment === 'delivery' ? 'delivery' : 'pickup'
+    const address = fulfillment === 'delivery' ? String(body?.delivery_address || '').trim() : ''
+    if (fulfillment === 'delivery' && !address) return [400, { error: 'Delivery address required' }]
+    const comments = String(body?.delivery_comments || '').trim().slice(0, 1000) || null
+    let guest = null
+    if (!user) {
+      const g = body?.guest || {}
+      guest = { name: String(g.name || '').trim().slice(0, 100), email: String(g.email || '').trim().slice(0, 200), phone: String(g.phone || '').trim().slice(0, 50) || null }
+      if (!guest.name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guest.email)) return [400, { error: 'Name and email required' }]
+      if (guest.phone && guest.phone.replace(/\D/g, '').length < 5) guest.phone = null   // just the country code
+    }
+    // Board of Arrivals orders are tied to the customer by name and email
+    let who = guest
+    if (user) {
+      const [me] = await dbq('SELECT first_name, last_name, email, phone FROM "user" WHERE uid=$1', [user.uid])
+      who = { name: `${me?.first_name || ''} ${me?.last_name || ''}`.trim() || me?.email, email: me?.email, phone: me?.phone || null }
+    }
+    let plan
+    const created = await withTx(async q => {
+      const run = async (sql, p) => (await q(sql, p)).rows
+      plan = await planCheckout(run, body?.items, { lock: true })
+      if (!plan.lines.length) { const e = new Error('Your basket is empty'); e.status = 400; throw e }
+      const bad = plan.lines.find(l => !l.ok)
+      if (bad) {
+        const e = new Error(bad.max_steps ? `Only ${Math.round(bad.max_steps * (bad.step_units || 1) * 1000) / 1000} ${bad.units} of ${bad.name || 'an item'} available` : `${bad.name || 'An item'} is sold out`)
+        e.status = 409; e.extra = { rid: bad.rid, max_steps: bad.max_steps }; throw e
+      }
+      if (!user && plan.lines.some(l => l.mid)) { const e = new Error('Please log in to order from a restaurant menu'); e.status = 401; throw e }
+      const nd = plan.lines.find(l => !l.deliverable)
+      if (fulfillment === 'delivery' && nd) { const e = new Error(`${nd.name} is available for pickup only`); e.status = 400; e.extra = { rid: nd.rid }; throw e }
+      const out = []
+      for (const o of plan.orders) {
+        let oid
+        if (o.kind === 'now') {
+          let mid = o.mid
+          if (!mid) {   // stock sales hang off a hidden per-restaurant menu, like walk-in sales
+            let { rows: [mm] } = await q(`SELECT mid FROM menu WHERE owner_uid=$1 AND name='Marketplace' AND deleted=true ORDER BY mid LIMIT 1`, [o.seller_uid])
+            if (!mm) mm = (await q(`INSERT INTO menu (name, available, delivery_fee, owner_uid, deleted) VALUES ('Marketplace', false, 0, $1, true) RETURNING mid`, [o.seller_uid])).rows[0]
+            mid = mm.mid
+          }
+          oid = (await q(`INSERT INTO "order" (owner_uid, mid, pickup, fulfillment, delivery_address, delivery_comments, source, guest_name, guest_email, guest_phone)
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING oid`,
+            [user?.uid || null, mid, fulfillment === 'pickup', fulfillment, address || null, comments, o.mid ? 'app' : 'market',
+             guest?.name || null, guest?.email || null, guest?.phone || null])).rows[0].oid
+          for (const it of o.items) await q('INSERT INTO order_item (oid,rid,qty,price) VALUES ($1,$2,$3,$4)', [oid, it.rid, it.steps, it.price])
+        } else {        // a share of a running batch: a Board of Arrivals reservation + order, as that page makes them
+          const it = o.items[0], line = plan.lines.find(l => l.rid === it.rid)
+          const qty = Math.round(it.steps * line.step_units * 1000) / 1000
+          const { rows: [res] } = await q(`INSERT INTO boa_reservation (prid,rid,owner_uid,qty,guest_name,guest_email,guest_phone,fulfillment,delivery_address,status)
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'confirmed') RETURNING resid`,
+            [o.prid, it.rid, o.seller_uid, qty, who.name, who.email, who.phone, fulfillment, address || null])
+          oid = (await q(`INSERT INTO "order" (owner_uid, status, pickup, fulfillment, guest_name, guest_email, guest_phone, delivery_address, delivery_comments, prid)
+              VALUES ($1,'New',$2,$3,$4,$5,$6,$7,$8,$9) RETURNING oid`,
+            [o.seller_uid, fulfillment === 'pickup', fulfillment, who.name, who.email, who.phone, address || null, comments, o.prid])).rows[0].oid
+          await q('INSERT INTO order_item (oid,rid,qty,price) VALUES ($1,$2,$3,$4)', [oid, it.rid, it.steps, it.price])
+          await q('UPDATE boa_reservation SET oid=$1 WHERE resid=$2', [oid, res.resid])
+        }
+        out.push({ oid, kind: o.kind, eta: o.eta || null, seller_uid: o.seller_uid, seller_name: o.seller_name, menu_name: o.menu_name || null, delivery_fee: fulfillment === 'delivery' ? o.delivery_fee : 0 })
+      }
+      return out
+    })
+    for (const uid of new Set(created.map(o => o.seller_uid))) await notifyStockChange(uid)
+    const orders = await Promise.all(created.map(async c => ({ ...(await fetchOrder(c.oid)), seller_name: c.seller_name, kind: c.kind, eta: c.eta, menu_name: c.menu_name, delivery_fee: c.delivery_fee })))
+    if (who.email) {
+      const list = orders.map(o => `#${o.oid} · ${o.seller_name || ''}${o.kind === 'batch' ? ' (from a batch in the oven)' : ''}`).join('\n')
+      sendMail(who.email, orders.length > 1 ? `Your ${orders.length} orders are on their way to the kitchens` : `Your order #${orders[0].oid} is heading to the kitchen`,
+        `Hi, ${who.name},\n\nThank you for your order. Some items come from different restaurants or batches, so they are separate orders:\n\n${list}\n\nKind regards,\nTanelu`).catch(() => {})
+    }
+    return [201, { orders }]
   }
 
   // ── QUICK SALE (walk-in / counter sales: one step, created as Done) ──────────
@@ -5808,7 +5944,7 @@ export const handler = async (event) => {
     return {
       statusCode: err.status || 500,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: err.message || 'Internal server error' }),
+      body: JSON.stringify({ error: err.message || 'Internal server error', ...(err.extra || {}) }),
     }
   }
 }

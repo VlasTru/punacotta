@@ -2,6 +2,8 @@
 // Loaded lazily from App.jsx so the Base UI select/combobox code only ships to visitors of this page.
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { api } from "../api.js";
+import { cart as basket, useCart, snapFromArrival } from "../cart.js";
+import CartPanel from "./CartPanel.jsx";
 import { RU, conv, subAbbr, unitAbbr, fmtLocalTime } from "../App.jsx";
 import { Button } from "@/components/ui/button";
 import { Input as CInput } from "@/components/ui/input";
@@ -20,28 +22,12 @@ import { Pagination, PaginationContent, PaginationItem } from "@/components/ui/p
 import { Combobox, ComboboxChips, ComboboxChip, ComboboxChipsInput, ComboboxValue, ComboboxPopup, ComboboxList, ComboboxItem, ComboboxEmpty } from "@/components/ui/combobox";
 import { ArrowDownIcon, ArrowLeftIcon, ArrowRightIcon, ArrowUpIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, ChevronsUpDownIcon, GlobeIcon, MapPinIcon, MinusIcon, PackageOpenIcon, PlusIcon, RefreshCwIcon, ShoppingBasketIcon, TriangleAlertIcon } from "lucide-react";
 
-export default function BoardOfArrivals({ toast }) {
+export default function BoardOfArrivals({ toast, user, onLogin }) {
   const [arrivals, setArrivals] = useState([]);
   const [loading,  setLoading]  = useState(true);
-  const [cart,     setCart]     = useState({}); // rid+prid key → {rid,prid,qty,owner_uid,item}
-  const [checkout, setCheckout] = useState(false);
-  const [guest,    setGuest]    = useState({ name:'', email:'', phone:'+374 ' });
-  const lookupGuest = async (email) => {
-    const em = (email||'').trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) return;
-    try {
-      const f = await api.lookupGuestByEmail(em);
-      if (!f) return;
-      setGuest(g => g.email.trim()!==em ? g : {
-        ...g,
-        name:  g.name.trim()  ? g.name  : (f.name||''),
-      });
-    } catch(e){ /* lookup is best-effort */ }
-  };
-  const [fulfillment, setFulfillment] = useState('pickup');
-  const [deliveryAddr, setDeliveryAddr] = useState('');
-  const [placing,  setPlacing]  = useState(false);
-  const [orderResult, setOrderResult] = useState(null); // null | {results}
+  // The basket is shared with the Marketplace and Online Order: one line per item, quantities summed;
+  // at checkout the server takes stock first, then batches in ETA order (first in, first out)
+  const { lines: cartMap } = useCart();
   const [sortKey,  setSortKey]  = useState('item_name');
   const [sortDir,  setSortDir]  = useState('asc');
   const [page,     setPage]     = useState(1);
@@ -156,24 +142,21 @@ export default function BoardOfArrivals({ toast }) {
     setPage(1);
   };
 
-  const cartKey = (a) => `${a.prid}-${a.rid}`;
-
   // Items sold in sub-unit steps (e.g. 250 g of an item counted in kg): one click = one MOQ step.
   const stepOf = a => (a.allow_submultiples && Number(a.moq)>0) ? Number(a.moq)/conv(a.units) : 1;
   const rnd = n => Math.round(n*1000)/1000;
-  const maxOf = a => { const st=stepOf(a); const m=a.remaining_qty ?? a.run_qty ?? 999; return rnd(Math.floor(m/st+1e-9)*st); };
   const fmtQ = (a,q) => stepOf(a)<1 ? `${rnd(q*conv(a.units))} ${subAbbr(a.units)}` : `${rnd(q)}`;
-  const setQty = (arrival, delta) => setCart(p=>{
-    const key = cartKey(arrival);
-    const cur = p[key]?.qty || 0;
-    const max = maxOf(arrival);
-    const next = rnd(Math.max(0, Math.min(max, cur + delta*stepOf(arrival))));
-    if (next === 0) {
-      const { [key]: _, ...rest } = p;
-      return rest;
-    }
-    return { ...p, [key]: { rid:arrival.rid, prid:arrival.prid, qty:next, owner_uid:arrival.owner_uid, item:arrival } };
-  });
+  // Steps of this item in the basket (shared across all its batches)
+  const stepsOf = a => cartMap[a.rid]?.steps || 0;
+  const unitsOf = a => rnd(stepsOf(a) * stepOf(a));
+  // Most that can be ordered: what the server says (stock + every batch), else what the board shows
+  const maxSteps = a => {
+    if (cartMap[a.rid]?.mid) return 9999;
+    const q = basket.max(a.rid);
+    const board = arrivals.filter(x => x.rid === a.rid).reduce((s, x) => s + Math.floor((x.remaining_qty ?? 0) / stepOf(a) + 1e-9), 0);
+    return q != null ? q : board;
+  };
+  const setQty = (arrival, delta) => basket.setSteps(snapFromArrival(arrival), Math.min(maxSteps(arrival), stepsOf(arrival) + delta));
 
   // Freshness colour: white→amber→red over 60 minutes
   const freshnessColor = f => {
@@ -183,10 +166,6 @@ export default function BoardOfArrivals({ toast }) {
     const b = Math.round(255*(1-f));
     return `rgba(${r},${g},${b},${Math.min(0.35, f*0.5)})`;
   };
-
-  const cartEntries = Object.values(cart);
-  const cartTotal = cartEntries.reduce((sum, entry) => sum + (entry.item?.price||0) * entry.qty, 0);  // price is per unit, qty in units
-  const cartCurrency = cartEntries[0]?.item?.currency || 'AMD';
 
   const recentItems = getRecent();
 
@@ -203,7 +182,7 @@ export default function BoardOfArrivals({ toast }) {
     <TableHead className={`font-medium text-[11px] text-muted-foreground uppercase tracking-wide ${className}`}>{label}</TableHead>
   );
   const Stepper = ({a, qty, size="xs"}) => {
-    const atMax = qty >= maxOf(a) - 1e-9;
+    const atMax = stepsOf(a) >= maxSteps(a);
     return (
       <div className="inline-flex items-center gap-1">
         <Button variant="outline" size={size==="xs"?"icon-xs":"icon-sm"} aria-label={`Remove one ${a.item_name}`} disabled={qty===0} onClick={()=>setQty(a,-1)}><MinusIcon/></Button>
@@ -211,24 +190,6 @@ export default function BoardOfArrivals({ toast }) {
         <Button variant="outline" size={size==="xs"?"icon-xs":"icon-sm"} aria-label={`Add one ${a.item_name}`} disabled={atMax} onClick={()=>setQty(a,1)}><PlusIcon/></Button>
       </div>
     );
-  };
-  const placeOrder = async()=>{
-    if (!guest.name.trim()||!guest.email.trim()) { toast("Name and email required","error"); return; }
-    setPlacing(true);
-    try {
-      const items = cartEntries.map(e=>({
-        prid:e.prid, rid:e.rid, qty:e.qty, owner_uid:e.item.owner_uid,
-        ...(stepOf(e.item)<1 ? {steps:Math.round(e.qty/stepOf(e.item))} : {})
-      }));
-      const result = await api.placeArrivalOrder({
-        items, guest_name:guest.name, guest_email:guest.email,
-        guest_phone:guest.phone, fulfillment,
-        delivery_address:fulfillment==='delivery'?deliveryAddr:null
-      });
-      setOrderResult(result);
-      toast("Order placed!");
-    } catch(e){ toast(e.message,"error"); }
-    finally{ setPlacing(false); }
   };
   const distanceItems = [{label:boaTl("All"), value:"all"}, ...[1,5,10,20,30,40,50].map(d=>({label:`${d} km`, value:String(d)}))];
   const labelCls = "font-medium text-[11px] text-muted-foreground uppercase tracking-wide";
@@ -349,7 +310,7 @@ export default function BoardOfArrivals({ toast }) {
                 </TableHeader>
                 <TableBody>
                   {pageRows.map(a=>{
-                    const qty = cart[cartKey(a)]?.qty || 0;
+                    const qty = unitsOf(a);
                     const remaining = a.remaining_qty ?? a.run_qty ?? 0;
                     const isReady = a.run_status==='completed';
                     return (
@@ -400,97 +361,19 @@ export default function BoardOfArrivals({ toast }) {
           )}
         </main>
 
-        {/* Cart */}
+        {/* Basket (shared with the Marketplace and Online Order) */}
         <aside>
           <Card className="xl:sticky xl:top-20">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-lg">
-                <ShoppingBasketIcon className="size-4.5 text-brand"/>{boaTl("Your selection")}
-                {cartEntries.length>0&&!orderResult&&<CBadge variant="secondary" className="ms-auto">{cartEntries.length}</CBadge>}
+                <ShoppingBasketIcon className="size-4.5 text-brand"/>{boaTl("Your basket")}
+                {Object.keys(cartMap).length>0&&<CBadge variant="secondary" className="ms-auto">{Object.keys(cartMap).length}</CBadge>}
               </CardTitle>
             </CardHeader>
             <CardPanel className="pt-0">
-              {cartEntries.length===0 ? (
-                <p className="text-muted-foreground text-sm">{boaTl("Add items using the + buttons.")}</p>
-              ) : orderResult ? (
-                <div className="flex flex-col gap-3">
-                  <Alert variant="success"><CheckIcon/><AlertTitle>{boaTl("Order placed!")}</AlertTitle></Alert>
-                  {orderResult.results.map((r,i)=>{
-                    const item = arrivals.find(x=>x.rid===r.rid&&x.prid===r.prid);
-                    return (
-                      <div key={i} className="rounded-lg border bg-muted p-3">
-                        <p className="mb-1 font-semibold text-sm">{item?.item_name}</p>
-                        {r.qty_confirmed>0&&<p className="text-success-foreground text-xs">✓ {r.qty_confirmed} {boaTl("confirmed")} (#{r.oid})</p>}
-                        {r.qty_waiting>0&&<p className="text-warning-foreground text-xs">⏳ {r.qty_waiting} {boaTl("on waitlist — next run")}</p>}
-                      </div>
-                    );
-                  })}
-                  <Button variant="outline" className="w-full" onClick={()=>{ setCart({}); setOrderResult(null); setCheckout(false); }}>{boaTl("New order")}</Button>
-                </div>
-              ) : !checkout ? (
-                <div className="flex flex-col">
-                  {cartEntries.map(entry=>{
-                    const a = entry.item;
-                    return (
-                      <div key={`${entry.prid}-${entry.rid}`} className="flex items-center justify-between gap-3 border-b py-3 first:pt-0">
-                        <div className="min-w-0">
-                          <p className="truncate font-semibold text-sm">{a.item_name}</p>
-                          <p className="text-muted-foreground text-xs">{fmtQ(a,entry.qty)} × {a.price} {a.currency}/{unitAbbr(a.units)}</p>
-                          {entry.qty >= maxOf(a)-1e-9 && <p className="text-warning-foreground text-xs">{boaTl("Max available")}</p>}
-                        </div>
-                        <Stepper a={a} qty={entry.qty}/>
-                      </div>
-                    );
-                  })}
-                  <div className="flex items-baseline justify-between pt-3 pb-4 font-semibold">
-                    <span className="text-sm">{boaTl("Total")}</span>
-                    <span className="text-brand tabular-nums">{cartTotal.toLocaleString()} {cartCurrency}</span>
-                  </div>
-                  <Button className="w-full" onClick={()=>setCheckout(true)}>{boaTl("Checkout")}<ArrowRightIcon/></Button>
-                </div>
-              ) : (
-                <form className="flex flex-col gap-4" onSubmit={e=>{ e.preventDefault(); placeOrder(); }} noValidate>
-                  <Field>
-                    <FieldLabel>Email <span className="text-destructive-foreground">*</span></FieldLabel>
-                    <CInput type="email" autoComplete="email" placeholder="your@email.com" value={guest.email}
-                      onChange={e=>setGuest(g=>({...g,email:e.target.value}))} onBlur={e=>lookupGuest(e.target.value)}/>
-                  </Field>
-                  <Field>
-                    <FieldLabel>{boaTl("Name")} <span className="text-destructive-foreground">*</span></FieldLabel>
-                    <CInput autoComplete="name" placeholder={boaTl("Your name")} value={guest.name} onChange={e=>setGuest(g=>({...g,name:e.target.value}))}/>
-                  </Field>
-                  <Field>
-                    <FieldLabel>{boaTl("Phone")}</FieldLabel>
-                    <CInput type="tel" autoComplete="tel" placeholder="+374 91 …" value={guest.phone} onChange={e=>setGuest(g=>({...g,phone:e.target.value}))}/>
-                  </Field>
-                  <div className="flex flex-col gap-2">
-                    <span className="font-medium text-sm">{boaTl("Fulfillment")}</span>
-                    <RadioGroup value={fulfillment} onValueChange={setFulfillment} className="flex flex-row gap-5">
-                      <Label className="cursor-pointer"><Radio value="pickup"/>{boaTl("Pickup")}</Label>
-                      <Label className="cursor-pointer"><Radio value="delivery"/>{boaTl("Delivery")}</Label>
-                    </RadioGroup>
-                    {fulfillment==='delivery'&&(
-                      <CInput aria-label={boaTl("Delivery address")} placeholder={boaTl("Delivery address…")} value={deliveryAddr} onChange={e=>setDeliveryAddr(e.target.value)}/>
-                    )}
-                  </div>
-                  {cartEntries.some(e=>e.qty > (e.item?.remaining_qty||999)) && (
-                    <Alert variant="warning">
-                      <TriangleAlertIcon/>
-                      <AlertTitle>{boaTl("Limited availability")}</AlertTitle>
-                      <AlertDescription>{boaTl("Some items have less stock than requested. Your order will be split: available qty confirmed now, the rest placed on a waitlist for the next run.")}</AlertDescription>
-                    </Alert>
-                  )}
-                  <Separator/>
-                  <div className="flex items-baseline justify-between font-semibold">
-                    <span className="text-sm">{boaTl("Total")}</span>
-                    <span className="text-brand tabular-nums">{cartTotal.toLocaleString()} {cartCurrency}</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button variant="outline" size="icon" aria-label={boaTl("Back")} onClick={()=>setCheckout(false)}><ArrowLeftIcon/></Button>
-                    <Button type="submit" className="flex-1" loading={placing}>{boaTl("Place order")}</Button>
-                  </div>
-                </form>
-              )}
+              <CartPanel user={user} tl={boaTl} toast={toast} onLogin={onLogin}
+                onMyOrders={()=>{ try { sessionStorage.setItem("tanelu_next_page","orders-cust"); } catch {} window.location.assign("/"); }}
+                emptyHint={boaTl("Add items using the + buttons.")}/>
             </CardPanel>
           </Card>
         </aside>

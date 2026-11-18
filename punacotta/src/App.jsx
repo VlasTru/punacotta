@@ -33,6 +33,8 @@ import { ZoomInIcon, CakeSliceIcon, ShoppingBasketIcon, PackageCheckIcon, Refres
 
 const BoardOfArrivals = React.lazy(() => import('./screens/BoardOfArrivals.jsx'));
 const Marketplace = React.lazy(() => import('./screens/Marketplace.jsx'));
+const CartPanel = React.lazy(() => import('./screens/CartPanel.jsx'));
+import { cart as cartStore, useCart, snapFromMenu } from './cart.js';
 
 // ─── DESIGN TOKENS ────────────────────────────────────────────────────────────
 const G = {
@@ -310,6 +312,34 @@ export const RU = {
   "Board of Arrivals":"Готовые блюда",
   "Distance within":"В пределах, км",
   "Marketplace":"Маркетплейс",
+  "Log in to place your order":"Войдите, чтобы оформить заказ",
+  "No account yet?":"Ещё нет аккаунта?",
+  "Sign up":"Зарегистрироваться",
+  "ready ~":"готово ~",
+  "made to order":"под заказ",
+  "orders placed":"заказа оформлено",
+  "Order placed!":"Заказ оформлен!",
+  "Track them in My orders.":"Следите за ними в разделе «Мои заказы».",
+  "We sent the details to your email.":"Детали отправлены на вашу почту.",
+  "From a batch, ready ~":"Из партии, готово ~",
+  "From stock":"Из наличия",
+  "My orders":"Мои заказы",
+  "Your basket is empty.":"Корзина пуста.",
+  "Some items may be delivered individually as separate orders.":"Некоторые позиции могут быть доставлены отдельными заказами.",
+  "menu":"меню",
+  "Only {n} available":"Доступно только {n}",
+  "Sold out":"Распродано",
+  "Use":"Взять",
+  "Checkout":"Оформить",
+  "Your basket has items from a restaurant menu. Please log in to order them.":"В корзине есть позиции из меню ресторана. Войдите, чтобы заказать их.",
+  "Have an account?":"Есть аккаунт?",
+  "Pickup":"Самовывоз",
+  "Some items can only be picked up.":"Некоторые товары доступны только для самовывоза.",
+  "Other address":"Другой адрес",
+  "Comments for the restaurant":"Комментарий для ресторана",
+  "Name and email required":"Укажите имя и эл. почту",
+  "Your basket":"Ваша корзина",
+  "Open an item and add it to your basket.":"Откройте товар и добавьте его в корзину.",
 }
 
 function T({ children }) {
@@ -1154,7 +1184,7 @@ function useNotifications(user) {
   }, [isRestaurantUser, loadStock]);
 
   const compute = useCallback(async () => {
-    if (!user) return;
+    if (!user || (!user.is_manufacturer && !user.employer_uid)) return;   // customers have no process runs
     let runs;
     try { runs = await api.getProcessRunsWithSteps(); } catch { return; }
 
@@ -4410,44 +4440,27 @@ function RestaurantsPage({
 
 // ─── ORDER PAGE ───────────────────────────────────────────────────────────────
 function OrderPage({
- menu, user, setPage, toast }) {
+ menu, user, setPage, toast, setUser }) {
   const lang = useLangContext();
   const tl = k => lang==='ru'?(RU[k]||k):k;
-  const [qty, setQty] = useState({}); const [delivery, setDelivery] = useState(null);
-  const [savedAddresses, setSavedAddresses] = useState([]);
-  const [selectedAddr, setSelectedAddr] = useState(0);
-  const [otherStreet, setOtherStreet] = useState("");
-  const [otherCity, setOtherCity]     = useState("");
-  const [otherZip, setOtherZip]       = useState("");
-  const [submitting, setSubmitting]   = useState(false);
   const [lightbox, setLightbox]       = useState(null);
   const [viewItem, setViewItem]       = useState(null); // item detail dialog
-
-  useEffect(()=>{
-    api.getSavedAddresses().then(addrs=>{
-      setSavedAddresses(addrs||[]);
-      setSelectedAddr(addrs?.length>0 ? 0 : -1);
-    }).catch(()=>{
-      // Fall back to user profile address
-      const profileAddr = [user?.street_address, user?.city, user?.zip].filter(Boolean).join(", ");
-      if (profileAddr) { setSavedAddresses([{label:"Default", display:profileAddr}]); setSelectedAddr(0); }
-      else setSelectedAddr(-1);
-    });
-  },[]);
+  // The basket is shared with the Board of Arrivals and the Marketplace (src/cart.js). Items added
+  // here carry the menu, so what isn't in stock or in a running batch is made to order.
+  const { lines: cartMap } = useCart();
 
   if (!menu) { setPage("restaurants"); return null; }
 
   const grouped={};
   (menu.recipes||[]).forEach(r=>{if(!grouped[r.category])grouped[r.category]=[];grouped[r.category].push(r);});
 
-  // MOQ-aware qty change: if allow_submultiples, each step = moq (in subunits)
-  // qty stored as number of MOQ steps, effective qty = steps * moq subunits
-  const changeQty=(r, delta)=>setQty(p=>{
-    const step = r.allow_submultiples && r.moq ? 1 : 1;
-    const current = p[r.rid]||0;
-    const next = Math.max(0, Math.min(r.allow_submultiples?9999:20, current+delta*step));
-    return {...p,[r.rid]:next};
-  });
+  // qty counts MOQ steps for items sold in sub-units (effective qty = steps × moq sub-units)
+  const qty = Object.fromEntries(Object.values(cartMap).map(l=>[l.rid, l.steps]));
+  const changeQty=(r, delta)=>{
+    const current = cartMap[r.rid]?.steps||0;
+    const next = Math.max(0, Math.min(r.allow_submultiples?9999:99, current+delta));
+    cartStore.setSteps(snapFromMenu(r, menu), next, { mid: menu.mid });
+  };
 
   // Display qty in appropriate units
   const displayQty = (r, steps) => {
@@ -4475,38 +4488,6 @@ function OrderPage({
       return Math.round(r.price * fullUnits * 100) / 100;
     }
     return r.price * steps;
-  };
-
-  const cartItems=(menu.recipes||[]).filter(r=>(qty[r.rid]||0)>0).map(r=>({
-    rid:r.rid, name:r.name, qty:qty[r.rid],
-    price: r.allow_submultiples && r.moq
-      ? Math.round(r.price * (Number(r.moq) / conv(r.units||"")) * 100) / 100  // price per MOQ step
-      : r.price,
-    deliverable:r.deliverable!==false,
-  }));
-  const hasUndeliverable=cartItems.some(it=>!it.deliverable);
-  const itemTotal=cartItems.reduce((s,it)=>s+it.qty*it.price,0);
-  const deliveryFee=delivery==="delivery"?menu.delivery_fee:0;
-  const total=itemTotal+deliveryFee;
-
-  useEffect(()=>{if(hasUndeliverable&&delivery==="delivery")setDelivery("pickup");},[hasUndeliverable]);
-
-  // When user edits "other" fields, auto-select the "other" radio
-  const onOtherFieldChange = (setter) => (val) => { setter(val); setSelectedAddr(-1); };
-
-  const resolvedAddress = () => {
-    if (selectedAddr>=0 && savedAddresses[selectedAddr]) return savedAddresses[selectedAddr].display;
-    return [otherStreet, otherCity, otherZip].filter(Boolean).join(", ");
-  };
-
-  const submit=async()=>{
-    if(!delivery){toast("Please select pickup or delivery","error");return;}
-    if(delivery==="delivery" && !resolvedAddress()){toast("Please enter a delivery address","error");return;}
-    setSubmitting(true);
-    try{
-      const order=await api.placeOrder({mid:menu.mid,pickup:delivery==="pickup",items:cartItems,delivery_address:delivery==="delivery"?resolvedAddress():null});
-      toast(`Order #${order.oid} placed!`); setPage("orders-cust");
-    }catch(e){toast(e.message,"error");}finally{setSubmitting(false);}
   };
 
   const THUMB=42;
@@ -4556,81 +4537,15 @@ function OrderPage({
           ))}
         </div>
 
-        {/* CART */}
+        {/* Basket — shared with the Board of Arrivals and the Marketplace */}
         <Card className="lg:sticky lg:top-20">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 font-heading text-lg"><ShoppingBasketIcon className="size-5 text-muted-foreground"/>{tl("Your order")}</CardTitle>
+            <CardTitle className="flex items-center gap-2 font-heading text-lg"><ShoppingBasketIcon className="size-5 text-muted-foreground"/>{tl("Your basket")}</CardTitle>
           </CardHeader>
-          <CardPanel className="flex flex-col gap-4">
-            {cartItems.length===0?(
-              <p className="text-muted-foreground text-sm">{tl("Add items from the menu.")}</p>
-            ):(
-              <div className="flex flex-col gap-2">
-                {cartItems.map((it,i)=>{ const r=recOf(it.rid); return (
-                  <div key={i} data-slot="cart-line" className="flex items-center gap-2 text-sm">
-                    <span className="min-w-0 flex-1 truncate">{it.name}</span>
-                    <div className="flex items-center gap-1">
-                      <Button variant="outline" size="icon-xs" aria-label={`Fewer ${it.name}`} onClick={()=>changeQty(r,-1)}><MinusIcon/></Button>
-                      <span className="min-w-5 text-center font-semibold tabular-nums">{it.qty}</span>
-                      <Button variant="outline" size="icon-xs" aria-label={`More ${it.name}`} onClick={()=>changeQty(r,1)}><PlusIcon/></Button>
-                    </div>
-                    <span className="min-w-14 text-end font-semibold tabular-nums">{it.qty*it.price}</span>
-                  </div>
-                ); })}
-              </div>
-            )}
-
-            <div className="flex flex-col gap-2.5 border-border border-t pt-4">
-              <span className="font-medium text-sm">Fulfillment</span>
-              {hasUndeliverable?(
-                <Alert variant="warning">
-                  <TriangleAlertIcon/>
-                  <AlertTitle>Pickup only</AlertTitle>
-                  <AlertDescription>Your order includes items available for pickup only. Delivery for this order may not be fulfilled.</AlertDescription>
-                </Alert>
-              ):(
-                <RadioGroup value={delivery||""} onValueChange={v=>setDelivery(v)} className="gap-2">
-                  {[{val:"pickup",label:"Pickup (free)",Icon:StoreIcon},{val:"delivery",label:`${tl("Delivery")} (+${menu.delivery_fee} AMD)`,Icon:TruckIcon}].map(({val,label,Icon})=>(
-                    <Label key={val} className="cursor-pointer gap-2.5 rounded-lg border border-border px-3 py-2.5 font-normal has-data-checked:border-brand/60 has-data-checked:bg-accent/50">
-                      <Radio value={val}/><Icon className="size-4 text-muted-foreground"/>{label}
-                    </Label>
-                  ))}
-                </RadioGroup>
-              )}
-            </div>
-
-            {delivery==="delivery"&&!hasUndeliverable&&(
-              <RadioGroup value={String(selectedAddr)} onValueChange={v=>setSelectedAddr(Number(v))} className="gap-2">
-                {savedAddresses.map((addr,i)=>(
-                  <Label key={i} className="cursor-pointer items-start gap-2.5 rounded-lg border border-border px-3 py-2.5 font-normal has-data-checked:border-brand/60 has-data-checked:bg-accent/50">
-                    <Radio value={String(i)} className="mt-0.5"/>
-                    <span className="flex flex-col gap-0.5">
-                      {addr.label&&<span className="font-semibold text-muted-foreground text-xs">{addr.label}</span>}
-                      <span className="text-sm leading-snug">{addr.display}</span>
-                    </span>
-                  </Label>
-                ))}
-                <Label className="cursor-pointer gap-2.5 px-3 py-1 font-normal">
-                  <Radio value="-1"/>Other address
-                </Label>
-                {selectedAddr===-1&&(
-                  <div className="flex flex-col gap-2.5 ps-3">
-                    <Input label="Street" value={otherStreet} onChange={onOtherFieldChange(setOtherStreet)} />
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <Input label="City" value={otherCity} onChange={onOtherFieldChange(setOtherCity)} />
-                      <Input label="ZIP"  value={otherZip}  onChange={onOtherFieldChange(setOtherZip)} />
-                    </div>
-                  </div>
-                )}
-              </RadioGroup>
-            )}
-
-            <div className="flex flex-col gap-1.5 border-border border-t pt-3">
-              {deliveryFee>0&&<div className="flex justify-between text-muted-foreground text-sm"><span>{tl("Delivery fee")}</span><span className="tabular-nums">{deliveryFee} AMD</span></div>}
-              <div className="flex justify-between font-bold text-base"><span>{tl("Total")}</span><span className="text-accent-foreground tabular-nums">{total} AMD</span></div>
-            </div>
-
-            <Btn onClick={submit} loading={submitting} disabled={itemTotal===0} title={itemTotal===0?"Please add items to your order":undefined} style={{width:"100%"}}>Place order</Btn>
+          <CardPanel>
+            <React.Suspense fallback={<Spinner/>}>
+              <CartPanel user={user} tl={tl} toast={toast} onLogin={setUser} onMyOrders={()=>setPage("orders-cust")} emptyHint={tl("Add items from the menu.")}/>
+            </React.Suspense>
           </CardPanel>
         </Card>
       </div>
@@ -9921,7 +9836,7 @@ export default function App() {
       <style>{makeCss()}</style>
       <Toast toasts={toasts} remove={remove}/>
       <React.Suspense fallback={<div style={{minHeight:"100vh",background:G.cream}}/>}>
-        <BoardOfArrivals toast={toast}/>
+        <BoardOfArrivals toast={toast} user={user} onLogin={u=>setUser(u)}/>
       </React.Suspense>
     </LangContext.Provider>
   );
@@ -9999,7 +9914,7 @@ export default function App() {
           {page==="embed"        &&<EmbedMenuPage toast={toast}/>}
           {(page==="orders-manuf"||page==="quick-sale") &&<OrdersHub toast={toast}/>}
           {page==="restaurants"  &&<RestaurantsPage setPage={setPage} setActiveMenu={setActiveMenu}/>}
-          {page==="order"        &&<OrderPage menu={activeMenu} user={user} setPage={setPage} toast={toast}/>}
+          {page==="order"        &&<OrderPage menu={activeMenu} user={user} setPage={setPage} toast={toast} setUser={setUser}/>}
           {page==="orders-cust"  &&<OrdersCustPage toast={toast} setPage={setPage}/>}
           {page==="general"      &&<GeneralPage    user={user} setUser={setUser} toast={toast}/>}
           {page==="schedule"     &&<SchedulePage toast={toast} storeSchedule={storeSchedule} setStoreSchedule={setStoreSchedule}/>}
