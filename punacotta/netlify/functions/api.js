@@ -47,6 +47,101 @@ async function assertOwnPids(ownerUid, pids) {
   if (ids.some(id => !own.has(id))) { const e = new Error('Unknown product'); e.status = 400; throw e }
 }
 
+// Items (recipes) belong to one restaurant, like products
+async function ownedRids(ownerUid, rids) {
+  const ids = [...new Set((rids || []).map(Number).filter(Boolean))]
+  if (!ids.length) return new Set()
+  const rows = await dbq('SELECT rid FROM recipe WHERE rid=ANY($1::int[]) AND owner_uid=$2', [ids, ownerUid])
+  return new Set(rows.map(r => r.rid))
+}
+async function assertOwnRids(ownerUid, rids) {
+  const ids = [...new Set((rids || []).map(Number).filter(Boolean))]
+  const own = await ownedRids(ownerUid, ids)
+  if (ids.some(id => !own.has(id))) { const e = new Error('Unknown item'); e.status = 400; throw e }
+}
+// Copies of an item share its Cloudinary image: delete the image only when no other item uses it
+async function releaseRecipeImage(cloudinaryId, rid) {
+  if (!cloudinaryId) return
+  const [other] = await dbq('SELECT 1 FROM recipe WHERE cloudinary_id=$1 AND rid<>$2 AND deleted=false LIMIT 1', [cloudinaryId, rid])
+  if (!other) await cloudinaryDelete(cloudinaryId)
+}
+
+// One-off: give every item an owner. Same approach as products: an item used by several restaurants is
+// copied per restaurant (with its ingredients mapped to that restaurant's products), and that restaurant's
+// menus, processes, equipment, packages, stock, orders, runs and reservations switch to its copy.
+async function backfillRecipeOwners() {
+  await withTx(async q => {
+    const flag = await q(`INSERT INTO migration_flag (key) VALUES ('recipe_owner_v1') ON CONFLICT DO NOTHING RETURNING key`)
+    if (!flag.rows.length) return
+    const uses = (await q(`
+      SELECT r.rid, x.owner FROM recipe r JOIN (
+        SELECT mr.rid, m.owner_uid AS owner FROM menu_recipe mr JOIN menu m ON m.mid=mr.mid
+        UNION SELECT pi.rid, pr.owner_uid FROM process_item pi JOIN process pr ON pr.procid=pi.procid
+        UNION SELECT r2.rid, pr.owner_uid FROM recipe r2 JOIN process pr ON pr.procid=r2.procid
+        UNION SELECT rid, owner_uid FROM recipe_stock
+        UNION SELECT ei.rid, e.owner_uid FROM equipment_item ei JOIN equipment e ON e.eid=ei.eid
+        UNION SELECT pk.rid, p.owner_uid FROM package_item pk JOIN product p ON p.pid=pk.pid
+        UNION SELECT oi.rid, m.owner_uid FROM order_item oi JOIN "order" o ON o.oid=oi.oid JOIN menu m ON m.mid=o.mid
+        UNION SELECT oi.rid, pr.owner_uid FROM order_item oi JOIN "order" o ON o.oid=oi.oid JOIN process_run pr ON pr.prid=o.prid
+        UNION SELECT pri.rid, pr.owner_uid FROM process_run_item pri JOIN process_run pr ON pr.prid=pri.prid
+        UNION SELECT rid, owner_uid FROM boa_reservation
+      ) x ON x.rid=r.rid
+      WHERE r.owner_uid IS NULL AND x.owner IS NOT NULL
+      ORDER BY r.rid, x.owner`)).rows
+    const byRid = new Map()
+    for (const u of uses) { if (!byRid.has(u.rid)) byRid.set(u.rid, []); byRid.get(u.rid).push(u.owner) }
+    const { rows: rests } = await q(`SELECT uid FROM "user" WHERE is_manufacturer=true AND employer_uid IS NULL ORDER BY uid`)
+    // Items nobody uses yet can't be traced to a restaurant: every restaurant keeps a copy
+    const { rows: unused } = await q('SELECT rid FROM recipe WHERE owner_uid IS NULL AND deleted=false')
+    for (const { rid } of unused) if (!byRid.has(rid) && rests.length) byRid.set(rid, rests.map(r => r.uid))
+
+    // The restaurant's own product with the same name (copied for it when missing)
+    const productFor = async (pid, owner) => {
+      const { rows: [own] } = await q('SELECT pid FROM product WHERE pid=$1 AND owner_uid=$2', [pid, owner])
+      if (own) return pid
+      const { rows: [same] } = await q(`SELECT p2.pid FROM product p1 JOIN product p2 ON lower(p2.name)=lower(p1.name)
+        AND p2.owner_uid=$2 AND p2.deleted=false AND p2.is_package=p1.is_package WHERE p1.pid=$1 ORDER BY p2.pid LIMIT 1`, [pid, owner])
+      if (same) return same.pid
+      const { rows: [np] } = await q(`INSERT INTO product (name, caid, unid, deleted, expiry_hours, sku, is_package, owner_uid)
+        SELECT name, caid, unid, deleted, expiry_hours, sku, is_package, $2 FROM product WHERE pid=$1 RETURNING pid`, [pid, owner])
+      return np.pid
+    }
+    const { rows: rcols } = await q(`SELECT column_name FROM information_schema.columns
+      WHERE table_schema='public' AND table_name='recipe' AND column_name NOT IN ('rid','owner_uid','procid')`)
+    const cols = rcols.map(c => `"${c.column_name}"`).join(', ')
+    let assigned = 0, copied = 0
+    for (const [rid, owners] of byRid) {
+      await q('UPDATE recipe SET owner_uid=$1 WHERE rid=$2', [owners[0], rid]); assigned++
+      // ingredients of the first owner's item must be its own products too
+      for (const { pid } of (await q('SELECT pid FROM recipe_product WHERE rid=$1', [rid])).rows) {
+        const np = await productFor(pid, owners[0])
+        if (np !== pid) await q('UPDATE recipe_product SET pid=$1 WHERE rid=$2 AND pid=$3', [np, rid, pid])
+      }
+      for (const o of owners.slice(1)) {
+        const { rows: [nr] } = await q(`INSERT INTO recipe (${cols}, owner_uid, procid)
+          SELECT ${cols}, $2, (SELECT pr.procid FROM process pr WHERE pr.procid=recipe.procid AND pr.owner_uid=$2)
+          FROM recipe WHERE rid=$1 RETURNING rid`, [rid, o])
+        copied++
+        for (const c of (await q('SELECT pid, qty FROM recipe_product WHERE rid=$1', [rid])).rows) {
+          await q('INSERT INTO recipe_product (rid, pid, qty) VALUES ($1,$2,$3) ON CONFLICT (rid,pid) DO NOTHING', [nr.rid, await productFor(c.pid, o), c.qty])
+        }
+        const n = nr.rid
+        await q(`UPDATE menu_recipe SET rid=$1 WHERE rid=$2 AND mid IN (SELECT mid FROM menu WHERE owner_uid=$3)`, [n, rid, o])
+        await q(`UPDATE process_item SET rid=$1 WHERE rid=$2 AND procid IN (SELECT procid FROM process WHERE owner_uid=$3)`, [n, rid, o])
+        await q(`UPDATE recipe_stock SET rid=$1 WHERE rid=$2 AND owner_uid=$3`, [n, rid, o])
+        await q(`UPDATE equipment_item SET rid=$1 WHERE rid=$2 AND eid IN (SELECT eid FROM equipment WHERE owner_uid=$3)`, [n, rid, o])
+        await q(`UPDATE package_item SET rid=$1 WHERE rid=$2 AND pid IN (SELECT pid FROM product WHERE owner_uid=$3)`, [n, rid, o])
+        await q(`UPDATE order_item SET rid=$1 WHERE rid=$2 AND oid IN (
+          SELECT o.oid FROM "order" o LEFT JOIN menu m ON m.mid=o.mid LEFT JOIN process_run pr ON pr.prid=o.prid
+          WHERE COALESCE(m.owner_uid, pr.owner_uid)=$3)`, [n, rid, o])
+        await q(`UPDATE process_run_item SET rid=$1 WHERE rid=$2 AND prid IN (SELECT prid FROM process_run WHERE owner_uid=$3)`, [n, rid, o])
+        await q(`UPDATE boa_reservation SET rid=$1 WHERE rid=$2 AND owner_uid=$3`, [n, rid, o])
+      }
+    }
+    console.log(`item owners: ${assigned} assigned, ${copied} copies made`)
+  })
+}
+
 // One-off: give every product an owner. Products used to be a shared catalogue; each restaurant now
 // gets its own copy of every product it uses, and its recipes, supplier links, stock, forecasts,
 // purchase orders and notifications are re-pointed to that copy.
@@ -201,7 +296,10 @@ async function ensureMigrations() {
       day DATE NOT NULL, owner_uid INTEGER NOT NULL, views INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (day, owner_uid)
     )`)
+    await dbr(`ALTER TABLE recipe ADD COLUMN IF NOT EXISTS owner_uid INTEGER REFERENCES "user"(uid)`)
+    await dbr(`CREATE INDEX IF NOT EXISTS recipe_owner_idx ON recipe(owner_uid)`)
     await backfillProductOwners()
+    await backfillRecipeOwners()
   } catch(e) { console.error('Migration error:', e.message) }
 }
 
@@ -674,7 +772,7 @@ async function createWalkinSale(ownerUid, lines, soldAt) {
      VALUES (NULL,$1,true,'pickup','Done','Walk-in','walkin',$2,$2,$2) RETURNING oid`, [wm.mid, soldAt])
   const oid = res.rows[0].oid
   for (const l of lines) {
-    const [rec] = await dbq('SELECT price FROM recipe WHERE rid=$1 AND deleted=false', [l.rid])
+    const [rec] = await dbq('SELECT price FROM recipe WHERE rid=$1 AND deleted=false AND owner_uid=$2', [l.rid, ownerUid])
     if (!rec) continue
     await dbr('INSERT INTO order_item (oid,rid,qty,price) VALUES ($1,$2,$3,$4)', [oid, l.rid, l.qty, rec.price])
   }
@@ -1521,16 +1619,18 @@ async function route(method, segments, body, headers, event) {
       const rid = fields.rid || `tmp_${Date.now()}`
       const publicId = `puncotta/recipes/r_${rid}`
       if (fields.rid) {
+        await assertOwnRids(user.uid, [fields.rid])
         const [ex] = await dbq('SELECT cloudinary_id FROM recipe WHERE rid=$1', [fields.rid])
-        if (ex?.cloudinary_id) await cloudinaryDelete(ex.cloudinary_id)
+        if (ex?.cloudinary_id && ex.cloudinary_id !== publicId) await releaseRecipeImage(ex.cloudinary_id, fields.rid)
       }
       const { url, thumb_url } = await cloudinaryUpload(fields.image, publicId)
       return [200, { url, thumb_url, cloudinary_id: publicId }]
     }
 
     if (r1 === 'remove' && r2 && method === 'DELETE') {
+      await assertOwnRids(user.uid, [r2])
       const [row] = await dbq('SELECT cloudinary_id FROM recipe WHERE rid=$1', [r2])
-      if (row?.cloudinary_id) await cloudinaryDelete(row.cloudinary_id)
+      await releaseRecipeImage(row?.cloudinary_id, r2)
       await dbr('UPDATE recipe SET image_url=null,image_thumb_url=null,cloudinary_id=null WHERE rid=$1', [r2])
       return [200, { removed: true }]
     }
@@ -1546,6 +1646,7 @@ async function route(method, segments, body, headers, event) {
                        LEFT JOIN units un ON un.unid=r.unid WHERE pi.pid=p.pid), '[]') AS items
       FROM product p WHERE p.is_package=true AND p.deleted=false AND p.owner_uid=$1`
     const saveItems = async (pid, items) => {
+      await assertOwnRids(user.uid, (Array.isArray(items) ? items : []).map(it => it.rid))
       await dbr('DELETE FROM package_item WHERE pid=$1', [pid])
       const seen = new Set()
       for (const it of (Array.isArray(items) ? items : [])) {
@@ -1581,6 +1682,7 @@ async function route(method, segments, body, headers, event) {
     if (!r1 && method === 'POST') {
       const { name, sku, items } = body
       if (!name?.trim()) return [400, { error: 'Name required' }]
+      await assertOwnRids(user.uid, (Array.isArray(items) ? items : []).map(it => it.rid))
       const r = await dbr('INSERT INTO product (name,sku,is_package,owner_uid) VALUES ($1,$2,true,$3) RETURNING pid',
         [name.trim(), sku?.trim() || null, user.uid])
       await saveItems(r.rows[0].pid, items)
@@ -1598,6 +1700,7 @@ async function route(method, segments, body, headers, event) {
       if (!own) return [404, { error: 'Not found' }]
       const { name, sku, items } = body
       if (name !== undefined && !name?.trim()) return [400, { error: 'Name required' }]
+      if (Array.isArray(items)) await assertOwnRids(user.uid, items.map(it => it.rid))
       if (name !== undefined) await dbr('UPDATE product SET name=$1 WHERE pid=$2', [name.trim(), r1])
       if (sku !== undefined) await dbr('UPDATE product SET sku=$1 WHERE pid=$2', [sku?.trim() || null, r1])
       if (items !== undefined) await saveItems(r1, items)
@@ -1640,12 +1743,13 @@ async function route(method, segments, body, headers, event) {
         await assertOwnPids(user.uid, ids)
         if (cascade_recipes) {
           const affected = await dbq(
-            `SELECT DISTINCT rp.rid FROM recipe_product rp WHERE rp.pid=ANY($1::int[])`, [ids])
+            `SELECT DISTINCT rp.rid FROM recipe_product rp JOIN recipe r ON r.rid=rp.rid AND r.owner_uid=$2
+             WHERE rp.pid=ANY($1::int[])`, [ids, user.uid])
           if (affected.length) {
             const rids = affected.map(r=>r.rid)
             for (const rid of rids) {
               const [rec] = await dbq('SELECT cloudinary_id FROM recipe WHERE rid=$1', [rid])
-              if (rec?.cloudinary_id) await cloudinaryDelete(rec.cloudinary_id)
+              await releaseRecipeImage(rec?.cloudinary_id, rid)
             }
             await dbr('DELETE FROM menu_recipe WHERE rid=ANY($1::int[])', [rids])
             await dbr('UPDATE recipe SET deleted=true WHERE rid=ANY($1::int[])', [rids])
@@ -1709,7 +1813,8 @@ async function route(method, segments, body, headers, event) {
 
   if (r0 === 'recipes') {
     if (r1 === 'available' && method === 'GET') {
-      return [200, await dbq(RECIPE_SEL + ' WHERE r.deleted=false AND r.available=true ORDER BY r.name')]
+      if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+      return [200, await dbq(RECIPE_SEL + ' WHERE r.deleted=false AND r.available=true AND r.owner_uid=$1 ORDER BY r.name', [user.uid])]
     }
     if (r1 === 'lookups' && method === 'GET') {
       if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
@@ -1722,7 +1827,7 @@ async function route(method, segments, body, headers, event) {
     // POST /recipes/usage — which processes use these items
     if (r1 === 'usage' && method === 'POST') {
       if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
-      const ids = (Array.isArray(body?.ids) ? body.ids : []).map(Number).filter(Number.isFinite)
+      const ids = [...await ownedRids(user.uid, Array.isArray(body?.ids) ? body.ids : [])]
       const rows = ids.length ? await dbq(
         `SELECT x.rid, x.procid, p.name AS process_name FROM (
            SELECT pi.rid, pi.procid FROM process_item pi WHERE pi.rid = ANY($1::int[])
@@ -1742,6 +1847,8 @@ async function route(method, segments, body, headers, event) {
               deliverable, image_url, image_thumb_url, cloudinary_id,
               allow_submultiples, moq, procid, expiry_hours, contents } = body
       if (!name?.trim()) return [400, { error: 'Name required' }]
+      await assertOwnRids(user.uid, [r1])
+      if (Array.isArray(contents)) await assertOwnPids(user.uid, contents.map(c => c.pid))
       await dbr(`UPDATE recipe SET name=$1,description=$2,unid=$3,caid=$4,price=$5,currency=$6,
                  available=$7,deliverable=$8,image_url=$9,image_thumb_url=$10,cloudinary_id=$11,
                  allow_submultiples=$12,moq=$13,procid=$14,expiry_hours=$16 WHERE rid=$15`,
@@ -1757,6 +1864,7 @@ async function route(method, segments, body, headers, event) {
     // PATCH /recipes/:rid — partial update
     if (r1 && method === 'PATCH') {
       if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
+      await assertOwnRids(user.uid, [r1])
       if (body.available !== undefined)
         await dbr('UPDATE recipe SET available=$1 WHERE rid=$2', [!!body.available, r1])
       if (body.deliverable !== undefined)
@@ -1766,7 +1874,7 @@ async function route(method, segments, body, headers, event) {
     }
     if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
     if (method === 'GET') {
-      const rows = await dbq(RECIPE_SEL + ' WHERE r.deleted=false ORDER BY r.name')
+      const rows = await dbq(RECIPE_SEL + ' WHERE r.deleted=false AND r.owner_uid=$1 ORDER BY r.name', [user.uid])
       return [200, await attachContents(rows)]
     }
     if (method === 'POST') {
@@ -1774,15 +1882,16 @@ async function route(method, segments, body, headers, event) {
               deliverable, image_url, image_thumb_url, cloudinary_id,
               allow_submultiples, moq, procid, expiry_hours, contents } = body
       if (!name?.trim()) return [400, { error: 'Name required' }]
+      if (Array.isArray(contents)) await assertOwnPids(user.uid, contents.map(c => c.pid))
       const res = await dbr(
         `INSERT INTO recipe (name,description,unid,caid,price,currency,available,deliverable,
-                             image_url,image_thumb_url,cloudinary_id,allow_submultiples,moq,procid,expiry_hours)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING rid`,
+                             image_url,image_thumb_url,cloudinary_id,allow_submultiples,moq,procid,expiry_hours,owner_uid)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING rid`,
         [name.trim(), description||null, unid||null, caid||null,
          Number(price)||0, currency||'AMD', available!==false, deliverable!==false,
          image_url||null, image_thumb_url||null, cloudinary_id||null,
          !!allow_submultiples, moq?Number(moq):null, procid||null,
-         expiry_hours!==''&&expiry_hours!=null&&Number(expiry_hours)>0?Number(expiry_hours):null])
+         expiry_hours!==''&&expiry_hours!=null&&Number(expiry_hours)>0?Number(expiry_hours):null, user.uid])
       const rid = res.rows[0].rid
       if (Array.isArray(contents)) await saveContents(rid, contents)
       const rows = await dbq(RECIPE_SEL + ' WHERE r.rid=$1', [rid])
@@ -1791,9 +1900,10 @@ async function route(method, segments, body, headers, event) {
     if (method === 'DELETE') {
       const { ids } = body
       if (!Array.isArray(ids) || !ids.length) return [400, { error: 'ids required' }]
+      await assertOwnRids(user.uid, ids)
       for (const rid of ids) {
         const [r] = await dbq('SELECT cloudinary_id FROM recipe WHERE rid=$1', [rid])
-        if (r?.cloudinary_id) await cloudinaryDelete(r.cloudinary_id)
+        await releaseRecipeImage(r?.cloudinary_id, rid)
         await dbr('DELETE FROM recipe_product WHERE rid=$1', [rid])
         await dbr('DELETE FROM process_item WHERE rid=$1', [rid])
         await dbr('DELETE FROM menu_recipe WHERE rid=$1', [rid])
@@ -1848,6 +1958,7 @@ async function route(method, segments, body, headers, event) {
     if (r1 && r2 === 'recipes') {
       if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
       if (method === 'POST') {
+        await assertOwnRids(user.uid, body.recipe_ids||[])
         for (const rid of body.recipe_ids||[])
           await dbr('INSERT INTO menu_recipe (mid,rid) VALUES ($1,$2) ON CONFLICT DO NOTHING', [r1, rid])
         return [200, await fetchMenu(r1)]
@@ -1919,6 +2030,7 @@ async function route(method, segments, body, headers, event) {
       if (!user.is_manufacturer) return [403, { error: 'Manufacturers only' }]
       const { name, available, delivery_fee, recipe_ids } = body
       if (!name?.trim()) return [400, { error: 'Name required' }]
+      await assertOwnRids(user.uid, recipe_ids||[])
       const res = await dbr(
         'INSERT INTO menu (name,available,delivery_fee,owner_uid) VALUES ($1,$2,$3,$4) RETURNING mid',
         [name.trim(), !!available, Number(delivery_fee)||0, user.uid])
@@ -2212,7 +2324,7 @@ async function route(method, segments, body, headers, event) {
         const [r] = await dbq(
           `SELECT r.rid, r.name, r.price, r.allow_submultiples, r.moq, un.name AS unit_name,
                   COALESCE((SELECT SUM(qty) FROM recipe_stock rs WHERE rs.rid=r.rid AND rs.owner_uid=$2), 0) AS stock
-           FROM recipe r LEFT JOIN units un ON un.unid=r.unid WHERE r.rid=$1 AND r.deleted=false`, [c.rid, user.uid])
+           FROM recipe r LEFT JOIN units un ON un.unid=r.unid WHERE r.rid=$1 AND r.deleted=false AND r.owner_uid=$2`, [c.rid, user.uid])
         if (!r) continue
         const expected = Math.max(0, Number(r.stock))
         const diff = Math.round((expected - c.counted) * 1000) / 1000
@@ -3257,7 +3369,7 @@ async function route(method, segments, body, headers, event) {
         UNIQUE(procid, rid)
       )`)
       const { item_ids } = body
-      console.log('process_item PATCH procid=%s item_ids=%j', r1, item_ids)
+      await assertOwnRids(user.uid, item_ids||[])
       await dbr('DELETE FROM process_item WHERE procid=$1', [r1])
       for (const rid of (item_ids||[])) {
         await dbr('INSERT INTO process_item (procid,rid) VALUES ($1,$2) ON CONFLICT DO NOTHING', [r1, Number(rid)])
@@ -3376,6 +3488,7 @@ async function route(method, segments, body, headers, event) {
         return [200, { warnings, requires_confirmation: true }]
       }
 
+      if (Array.isArray(body.run_items)) await assertOwnRids(ownerUid, body.run_items.map(it => it.rid))
       // Create the run
       const runRes = await dbr(
         `INSERT INTO process_run (procid,owner_uid,started_by,status,scheduled_at,started_at)
@@ -3613,6 +3726,7 @@ async function route(method, segments, body, headers, event) {
       const { name: inputName, items } = body
       if (!inputName?.trim()) return [400, { error: 'Name required' }]
       const baseName = inputName.trim()
+      await assertOwnRids(user.uid, (items||[]).map(it => it.rid))
       const { name, seq } = await assignName(user.uid, baseName)
       const res = await dbr(
         `INSERT INTO equipment (owner_uid,name,base_name,seq) VALUES ($1,$2,$3,$4) RETURNING eid`,
@@ -3645,6 +3759,7 @@ async function route(method, segments, body, headers, event) {
           return [400, { error: 'Equipment is in use — cannot change status manually' }]
       }
       if (Array.isArray(items)) {
+        await assertOwnRids(user.uid, items.map(it => it.rid))
         await dbr('DELETE FROM equipment_item WHERE eid=$1', [r1])
         for (const it of items) {
           if (!it.rid) continue
@@ -3977,6 +4092,7 @@ async function route(method, segments, body, headers, event) {
       )`)
       const { changes } = body // [{rid, delta}]
       if (!Array.isArray(changes) || !changes.length) return [400, { error: 'No changes' }]
+      await assertOwnRids(user.uid, changes.map(c => c.rid))
       for (const { rid, delta } of changes) {
         if (delta >= 0) continue
         await dbr(
@@ -3995,6 +4111,7 @@ async function route(method, segments, body, headers, event) {
     // PATCH /recipe-stock/min — set min_inventory per recipe
     if (r1 === 'min' && method === 'PATCH') {
       const { rid, min_inventory } = body
+      await assertOwnRids(user.uid, [rid])
       await dbr(`ALTER TABLE recipe ADD COLUMN IF NOT EXISTS min_inventory NUMERIC(10,3)`)
       await dbr(`UPDATE recipe SET min_inventory=$1 WHERE rid=$2`,
         [Math.max(0, Number(min_inventory) || 0), rid])
@@ -4607,6 +4724,10 @@ async function route(method, segments, body, headers, event) {
       // Validate menu belongs to owner
       const [menu] = await dbq('SELECT * FROM menu WHERE mid=$1 AND owner_uid=$2', [mid, ownerUid])
       if (!menu) return [404, { error: 'Menu not found' }]
+      for (const it of items) {
+        const [mr] = await dbq('SELECT 1 FROM menu_recipe WHERE mid=$1 AND rid=$2', [mid, it.rid])
+        if (!mr) return [400, { error: 'Item not in menu' }]
+      }
       // Create order
       const res = await dbr(
         `INSERT INTO "order" (owner_uid, mid, pickup, walkin_name, delivery_street, delivery_city, delivery_zip, source, status)
