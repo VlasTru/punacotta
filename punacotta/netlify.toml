@@ -18,6 +18,9 @@
 [functions."stock-scheduled"]
   schedule = "0 * * * *"
 
+[functions."market-scheduled"]
+  schedule = "*/5 * * * *"
+
 # API functions — must come before SPA catch-all
 [[redirects]]
   from   = "/api/*"
@@ -35,6 +38,17 @@
 # Board of Arrivals
 [[redirects]]
   from   = "/order"
+  to     = "/index.html"
+  status = 200
+
+# Marketplace
+[[redirects]]
+  from   = "/market"
+  to     = "/index.html"
+  status = 200
+
+[[redirects]]
+  from   = "/market/*"
   to     = "/index.html"
   status = 200
 

@@ -47,6 +47,99 @@ async function assertOwnPids(ownerUid, pids) {
   if (ids.some(id => !own.has(id))) { const e = new Error('Unknown product'); e.status = 400; throw e }
 }
 
+// ─── MARKETPLACE CATEGORIES ───────────────────────────────────────────────────
+// One global tree for all restaurants. Items are linked to leaf categories (many-to-many).
+const MARKET_TREE = [
+  ['meals', 'Meals', [['combo', 'Combo meals'], ['main', 'Main dishes'], ['side', 'Side dishes'], ['sushi', 'Sushi'], ['other', 'Other']]],
+  ['pastry', 'Pastry', [['cakes', 'Cakes'], ['bread', 'Bread'], ['cookies', 'Cookies'], ['other', 'Other']]],
+  ['confectionery', 'Confectionery', [['candies', 'Candies'], ['chocolate', 'Chocolate'], ['torts', 'Torts'], ['other', 'Other']]],
+  ['drinks', 'Drinks', [['coffee', 'Coffee'], ['tea', 'Tea'], ['soft', 'Soft'], ['other', 'Other']]],
+  ['cheese', 'Cheese', []],
+  ['honey', 'Honey', []],
+  ['gift-sets', 'Gift sets', []],
+  ['whole-foods', 'Whole foods', []],
+]
+async function ensureMarketCategories() {
+  await dbr(`CREATE TABLE IF NOT EXISTS market_category (
+    mcid SERIAL PRIMARY KEY, slug TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+    parent_mcid INTEGER REFERENCES market_category(mcid), sort INTEGER NOT NULL DEFAULT 0)`)
+  await dbr(`CREATE TABLE IF NOT EXISTS recipe_market_category (
+    rid INTEGER NOT NULL REFERENCES recipe(rid) ON DELETE CASCADE,
+    mcid INTEGER NOT NULL REFERENCES market_category(mcid) ON DELETE CASCADE,
+    PRIMARY KEY (rid, mcid))`)
+  await dbr(`CREATE TABLE IF NOT EXISTS market_notify_day (owner_uid INTEGER NOT NULL, day DATE NOT NULL, PRIMARY KEY (owner_uid, day))`)
+  await dbr(`ALTER TABLE recipe ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`)
+  const [{ n }] = await dbq('SELECT COUNT(*)::int AS n FROM market_category')
+  if (n) return
+  let sort = 0
+  for (const [slug, name, kids] of MARKET_TREE) {
+    const { rows: [top] } = await dbr(`INSERT INTO market_category (slug, name, sort) VALUES ($1,$2,$3)
+      ON CONFLICT (slug) DO UPDATE SET name=EXCLUDED.name RETURNING mcid`, [slug, name, sort++])
+    for (const [ks, kn] of kids) {
+      await dbr(`INSERT INTO market_category (slug, name, parent_mcid, sort) VALUES ($1,$2,$3,$4)
+        ON CONFLICT (slug) DO NOTHING`, [`${slug}/${ks}`, kn, top.mcid, sort++])
+    }
+  }
+}
+// [{ mcid, slug, name, children:[...] }] in display order
+async function marketCategoryTree() {
+  const rows = await dbq('SELECT mcid, slug, name, parent_mcid FROM market_category ORDER BY sort, mcid')
+  const tops = rows.filter(r => !r.parent_mcid).map(r => ({ mcid: r.mcid, slug: r.slug, name: r.name, children: [] }))
+  for (const r of rows.filter(r => r.parent_mcid)) tops.find(t => t.mcid === r.parent_mcid)?.children.push({ mcid: r.mcid, slug: r.slug, name: r.name })
+  return tops
+}
+// Only leaves can be assigned (a top-level node with sub-categories is a group)
+async function saveMarketCategories(rid, ids) {
+  if (!Array.isArray(ids)) return
+  const want = [...new Set(ids.map(Number).filter(Boolean))]
+  const leaves = want.length ? await dbq(`SELECT c.mcid FROM market_category c WHERE c.mcid=ANY($1::int[])
+    AND NOT EXISTS (SELECT 1 FROM market_category k WHERE k.parent_mcid=c.mcid)`, [want]) : []
+  await dbr('DELETE FROM recipe_market_category WHERE rid=$1', [rid])
+  for (const { mcid } of leaves) await dbr('INSERT INTO recipe_market_category (rid, mcid) VALUES ($1,$2) ON CONFLICT DO NOTHING', [rid, mcid])
+}
+// "The following items do not belong to any category: …" — one fresh notification per working day
+function marketUnassignedText(names) {
+  if (!names.length) return null
+  const shown = names.slice(0, 5).join(', ')
+  const more = names.length - 5
+  return `The following items do not belong to any category: ${shown}${more > 0 ? ` ... +${more} item${more === 1 ? '' : 's'}` : ''}. Please revise your menu to offer these items in the marketplace.`
+}
+async function unassignedMarketItems(ownerUid) {
+  return (await dbq(`SELECT r.name FROM recipe r WHERE r.owner_uid=$1 AND r.deleted=false
+    AND NOT EXISTS (SELECT 1 FROM recipe_market_category x WHERE x.rid=r.rid) ORDER BY lower(r.name)`, [ownerUid])).map(r => r.name)
+}
+// Called every 5 minutes: on a working day, 5 minutes after the restaurant opens, once per day
+async function runMarketDailyJob(now = Date.now()) {
+  const owners = await dbq(`SELECT uid, schedule FROM "user" WHERE is_manufacturer=true AND employer_uid IS NULL AND deleted_at IS NULL`)
+  for (const o of owners) {
+    try {
+      const sch = typeof o.schedule === 'string' ? JSON.parse(o.schedule) : (o.schedule || {})
+      const tz = sch.timezone || 'UTC'
+      const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz, hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', weekday: 'short' })
+        .formatToParts(new Date(now)).map(p => [p.type, p.value]))
+      const date = `${parts.year}-${parts.month}-${parts.day}`
+      const mins = (Number(parts.hour) % 24) * 60 + Number(parts.minute)
+      const periods = sch.schedule?.[parts.weekday.slice(0, 3).toLowerCase()]?.periods || []
+      const from = periods.map(p => p.from).filter(Boolean).sort()[0]
+      if (!from) continue // closed today: not a working day
+      const openMins = Number(from.split(':')[0]) * 60 + Number(from.split(':')[1] || 0)
+      if (mins < openMins + 5) continue
+      const claimed = await dbq(`INSERT INTO market_notify_day (owner_uid, day) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING owner_uid`, [o.uid, date])
+      if (!claimed.length) continue
+      // A new notification every working day (shows as unread again), the previous one is closed
+      const [cur] = await dbq(`SELECT nid FROM stock_notification WHERE owner_uid=$1 AND kind='market' AND pid=0 AND resolved_at IS NULL`, [o.uid])
+      if (cur) await dbr('UPDATE stock_notification SET resolved_at=NOW() WHERE nid=$1', [cur.nid])
+      const names = await unassignedMarketItems(o.uid)
+      if (names.length) await upsertNotification(o.uid, 'market', 0, `market:${date}`, marketUnassignedText(names), { count: names.length })
+    } catch (e) { console.error('market daily job failed for', o.uid, e.message) }
+  }
+}
+// Once every item has a category, today's reminder is closed
+async function resolveMarketNotificationIfDone(ownerUid) {
+  if ((await unassignedMarketItems(ownerUid)).length) return
+  await dbr(`UPDATE stock_notification SET resolved_at=NOW() WHERE owner_uid=$1 AND kind='market' AND resolved_at IS NULL`, [ownerUid])
+}
+
 // Items (recipes) belong to one restaurant, like products
 async function ownedRids(ownerUid, rids) {
   const ids = [...new Set((rids || []).map(Number).filter(Boolean))]
@@ -300,6 +393,7 @@ async function ensureMigrations() {
     await dbr(`CREATE INDEX IF NOT EXISTS recipe_owner_idx ON recipe(owner_uid)`)
     await backfillProductOwners()
     await backfillRecipeOwners()
+    await ensureMarketCategories()
   } catch(e) { console.error('Migration error:', e.message) }
 }
 
@@ -433,7 +527,8 @@ const RECIPE_SEL = `
   SELECT r.rid, r.name, r.description, r.price, r.currency, r.available,
          r.deliverable, r.image_url, r.image_thumb_url, r.cloudinary_id,
          r.allow_submultiples, r.moq, r.procid, r.min_inventory, r.expiry_hours,
-         u.name AS units, u.unid, c.name AS category, c.caid
+         u.name AS units, u.unid, c.name AS category, c.caid,
+         COALESCE((SELECT array_agg(x.mcid ORDER BY x.mcid) FROM recipe_market_category x WHERE x.rid=r.rid), '{}') AS market_category_ids
   FROM recipe r
   LEFT JOIN units u ON u.unid=r.unid
   LEFT JOIN recipe_category c ON c.caid=r.caid`
@@ -1028,7 +1123,7 @@ async function refreshUnlistedNotification(ownerUid) {
     if (!ownerUid) return
     const rows = await dbq(
       `SELECT r.name FROM recipe r
-       WHERE r.deleted=false
+       WHERE r.deleted=false AND r.owner_uid=$1
          AND NOT EXISTS (SELECT 1 FROM menu_recipe mr JOIN menu m ON m.mid=mr.mid AND m.deleted=false AND m.owner_uid=$1 WHERE mr.rid=r.rid)
        ORDER BY lower(r.name)`, [ownerUid])
     const [cur] = await dbq(
@@ -1370,7 +1465,7 @@ async function route(method, segments, body, headers, event) {
              AND ((n.kind IN ('shortage','wastage','equip_util') AND n.period=$3 AND n.resolved_at IS NULL)
                OR (n.kind IN ('deliveries','unfulfilled') AND n.resolved_at IS NULL)
                OR (n.kind='auto_wastage' AND n.created_at >= NOW() - INTERVAL '3 days')
-               OR (n.kind='unlisted' AND n.resolved_at IS NULL))
+               OR (n.kind IN ('unlisted','market') AND n.resolved_at IS NULL))
            ORDER BY n.created_at DESC`, [ownerUid, user.uid, period])
         return [200, { period, items: rows }]
       }
@@ -1389,6 +1484,15 @@ async function route(method, segments, body, headers, event) {
         return [200, { ok: true }]
       }
     }
+  }
+
+  // Called every 5 minutes by market-scheduled.js (same token as the stock job)
+  if (r0 === 'cron' && r1 === 'market-daily' && method === 'POST') {
+    const { createHash } = await import('crypto')
+    const want = createHash('sha256').update(String(process.env.NETLIFY_DATABASE_URL || process.env.DATABASE_URL || '')).digest('hex')
+    if (!headers['x-cron-token'] || headers['x-cron-token'] !== want) return [401, { error: 'Unauthorized' }]
+    await runMarketDailyJob()
+    return [200, { ok: true }]
   }
 
   // Called hourly by stock-scheduled.js (token = hash of the database URL, known only to the functions)
@@ -1818,11 +1922,12 @@ async function route(method, segments, body, headers, event) {
     }
     if (r1 === 'lookups' && method === 'GET') {
       if (!user?.is_manufacturer) return [403, { error: 'Manufacturers only' }]
-      const [units, categories] = await Promise.all([
+      const [units, categories, market_categories] = await Promise.all([
         dbq('SELECT * FROM units ORDER BY name'),
         dbq('SELECT * FROM recipe_category ORDER BY name'),
+        marketCategoryTree(),
       ])
-      return [200, { units, categories }]
+      return [200, { units, categories, market_categories }]
     }
     // POST /recipes/usage — which processes use these items
     if (r1 === 'usage' && method === 'POST') {
@@ -1858,6 +1963,7 @@ async function route(method, segments, body, headers, event) {
          !!allow_submultiples, moq?Number(moq):null, procid||null, r1,
          expiry_hours!==''&&expiry_hours!=null&&Number(expiry_hours)>0?Number(expiry_hours):null])
       if (Array.isArray(contents)) await saveContents(r1, contents)
+      if (Array.isArray(body.market_category_ids)) { await saveMarketCategories(r1, body.market_category_ids); await resolveMarketNotificationIfDone(user.uid) }
       const rows = await dbq(RECIPE_SEL + ' WHERE r.rid=$1', [r1])
       return [200, (await attachContents(rows))[0]]
     }
@@ -1894,6 +2000,7 @@ async function route(method, segments, body, headers, event) {
          expiry_hours!==''&&expiry_hours!=null&&Number(expiry_hours)>0?Number(expiry_hours):null, user.uid])
       const rid = res.rows[0].rid
       if (Array.isArray(contents)) await saveContents(rid, contents)
+      if (Array.isArray(body.market_category_ids)) await saveMarketCategories(rid, body.market_category_ids)
       const rows = await dbq(RECIPE_SEL + ' WHERE r.rid=$1', [rid])
       return [201, (await attachContents(rows))[0]]
     }

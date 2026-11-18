@@ -611,6 +611,50 @@ function ImageUploader({ existingUrl, existingThumb, onImageReady, onRemove }) {
 }
 
 // ─── RECIPE FORM (shared New + Edit) ─────────────────────────────────────────
+// Marketplace categories: one global tree; an item can sit in several leaf categories
+function MarketCategoryPicker({ tree=[], value=[], onChange }) {
+  const sel = new Set((value||[]).map(Number));
+  const toggle = id => { const s = new Set(sel); s.has(id) ? s.delete(id) : s.add(id); onChange([...s]); };
+  const leaves = tree.flatMap(t => t.children?.length ? t.children.map(c=>({ ...c, group:t.name })) : [{ ...t, group:null }]);
+  const chosen = leaves.filter(l => sel.has(l.mcid));
+  return (
+    <div data-slot="market-category-picker" className="flex flex-wrap items-center gap-1.5">
+      {chosen.map(l=>(
+        <span key={l.mcid} className="inline-flex items-center gap-1 rounded-full border border-border bg-muted py-0.5 ps-2.5 pe-1 text-xs">
+          {l.group?<span className="text-muted-foreground">{l.group} ›</span>:null}{l.name}
+          <button type="button" aria-label={`Remove ${l.group?l.group+" › ":""}${l.name}`} onClick={()=>toggle(l.mcid)}
+            className="inline-flex size-4.5 items-center justify-center rounded-full text-muted-foreground hover:bg-background hover:text-foreground"><XIcon className="size-3"/></button>
+        </span>
+      ))}
+      <Popover>
+        <PopoverTrigger className={buttonVariants({ variant:"outline", size:"xs", className:"border-dashed" })}>
+          <PlusIcon/>{chosen.length?"Edit":"Choose categories"}
+        </PopoverTrigger>
+        <PopoverPopup align="start" className="w-[min(420px,calc(100vw-24px))]">
+          <div className="-m-1 grid max-h-80 grid-cols-2 gap-x-4 gap-y-3 overflow-y-auto p-1">
+            {tree.map(t=>(
+              <div key={t.mcid} className="flex flex-col gap-1.5">
+                {t.children?.length ? (<>
+                  <span className="font-semibold text-[11px] text-muted-foreground uppercase tracking-wider">{t.name}</span>
+                  {t.children.map(c=>(
+                    <Label key={c.mcid} className="cursor-pointer font-normal">
+                      <Checkbox checked={sel.has(c.mcid)} onCheckedChange={()=>toggle(c.mcid)}/>{c.name}
+                    </Label>
+                  ))}
+                </>) : (
+                  <Label className="cursor-pointer font-semibold">
+                    <Checkbox checked={sel.has(t.mcid)} onCheckedChange={()=>toggle(t.mcid)}/>{t.name}
+                  </Label>
+                )}
+              </div>
+            ))}
+          </div>
+        </PopoverPopup>
+      </Popover>
+    </div>
+  );
+}
+
 function RecipeForm({
  initial, lookups, onSave, onCancel, saving }) {
   const lang = useLangContext();
@@ -619,7 +663,8 @@ function RecipeForm({
     name:"", description:"", unid:"", caid:"", price:"", currency:"AMD",
     available:true, deliverable:true, image_url:null, image_thumb_url:null, cloudinary_id:null,
     allow_submultiples:false, moq:"", procid:null, expiry_hours:"",
-    ...initial
+    ...initial,
+    market_category_ids: initial?.market_category_ids || [],
   });
   const [imageBlob, setImageBlob] = useState(null);
   const [removeImage, setRemoveImage] = useState(false);
@@ -769,6 +814,10 @@ function RecipeForm({
         {form.procid&&<Input label="Prep. time" value={prepTime} onChange={()=>{}} disabled />}
         <FieldBlock label="Expiry"><ShelfLifeInput value={form.expiry_hours} onChange={v=>set("expiry_hours",v)} /></FieldBlock>
       </div>
+
+      <FieldBlock label="Marketplace categories" hint="Where this item appears on tanelu.com/market. An item can be in several categories.">
+        <MarketCategoryPicker tree={lookups.market_categories||[]} value={form.market_category_ids} onChange={v=>set("market_category_ids",v)}/>
+      </FieldBlock>
 
       <FieldBlock label={tl("Image")}>
         <ImageUploader
@@ -2316,7 +2365,7 @@ function RecipesPage({
         image_url = null; image_thumb_url = null; cloudinary_id = null;
       }
 
-      const payload = { name:form.name, description:form.description||null, unid:form.unid||null, caid:form.caid||null, price:Number(form.price)||0, currency:form.currency||"AMD", available:form.available!==false, deliverable:form.deliverable!==false, image_url, image_thumb_url, cloudinary_id, allow_submultiples:!!form.allow_submultiples, moq:form.moq?Number(form.moq):null, expiry_hours:form.expiry_hours===""||form.expiry_hours==null?null:Number(form.expiry_hours), procid:form.procid||null, contents:(contents||[]).filter(c=>c.pid) };
+      const payload = { name:form.name, description:form.description||null, unid:form.unid||null, caid:form.caid||null, price:Number(form.price)||0, currency:form.currency||"AMD", available:form.available!==false, deliverable:form.deliverable!==false, image_url, image_thumb_url, cloudinary_id, allow_submultiples:!!form.allow_submultiples, moq:form.moq?Number(form.moq):null, expiry_hours:form.expiry_hours===""||form.expiry_hours==null?null:Number(form.expiry_hours), procid:form.procid||null, contents:(contents||[]).filter(c=>c.pid), market_category_ids:form.market_category_ids||[] };
 
       if (existingRid) {
         const updated = await api.updateRecipe(existingRid, payload);
@@ -2395,6 +2444,13 @@ function RecipesPage({
     {key:"deliverable",label:tl("Deliv."),sortable:false,render:r=>r.deliverable!==false?<CheckIcon className="size-4 text-success-foreground" aria-label="Yes"/>:<XIcon className="size-4 text-destructive-foreground" aria-label="No"/>},
     {key:"price",label:tl("Price"),sortable:false,render:r=><span className="whitespace-nowrap font-semibold tabular-nums">{r.price} {r.currency}</span>},
     {key:"category",label:tl("Category"),sortable:true,render:r=>r.category?<Badge>{r.category}</Badge>:<span className="text-muted-foreground">—</span>},
+    {key:"market",label:"Marketplace",sortable:false,render:r=>{
+      const ids=(r.market_category_ids||[]).map(Number);
+      const names=(lookups.market_categories||[]).flatMap(t=>t.children?.length?t.children.map(c=>({...c,full:`${t.name} › ${c.name}`})):[{...t,full:t.name}]).filter(c=>ids.includes(c.mcid));
+      return names.length
+        ? <span className="text-xs">{names.map(n=>n.full).join(", ")}</span>
+        : <CBadge variant="warning" size="sm" title="Not shown in the marketplace until a category is chosen">No category</CBadge>;
+    }},
   ];
 
   return (
