@@ -32,6 +32,7 @@ import { AlertDialog, AlertDialogPopup, AlertDialogHeader, AlertDialogTitle, Ale
 import { ZoomInIcon, CakeSliceIcon, ShoppingBasketIcon, PackageCheckIcon, RefreshCwIcon, PlugIcon, Loader2Icon, MapPinIcon, ShieldAlertIcon, HandIcon, TableIcon, FileDownIcon, SparklesIcon, SendIcon, BanIcon, MenuIcon, ReceiptTextIcon, PackageIcon, BookOpenIcon, TruckIcon, ChartColumnIcon, ArrowLeftIcon, ChefHatIcon, MailCheckIcon, PartyPopperIcon, StoreIcon, TriangleAlertIcon, BellIcon, ChevronDownIcon, CircleAlertIcon, CircleCheckIcon, CircleUserIcon, ClockIcon, GlobeIcon, InfoIcon, Link2Icon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SettingsIcon, SunIcon, XIcon } from "lucide-react";
 
 const BoardOfArrivals = React.lazy(() => import('./screens/BoardOfArrivals.jsx'));
+const Marketplace = React.lazy(() => import('./screens/Marketplace.jsx'));
 
 // ─── DESIGN TOKENS ────────────────────────────────────────────────────────────
 const G = {
@@ -308,6 +309,7 @@ export const RU = {
   "Place order":"Оформить заказ",
   "Board of Arrivals":"Готовые блюда",
   "Distance within":"В пределах, км",
+  "Marketplace":"Маркетплейс",
 }
 
 function T({ children }) {
@@ -1383,16 +1385,16 @@ function Nav({ user, page, setPage, logout, lang, setLang, notifProps, themePref
   const tl = k => lang==='ru' ? (RU[k]||k) : k;
   const links = isM
     ? [{key:"orders-manuf",label:tl("Orders")},{key:"inventory",label:tl("Inventory")},{key:"menus",label:tl("Menus")},{key:"procurement",label:tl("Procurement")},{key:"suppliers",label:tl("Suppliers")},{key:"reports",label:tl("Reports")},{key:"staff",label:tl("Staff")},{key:"processes",label:tl("Processes")},{key:"equipment",label:tl("Equipment")}]
-    : user?.employer_uid ? [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")},{key:"roster-emp",label:tl("My Roster")},{key:"processes-emp",label:tl("Processes")}]
-    : [{key:"restaurants",label:tl("Restaurants")},{key:"orders-cust",label:tl("My Orders")}];
-  const navigate = key => { setPage(key); setMenuOpen(false); };
+    : user?.employer_uid ? [{key:"restaurants",label:tl("Restaurants")},{key:"market",label:tl("Marketplace")},{key:"orders-cust",label:tl("My Orders")},{key:"roster-emp",label:tl("My Roster")},{key:"processes-emp",label:tl("Processes")}]
+    : [{key:"restaurants",label:tl("Restaurants")},{key:"market",label:tl("Marketplace")},{key:"orders-cust",label:tl("My Orders")}];
+  const navigate = key => { if (key==="market") { window.location.assign("/market"); return; } setPage(key); setMenuOpen(false); };
   // Below this width the page links move into the hamburger sheet (the owner has 9 links, staff 2–4)
   // Russian labels are longer, so the owner's links collapse one breakpoint later
   const collapse = isM ? (lang==='ru' ? "2xl" : "xl") : "md";
   const COLLAPSE = { md:["md:hidden","hidden md:flex"], xl:["xl:hidden","hidden xl:flex"], "2xl":["2xl:hidden","hidden 2xl:flex"] }[collapse];
   const NAV_ICONS = { "orders-manuf":ReceiptTextIcon, inventory:PackageIcon, menus:BookOpenIcon, procurement:TruckIcon, suppliers:StoreIcon,
     reports:ChartColumnIcon, staff:UsersIcon, processes:WorkflowIcon, equipment:CookingPotIcon, restaurants:StoreIcon,
-    "orders-cust":ReceiptTextIcon, "roster-emp":CalendarDaysIcon, "processes-emp":WorkflowIcon };
+    "orders-cust":ReceiptTextIcon, "roster-emp":CalendarDaysIcon, "processes-emp":WorkflowIcon, market:ShoppingBasketIcon };
   const navActive = k => page===k || (k==="inventory" && (page==="products"||page==="items")) || (k==="orders-manuf" && page==="quick-sale");
   return (
     <>
@@ -4302,7 +4304,7 @@ function OrdersManufPage({
                       <div className="mb-2">{(o.items||[]).map((it,i)=><div key={i} className="text-xs">{it.qty}× {it.name}</div>)}</div>
                       <div className="flex items-center justify-between gap-2 border-t pt-2">
                         <span className="font-bold text-brand tabular-nums">{(o.items||[]).reduce((s,it)=>s+it.qty*it.price,0)} AMD</span>
-                        <span className="text-right text-[11px] text-muted-foreground">{o.is_boa?"Board of Arrivals · "+(o.fulfillment==='delivery'?tl("Delivery"):tl("Pickup (free)")):o.fulfillment==='stock'?tl("Stock"):o.pickup?tl("Pickup (free)"):tl("Delivery")}</span>
+                        <span className="text-right text-[11px] text-muted-foreground">{o.is_boa?"Board of Arrivals · "+(o.fulfillment==='delivery'?tl("Delivery"):tl("Pickup (free)")):o.fulfillment==='stock'?tl("Stock"):(o.source==='market'?tl("Marketplace")+" · ":"")+(o.pickup?tl("Pickup (free)"):tl("Delivery"))}</span>
                       </div>
                       {(cfg.next && !(o.status==="Done" && o.allNonDeliverable))&&(
                         <div className="mt-2 flex gap-1">
@@ -4700,6 +4702,7 @@ function OrdersCustPage({
                       <span className="font-semibold">Order #{o.oid}</span>
                       <span className="text-muted-foreground text-xs">{new Date(o.created_at).toLocaleString()}</span>
                       {o.is_boa&&<CBadge variant="secondary">{o.seller_name?`Board of Arrivals · ${o.seller_name}`:"Board of Arrivals"}</CBadge>}
+                      {o.source==='market'&&<CBadge variant="secondary">{o.seller_name?`${tl("Marketplace")} · ${o.seller_name}`:tl("Marketplace")}</CBadge>}
                     </div>
                     <CBadge variant="outline" className="border-transparent font-semibold" style={{ color:cfg.color, background:`${cfg.color}1f` }}>{tl(o.status)}</CBadge>
                   </div>
@@ -9856,12 +9859,16 @@ export default function App() {
     if (h.startsWith("#verify/")) return { type:"verify", token:h.slice(8) };
     if (h.startsWith("#invite/")) return { type:"invite", token:h.slice(8) };
     if (h === "#order" || h.startsWith("#order") || window.location.pathname === "/order") return { type:"order" };
+    if (/^\/market(\/|$)/.test(window.location.pathname)) return { type:"market" };
     if (h === "#signup") return { type:"signup" };
     return null;
   });
 
   const [page, setPageRaw] = useState(()=>{
     if (window.location.hash === "#signup") return "signup";
+    // The Marketplace sends customers to My orders after checkout
+    let next = null; try { next = sessionStorage.getItem("tanelu_next_page"); sessionStorage.removeItem("tanelu_next_page"); } catch {}
+    if (user && next === "orders-cust" && !user.is_manufacturer) return "orders-cust";
     return user ? (user.is_manufacturer ? "orders-manuf" : "restaurants") : "login";
   });
   // Navigation asks first when the current page has unsaved work (see useLeaveGuard)
@@ -9915,6 +9922,15 @@ export default function App() {
       <Toast toasts={toasts} remove={remove}/>
       <React.Suspense fallback={<div style={{minHeight:"100vh",background:G.cream}}/>}>
         <BoardOfArrivals toast={toast}/>
+      </React.Suspense>
+    </LangContext.Provider>
+  );
+  if (hashPage?.type === "market") return (
+    <LangContext.Provider value={lang}>
+      <style>{makeCss()}</style>
+      <Toast toasts={toasts} remove={remove}/>
+      <React.Suspense fallback={<div className="min-h-screen bg-background"/>}>
+        <Marketplace toast={toast} user={user} onLogin={u=>setUser(u)}/>
       </React.Suspense>
     </LangContext.Provider>
   );

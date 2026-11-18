@@ -88,6 +88,29 @@ async function marketCategoryTree() {
   for (const r of rows.filter(r => r.parent_mcid)) tops.find(t => t.mcid === r.parent_mcid)?.children.push({ mcid: r.mcid, slug: r.slug, name: r.name })
   return tops
 }
+// Marketplace search: every word of the query must match a word of the item's names, either as a
+// prefix/substring ("past" → "pastry") or within one edit ("pastri" → "pastry"; "passstri" does not match)
+function editDistance(a, b) {
+  if (Math.abs(a.length - b.length) > 1) return 2
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)])
+  for (let j = 1; j <= b.length; j++) d[0][j] = j
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+    d[i][j] = Math.min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + (a[i-1] === b[j-1] ? 0 : 1))
+  return d[a.length][b.length]
+}
+const searchWords = s => String(s || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').split(/[^\p{L}\p{N}]+/u).filter(Boolean)
+// Returns a rank (0 best: every word found in the item's own name; 1: found as written somewhere;
+// 2: needed the one-typo allowance) or -1 for no match
+function marketMatch(query, texts) {
+  const qw = searchWords(query)
+  if (!qw.length) return -1
+  const own = searchWords(texts[0]); const words = texts.flatMap(searchWords)
+  const fuzzy = (q, w) => q.length >= 3 && (editDistance(q, w) <= 1 || (w.length > q.length && editDistance(q, w.slice(0, q.length)) <= 1))
+  if (!qw.every(q => words.some(w => w.includes(q) || fuzzy(q, w)))) return -1
+  if (qw.every(q => own.some(w => w.includes(q)))) return 0
+  return qw.every(q => words.some(w => w.includes(q))) ? 1 : 2
+}
+
 // Only leaves can be assigned (a top-level node with sub-categories is a group)
 async function saveMarketCategories(rid, ids) {
   if (!Array.isArray(ids)) return
@@ -301,6 +324,9 @@ async function ensureMigrations() {
   _migrated = true
   try {
     await dbr(`ALTER TABLE menu ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT false`)
+    // Menu names are unique per restaurant (not across the platform); hidden system menus don't count
+    await dbr(`ALTER TABLE menu DROP CONSTRAINT IF EXISTS menu_name_key`)
+    await dbr(`CREATE UNIQUE INDEX IF NOT EXISTS menu_owner_name_uq ON menu (owner_uid, name) WHERE deleted=false`)
     await dbr(`ALTER TABLE boa_reservation ADD COLUMN IF NOT EXISTS shortfall NUMERIC(10,3) NOT NULL DEFAULT 0`)
     await dbr(`ALTER TABLE boa_reservation ADD COLUMN IF NOT EXISTS shortfall_state VARCHAR(12)`)
     // Packaging: a package is a product row flagged is_package (so purchasing, supplier links and stock reuse the product machinery)
@@ -594,6 +620,9 @@ async function fetchOrder(oid) {
   let seller_name = null
   if (isBoa && order.owner_uid) {
     const [sl] = await dbq('SELECT business_name FROM "user" WHERE uid=$1', [order.owner_uid])
+    seller_name = sl?.business_name || null
+  } else if (order.source === 'market' && order.mid) {
+    const [sl] = await dbq('SELECT u.business_name FROM menu m JOIN "user" u ON u.uid=m.owner_uid WHERE m.mid=$1', [order.mid])
     seller_name = sl?.business_name || null
   }
   return { ...order, items, customer, allNonDeliverable: doneIsTerminal, is_boa: !!isBoa, seller_name }
@@ -2356,6 +2385,161 @@ async function route(method, segments, body, headers, event) {
       await notifyStockChange(menu.owner_uid)
       return [201, full]
     }
+  }
+
+  // ── MARKETPLACE (tanelu.com/market) ─────────────────────────────────────────
+  // Public browsing; ordering needs an account. An item is listed when it is available, has at least
+  // one marketplace category and something to sell: stock on hand + what running processes will output
+  // (minus Board of Arrivals reservations).
+  if (r0 === 'market') {
+    const LISTED_SQL = `
+      WITH listed AS (
+        SELECT r.rid, r.name, r.description, r.price, r.currency, r.image_url, r.image_thumb_url,
+               r.allow_submultiples, r.moq, r.deliverable, r.created_at, r.owner_uid,
+               u.name AS units, ow.business_name AS restaurant,
+               GREATEST(COALESCE((SELECT SUM(rs.qty) FROM recipe_stock rs WHERE rs.rid=r.rid AND rs.owner_uid=r.owner_uid), 0), 0) AS stock_qty,
+               COALESCE((SELECT SUM(GREATEST(pri.qty - COALESCE((SELECT SUM(b.qty) FROM boa_reservation b
+                            WHERE b.prid=pr.prid AND b.rid=r.rid AND b.status IN ('pending','confirmed')), 0), 0))
+                         FROM process_run pr JOIN process_run_item pri ON pri.prid=pr.prid AND pri.rid=r.rid
+                         WHERE pr.owner_uid=r.owner_uid AND pr.status IN ('in_progress','on_hold')), 0) AS coming_qty,
+               -- already promised to open orders (stock is only written off when an order is Done)
+               COALESCE((SELECT SUM(oi.qty * CASE WHEN r.allow_submultiples AND r.moq > 0
+                                 THEN r.moq / (CASE u.name WHEN 'kilograms' THEN 1000 WHEN 'litres' THEN 1000 WHEN 'pounds' THEN 16 ELSE 1 END) ELSE 1 END)
+                         FROM order_item oi JOIN "order" o ON o.oid=oi.oid JOIN menu m ON m.mid=o.mid AND m.owner_uid=r.owner_uid
+                         WHERE oi.rid=r.rid AND o.status IN ('New','Accepted','Preparing') AND COALESCE(o.fulfillment,'pickup') <> 'stock'), 0) AS open_qty,
+               ARRAY(SELECT x.mcid FROM recipe_market_category x WHERE x.rid=r.rid ORDER BY x.mcid) AS mcids
+        FROM recipe r
+        JOIN "user" ow ON ow.uid=r.owner_uid AND ow.deleted_at IS NULL
+        LEFT JOIN units u ON u.unid=r.unid
+        WHERE r.deleted=false AND r.available=true
+          AND EXISTS (SELECT 1 FROM recipe_market_category x WHERE x.rid=r.rid)
+      )
+      SELECT *, stock_qty + coming_qty - open_qty AS available_qty FROM listed WHERE stock_qty + coming_qty - open_qty > 0`
+    const card = r => ({
+      rid: r.rid, name: r.name, description: r.description || null, price: Number(r.price), currency: r.currency || 'AMD',
+      units: r.units || 'pcs', image_url: r.image_url || null, image_thumb_url: r.image_thumb_url || r.image_url || null,
+      allow_submultiples: !!r.allow_submultiples, moq: r.moq ? Number(r.moq) : null, deliverable: r.deliverable !== false,
+      restaurant: { uid: r.owner_uid, name: r.restaurant || 'Restaurant' },
+      stock_qty: Number(r.stock_qty), coming_qty: Number(r.coming_qty), available_qty: Number(r.available_qty),
+      mcids: r.mcids || [], created_at: r.created_at,
+    })
+    const listed = async () => (await dbq(LISTED_SQL + ' ORDER BY created_at DESC NULLS LAST, rid DESC LIMIT 5000')).map(card)
+    const soldMap = async rids => {
+      if (!rids.length) return new Map()
+      const rows = await dbq(`SELECT oi.rid, SUM(oi.qty) AS sold FROM order_item oi JOIN "order" o ON o.oid=oi.oid
+        WHERE oi.rid=ANY($1::int[]) AND o.status <> 'Declined' AND COALESCE(o.fulfillment,'pickup') <> 'stock'
+          AND o.created_at >= NOW() - INTERVAL '90 days' GROUP BY oi.rid`, [rids])
+      return new Map(rows.map(r => [r.rid, Number(r.sold)]))
+    }
+    const tree = await marketCategoryTree()
+    // mcid → ids of itself and its sub-categories
+    const subtree = new Map(tree.flatMap(t => [[t.mcid, [t.mcid, ...t.children.map(c => c.mcid)]], ...t.children.map(c => [c.mcid, [c.mcid]])]))
+    const inCat = (it, mcid) => it.mcids.some(id => (subtree.get(mcid) || []).includes(id))
+
+    if (r1 === 'categories' && method === 'GET') return [200, tree]
+
+    // GET /market/home — Popular (most sold, last 90 days) + the 10 latest items of every top-level category
+    if (r1 === 'home' && method === 'GET') {
+      const items = await listed()
+      const sold = await soldMap(items.map(i => i.rid))
+      const popular = items.filter(i => sold.get(i.rid) > 0).sort((a, b) => sold.get(b.rid) - sold.get(a.rid)).slice(0, 10)
+      const rows = [{ slug: 'popular', name: 'Popular', items: popular }]
+      for (const t of tree) rows.push({ mcid: t.mcid, slug: t.slug, name: t.name, items: items.filter(i => inCat(i, t.mcid)).slice(0, 10) })
+      return [200, { categories: tree, rows }]
+    }
+
+    // GET /market/category/<slug>[/<sub>] — everything listed in a category (newest first)
+    if (r1 === 'category' && method === 'GET') {
+      const slug = segments.slice(2).join('/')
+      const node = tree.find(t => t.slug === slug) || tree.flatMap(t => t.children).find(c => c.slug === slug)
+      if (slug === 'popular') {
+        const items = await listed(); const sold = await soldMap(items.map(i => i.rid))
+        return [200, { slug, name: 'Popular', items: items.filter(i => sold.get(i.rid) > 0).sort((a, b) => sold.get(b.rid) - sold.get(a.rid)).slice(0, 60) }]
+      }
+      if (!node) return [404, { error: 'Unknown category' }]
+      const parent = tree.find(t => t.children.some(c => c.mcid === node.mcid))
+      return [200, { slug, name: node.name, parent: parent ? { slug: parent.slug, name: parent.name } : null,
+        items: (await listed()).filter(i => inCat(i, node.mcid)) }]
+    }
+
+    // GET /market/search/<query> — partial and fuzzy (one typo) over item, category and restaurant names
+    if (r1 === 'search' && method === 'GET') {
+      const q = decodeURIComponent(segments.slice(2).join('/') || event?.queryStringParameters?.q || '')
+      const items = await listed()
+      const catNames = new Map(tree.flatMap(t => [[t.mcid, [t.name]], ...t.children.map(c => [c.mcid, [t.name, c.name]])]))
+      const hits = items.map(it => ({ it, rank: marketMatch(q, [it.name, it.restaurant.name, ...it.mcids.flatMap(id => catNames.get(id) || [])]) }))
+        .filter(h => h.rank >= 0).sort((a, b) => a.rank - b.rank)
+      return [200, { q, items: hits.slice(0, 60).map(h => h.it) }]
+    }
+
+    // GET /market/items/:rid — full info + 5 items most often bought together with it (in stock)
+    if (r1 === 'items' && r2 && method === 'GET') {
+      const all = await listed()
+      const it = all.find(i => i.rid === Number(r2))
+      if (!it) return [404, { error: 'This item is not available right now' }]
+      const [owner] = await dbq('SELECT business_name, logo_url, address_display, city FROM "user" WHERE uid=$1', [it.restaurant.uid])
+      const contents = await dbq(`SELECT p.name, rp.qty, u.name AS units FROM recipe_product rp JOIN product p ON p.pid=rp.pid
+        LEFT JOIN units u ON u.unid=p.unid WHERE rp.rid=$1 ORDER BY p.name`, [it.rid])
+      const together = await dbq(`SELECT oi2.rid, COUNT(DISTINCT oi.oid) AS n FROM order_item oi
+        JOIN order_item oi2 ON oi2.oid=oi.oid AND oi2.rid<>oi.rid
+        JOIN "order" o ON o.oid=oi.oid AND o.status <> 'Declined'
+        WHERE oi.rid=$1 GROUP BY oi2.rid ORDER BY n DESC LIMIT 50`, [it.rid])
+      const byRid = new Map(all.map(i => [i.rid, i]))
+      const also = together.map(t => byRid.get(t.rid)).filter(Boolean).slice(0, 5)
+      if (also.length < 5) { // top up with the restaurant's best sellers
+        const sold = await soldMap(all.filter(i => i.restaurant.uid === it.restaurant.uid).map(i => i.rid))
+        for (const x of all.filter(i => i.restaurant.uid === it.restaurant.uid && i.rid !== it.rid && !also.includes(i))
+          .sort((a, b) => (sold.get(b.rid) || 0) - (sold.get(a.rid) || 0))) { if (also.length >= 5) break; also.push(x) }
+      }
+      return [200, { ...it,
+        restaurant: { ...it.restaurant, name: owner?.business_name || it.restaurant.name, logo_url: owner?.logo_url || null, address: owner?.address_display || owner?.city || null },
+        contents: contents.map(c => ({ name: c.name, qty: Number(c.qty), units: c.units || null })),
+        categories: it.mcids.map(id => { const t = tree.find(t => t.mcid === id) || tree.find(t => t.children.some(c => c.mcid === id)); const c = t?.children.find(c => c.mcid === id); return c ? `${t.name} › ${c.name}` : t?.name }).filter(Boolean),
+        also_bought: also }]
+    }
+
+    // POST /market/orders { items:[{rid, steps}], fulfillment, delivery_address, delivery_comments }
+    // One order per restaurant, all created together (or none).
+    if (r1 === 'orders' && method === 'POST') {
+      if (!user) return [401, { error: 'Please log in to place an order' }]
+      const lines = (Array.isArray(body?.items) ? body.items : []).map(i => ({ rid: Number(i.rid), steps: Number(i.steps ?? i.qty) }))
+        .filter(i => i.rid && i.steps > 0)
+      if (!lines.length) return [400, { error: 'Your basket is empty' }]
+      const fulfillment = body?.fulfillment === 'delivery' ? 'delivery' : 'pickup'
+      if (fulfillment === 'delivery' && !String(body?.delivery_address || '').trim()) return [400, { error: 'Delivery address required' }]
+      const byRid = new Map((await listed()).map(i => [i.rid, i]))
+      const groups = new Map()
+      for (const l of lines) {
+        const it = byRid.get(l.rid)
+        if (!it) return [400, { error: 'Some items are no longer available', rid: l.rid }]
+        const sub = it.allow_submultiples && it.moq > 0
+        const stepU = sub ? it.moq / (UNIT_CONV[it.units] || 1) : 1
+        const steps = Math.round(l.steps)
+        if (steps * stepU > it.available_qty + 1e-9) return [400, { error: `Only ${it.available_qty} ${it.units} of ${it.name} available`, rid: it.rid }]
+        if (fulfillment === 'delivery' && !it.deliverable) return [400, { error: `${it.name} is available for pickup only`, rid: it.rid }]
+        const price = sub ? Math.round(it.price * stepU * 100) / 100 : it.price
+        if (!groups.has(it.restaurant.uid)) groups.set(it.restaurant.uid, [])
+        groups.get(it.restaurant.uid).push({ rid: it.rid, qty: steps, price })
+      }
+      const oids = await withTx(async q => {
+        const out = []
+        for (const [seller, its] of groups) {
+          // Marketplace orders hang off a hidden per-restaurant menu, like walk-in sales, so the order
+          // board, stock and reports treat them like any other menu order
+          let { rows: [mm] } = await q(`SELECT mid FROM menu WHERE owner_uid=$1 AND name='Marketplace' AND deleted=true ORDER BY mid LIMIT 1`, [seller])
+          if (!mm) mm = (await q(`INSERT INTO menu (name, available, delivery_fee, owner_uid, deleted) VALUES ('Marketplace', false, 0, $1, true) RETURNING mid`, [seller])).rows[0]
+          const { rows: [o] } = await q(`INSERT INTO "order" (owner_uid, mid, pickup, fulfillment, delivery_address, delivery_comments, source)
+            VALUES ($1,$2,$3,$4,$5,$6,'market') RETURNING oid`,
+            [user.uid, mm.mid, fulfillment === 'pickup', fulfillment, fulfillment === 'delivery' ? String(body.delivery_address).trim() : null, body?.delivery_comments || null])
+          for (const it of its) await q('INSERT INTO order_item (oid,rid,qty,price) VALUES ($1,$2,$3,$4)', [o.oid, it.rid, it.qty, it.price])
+          out.push({ oid: o.oid, seller })
+        }
+        return out
+      })
+      for (const { seller } of oids) await notifyStockChange(seller)
+      return [201, { orders: await Promise.all(oids.map(o => fetchOrder(o.oid))) }]
+    }
+    return [404, { error: 'Not found' }]
   }
 
   // ── QUICK SALE (walk-in / counter sales: one step, created as Done) ──────────
@@ -5619,6 +5803,7 @@ export const handler = async (event) => {
       body: JSON.stringify(data),
     }
   } catch (err) {
+    if (err.code === '23505' && err.constraint === 'menu_owner_name_uq') { err.status = 400; err.message = 'You already have a menu with this name' }
     if (!err.status) console.error(err)
     return {
       statusCode: err.status || 500,

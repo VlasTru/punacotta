@@ -211,6 +211,13 @@ export const api = {
   getSchedule:  ()     => req('GET',   '/schedule'),
   saveSchedule: (data) => req('PUT',   '/schedule', data),
 
+  // Marketplace (public browsing; placing an order needs a login)
+  getMarketHome:     ()     => req('GET',  '/market/home'),
+  getMarketCategory: (slug) => req('GET',  `/market/category/${slug}`),
+  searchMarket:      (q)    => req('GET',  `/market/search/${encodeURIComponent(q)}`),
+  getMarketItem:     (rid)  => req('GET',  `/market/items/${rid}`),
+  placeMarketOrder:  (data) => req('POST', '/market/orders', data),
+
   // Customers
   searchCustomers: (q) => req('GET', `/customers/${encodeURIComponent(q)}`),
 
